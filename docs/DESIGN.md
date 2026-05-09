@@ -41,17 +41,25 @@ ACTION = major | minor | patch | get
 | `--write` + `get` | Error (no meaning for a read-only operation) |
 | Otherwise | Proceed |
 
-### Module layout (planned)
+### Module layout
+
+Go sources live under `src/`, leaving only metadata (README / docs / justfile / VERSION / go.mod, etc.) at the repository root. `go.mod` itself stays at the root, so the module / import path remains `github.com/kawaz/bump-semver`. Build with `go build ./src`.
 
 ```
 .
-├── main.go             # entrypoint, argv parsing, exclusivity checks
-├── handler.go          # Handler interface (Match / Get / Bump)
-├── handler_cargo.go    # Cargo.toml (TOML, [package].version)
-├── handler_json.go     # *.json (.version)
-├── handler_version.go  # VERSION (plain text)
-├── semver.go           # x.y.z parsing + bump
-└── handler_test.go etc.
+├── go.mod / go.sum
+├── justfile
+├── VERSION
+├── README{,-ja}.md
+├── docs/
+└── src/
+    ├── main.go             # entrypoint, argv parsing, exclusivity checks
+    ├── handler.go          # Handler interface (Get / Replace) + dispatcher
+    ├── handler_cargo.go    # Cargo.toml (TOML, [package].version)
+    ├── handler_json.go     # *.json (.version)
+    ├── handler_version.go  # VERSION (plain text)
+    ├── semver.go           # X.Y.Z parsing + bump
+    └── *_test.go           # unit tests per handler / semver / main
 ```
 
 ### Format detection (by basename)

@@ -17,7 +17,7 @@ test: lint
 # `-buildvcs=false` は jj+git-bare 構成で go の VCS スタンプ取得が失敗する回避策
 # (port-peeker と同じ理由)
 build: lint
-    go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=v$(cat VERSION)" -o bin/bump-semver .
+    go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=v$(cat VERSION)" -o bin/bump-semver ./src
 
 # ビルドして実行
 run *ARGS: build

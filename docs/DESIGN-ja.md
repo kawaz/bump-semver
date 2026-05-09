@@ -41,17 +41,25 @@ ACTION = major | minor | patch | get
 | `--write` + `get` | エラー (取得操作に書き戻しは無意味) |
 | いずれの違反もない | 正常実行 |
 
-### モジュール構成 (予定)
+### モジュール構成
+
+Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情報 (README / docs / justfile / VERSION / go.mod 等) のみを置く。`go.mod` 自体はリポジトリ直下のままで、import path / module path は `github.com/kawaz/bump-semver` から変わらない。ビルドは `go build ./src`。
 
 ```
 .
-├── main.go             # entrypoint, argv parsing, exclusivity checks
-├── handler.go          # Handler interface (Match / Get / Bump)
-├── handler_cargo.go    # Cargo.toml (TOML, [package].version)
-├── handler_json.go     # *.json (.version)
-├── handler_version.go  # VERSION (plain text)
-├── semver.go           # x.y.z parsing + bump
-└── handler_test.go etc.
+├── go.mod / go.sum
+├── justfile
+├── VERSION
+├── README{,-ja}.md
+├── docs/
+└── src/
+    ├── main.go             # entrypoint, argv parsing, exclusivity checks
+    ├── handler.go          # Handler interface (Get / Replace) + dispatcher
+    ├── handler_cargo.go    # Cargo.toml (TOML, [package].version)
+    ├── handler_json.go     # *.json (.version)
+    ├── handler_version.go  # VERSION (plain text)
+    ├── semver.go           # X.Y.Z parsing + bump
+    └── *_test.go           # 各ハンドラ・semver・main の単体テスト
 ```
 
 ### 形式判定 (basename)

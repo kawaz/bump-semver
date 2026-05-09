@@ -1,7 +1,16 @@
-# Decision Records (INDEX)
+# Decision Records (DR) Index
 
-設計判断の記録。ファイル名は `DR-NNNN-title.md` (4桁ゼロパディング)。
+bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` (4 桁ゼロパディング)。`docs-structure.md` ルールに従い `## Active` / `## Archived` / `## Moved to research/` で区分する。
 
-| DR | タイトル | ステータス |
-|---|---|---|
-| [DR-0001](./DR-0001-flat-actions-and-format-detection.md) | flat 4-action CLI + basename ベースのファイル形式判定 | Accepted |
+## Active
+
+- [DR-0001](./DR-0001-flat-actions-and-format-detection.md) — flat 4-action CLI + basename ベースのファイル形式判定
+- [DR-0002](./DR-0002-cargo-workspace-not-supported.md) — Cargo workspace の `[workspace.package].version` を MVP では扱わない
+
+## Archived
+
+(なし)
+
+## Moved to research/
+
+(なし)

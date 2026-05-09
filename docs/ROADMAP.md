@@ -23,7 +23,9 @@
 
 ### pre-release / build metadata 対応
 
-`1.2.3-alpha.1+build.42` 形式。MVP では `-` / `+` 含む入力をエラーで弾いている (DR-0001 不採用案 D)。kawaz の現用途では未使用。要望が出たら semver パッケージ (`golang.org/x/mod/semver` 等) を導入して対応。
+`1.2.3-alpha.1+build.42` 形式。MVP では `-` / `+` 含む入力をエラーで弾いている (DR-0001 不採用案 D + DR-0003 不採用案 D)。kawaz の現用途では未使用。要望が出たら semver パッケージ (`golang.org/x/mod/semver` 等) を導入して対応。
+
+なお prefix (`v` / `ver` / `version`) と separator (`. _ -`) の柔軟化は **DR-0003 で対応済**。`v1.2.3` / `version_1_2_3` / `ver-1-2-3` などはそのまま受理し、bump 後も prefix と separator を保持する。
 
 ### Cargo workspace の `[workspace.package].version` 対応
 

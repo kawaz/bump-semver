@@ -68,7 +68,11 @@ bump-semver minor package.json                # bump in memory, prints new versi
 bump-semver get .claude-plugin/plugin.json    # current version
 bump-semver patch --value 1.2.3               # 1.2.4
 bump-semver get --value 1.2.3                 # parse-validate (1.2.3) or error
+bump-semver patch --value v1.2.3              # v1.2.4 (prefix preserved)
+bump-semver minor --value version_1_2_3       # version_1_3_0 (prefix + separator preserved)
 ```
+
+The version parser also accepts an optional `v` / `ver` / `version` prefix and `.` / `_` / `-` separators (e.g. `v1.2.3`, `ver-1-2-3`, `version_1_2_3`); the chosen prefix and separator are preserved on output. Pre-release / build metadata (`-alpha.1`, `+build.42`) is not supported.
 
 ### Exit codes
 

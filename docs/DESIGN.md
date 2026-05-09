@@ -75,14 +75,17 @@ When stdin is a pipe, FILE is used **only** as a name hint for the dispatch abov
 
 ### Bump semantics
 
-For input `X.Y.Z`:
+The version parser accepts `[v|ver|version][_.-]?X<sep>Y<sep>Z`, where `<sep>` is one of `.` / `_` / `-` and is required to be the same on both sides (DR-0003). The optional prefix and the chosen separator are preserved through `Bump` and `String`:
 
-- `major` → `(X+1).0.0`
-- `minor` → `X.(Y+1).0`
-- `patch` → `X.Y.(Z+1)`
-- `get`   → `X.Y.Z` (identity)
+| Input | Action | Output |
+|---|---|---|
+| `1.2.3` | `patch` | `1.2.4` |
+| `v1.2.3` | `patch` | `v1.2.4` |
+| `version_1_2_3` | `minor` | `version_1_3_0` |
+| `ver-1-2-3` | `major` | `ver-2-0-0` |
+| `1-2-3` | `get` | `1-2-3` |
 
-Pre-release / build metadata (`-alpha.1`, `+build.42`, etc.) is **not** supported in the MVP — encountering one is an error. Add support to the handler / semver module when concretely needed.
+Inconsistent separators (`1.2-3`) are rejected. Pre-release / build metadata (`-alpha.1`, `+build.42`, etc.) is **not** supported in the MVP — encountering one is an error. Add support to the semver module when concretely needed.
 
 ### Output
 

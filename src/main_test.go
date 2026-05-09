@@ -70,6 +70,11 @@ func TestRun_ValueBumps(t *testing.T) {
 		{[]string{"minor", "--value", "1.2.3"}, "1.3.0\n"},
 		{[]string{"major", "--value", "1.2.3"}, "2.0.0\n"},
 		{[]string{"get", "--value", "1.2.3"}, "1.2.3\n"},
+		// v prefix / 柔軟 separator も最終的に同じ経路を通る
+		{[]string{"patch", "--value", "v1.2.3"}, "v1.2.4\n"},
+		{[]string{"minor", "--value", "version_1_2_3"}, "version_1_3_0\n"},
+		{[]string{"major", "--value", "ver-1-2-3"}, "ver-2-0-0\n"},
+		{[]string{"get", "--value", "v1.2.3"}, "v1.2.3\n"},
 	}
 	for _, tc := range cases {
 		var stdout bytes.Buffer
@@ -139,6 +144,46 @@ func TestRun_UnsupportedFile(t *testing.T) {
 	err := run([]string{"get", "README.md"}, bytes.NewReader(nil), &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "unsupported file") {
 		t.Errorf("expected unsupported-file error, got %v", err)
+	}
+}
+
+func TestRun_FileGetWithVPrefix(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "VERSION")
+	if err := os.WriteFile(path, []byte("v1.2.3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := run([]string{"get", path}, bytes.NewReader(nil), &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if stdout.String() != "v1.2.3\n" {
+		t.Errorf("stdout = %q, want v1.2.3\\n", stdout.String())
+	}
+}
+
+func TestRun_FileWriteVPrefixPreserved(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "package.json")
+	src := []byte(`{"name":"foo","version":"v1.2.3"}`)
+	if err := os.WriteFile(path, src, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := run([]string{"patch", path, "--write"}, bytes.NewReader(nil), &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := stdout.String(); got != "v1.2.4\n" {
+		t.Errorf("stdout = %q, want v1.2.4\\n", got)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"version":"v1.2.4"`) {
+		t.Errorf("file not updated:\n%s", string(got))
 	}
 }
 

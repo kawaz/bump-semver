@@ -68,7 +68,11 @@ bump-semver minor package.json                # メモリ上で bump、新バー
 bump-semver get .claude-plugin/plugin.json    # 現在のバージョン
 bump-semver patch --value 1.2.3               # 1.2.4
 bump-semver get --value 1.2.3                 # パース検証 (1.2.3) かエラー
+bump-semver patch --value v1.2.3              # v1.2.4 (prefix を保持)
+bump-semver minor --value version_1_2_3       # version_1_3_0 (prefix + separator を保持)
 ```
+
+バージョン文字列は `v` / `ver` / `version` の任意プレフィックスと `.` / `_` / `-` のセパレータを受理する (例: `v1.2.3`, `ver-1-2-3`, `version_1_2_3`)。プレフィックスとセパレータは bump 後の出力でも保持される。pre-release / build metadata (`-alpha.1`, `+build.42`) は非対応。
 
 ### 終了コード
 

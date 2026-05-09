@@ -189,6 +189,12 @@ jobs:
 
             test do
               assert_match "v#{version}", shell_output("#{bin}/bump-semver --version")
+              # Smoke test: pure --value path exercises argv parser + semver bump
+              # without touching the filesystem, which is enough to catch most
+              # build / linking regressions on the target platform.
+              assert_equal "1.2.4", shell_output("#{bin}/bump-semver patch --value 1.2.3").strip
+              assert_equal "2.0.0", shell_output("#{bin}/bump-semver major --value 1.2.3").strip
+              assert_equal "1.2.3", shell_output("#{bin}/bump-semver get --value 1.2.3").strip
             end
           end
           FORMULA

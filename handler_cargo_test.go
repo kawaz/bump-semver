@@ -1,0 +1,87 @@
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestCargoGet(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[package]
+name = "foo"
+version = "1.2.3"
+edition = "2021"
+
+[dependencies]
+serde = "1"
+`)
+	got, err := (cargoHandler{}).Get(in)
+	if err != nil {
+		t.Fatalf("Get error: %v", err)
+	}
+	if got != "1.2.3" {
+		t.Errorf("Get = %q, want 1.2.3", got)
+	}
+}
+
+func TestCargoGet_MissingPackage(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[dependencies]
+serde = "1"
+`)
+	if _, err := (cargoHandler{}).Get(in); err == nil {
+		t.Error("expected error for missing [package].version")
+	}
+}
+
+func TestCargoReplace_PreservesOrderAndComments(t *testing.T) {
+	t.Parallel()
+	in := []byte(`# top comment
+[package]
+name = "foo"
+version = "1.2.3"  # current version
+edition = "2021"
+
+[dependencies]
+serde = "1"
+# the dep below also has a "version" key — must not be touched
+serde_json = { version = "1.0.0" }
+`)
+	out, err := (cargoHandler{}).Replace(in, "2.0.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `version = "2.0.0"  # current version`) {
+		t.Errorf("Replace did not update [package].version line\n--- output ---\n%s", s)
+	}
+	if !strings.Contains(s, `serde_json = { version = "1.0.0" }`) {
+		t.Errorf("Replace touched [dependencies] version\n--- output ---\n%s", s)
+	}
+	if !strings.Contains(s, "# top comment") {
+		t.Errorf("Replace dropped top comment\n--- output ---\n%s", s)
+	}
+	if !strings.Contains(s, `name = "foo"`) {
+		t.Errorf("Replace dropped name line\n--- output ---\n%s", s)
+	}
+}
+
+func TestCargoReplace_MissingVersion(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[package]
+name = "foo"
+`)
+	if _, err := (cargoHandler{}).Replace(in, "2.0.0"); err == nil {
+		t.Error("expected error for missing version line")
+	}
+}
+
+func TestCargoReplace_MissingPackageSection(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[dependencies]
+serde = "1"
+`)
+	if _, err := (cargoHandler{}).Replace(in, "2.0.0"); err == nil {
+		t.Error("expected error for missing [package] section")
+	}
+}

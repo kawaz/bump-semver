@@ -142,6 +142,26 @@ func TestRun_UnsupportedFile(t *testing.T) {
 	}
 }
 
+func TestRun_FileWritePreservesMode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "package.json")
+	src := []byte(`{"name":"foo","version":"1.2.3"}`)
+	if err := os.WriteFile(path, src, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"patch", path, "--write"}, bytes.NewReader(nil), &bytes.Buffer{}); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0600 {
+		t.Errorf("permission = %o, want 0600", got)
+	}
+}
+
 func TestRun_StdinPipe(t *testing.T) {
 	t.Parallel()
 	// Use os.Pipe() so stdin is detected as a pipe (not char device).

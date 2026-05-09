@@ -213,7 +213,13 @@ func run(argv []string, stdin io.Reader, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(args.file, out, 0644); err != nil {
+		// Preserve the existing file mode. Falling back to 0644 only if Stat
+		// fails (which usually means the file was just removed under us).
+		mode := os.FileMode(0644)
+		if fi, statErr := os.Stat(args.file); statErr == nil {
+			mode = fi.Mode().Perm()
+		}
+		if err := os.WriteFile(args.file, out, mode); err != nil {
 			return fmt.Errorf("write %s: %w", args.file, err)
 		}
 	}

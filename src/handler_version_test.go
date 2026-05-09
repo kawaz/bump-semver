@@ -37,7 +37,7 @@ func TestVersionHandler_Replace(t *testing.T) {
 		{"0.0.0", "1.0.0"},
 	}
 	for _, tc := range cases {
-		got, err := (versionHandler{}).Replace([]byte(tc.in), "1.0.0")
+		got, err := (versionHandler{}).Replace([]byte(tc.in), "0.0.0", "1.0.0")
 		if err != nil {
 			t.Errorf("Replace(%q) error: %v", tc.in, err)
 			continue

@@ -209,7 +209,7 @@ func run(argv []string, stdin io.Reader, stdout io.Writer) error {
 	fmt.Fprintln(stdout, newV.String())
 
 	if args.write {
-		out, err := handler.Replace(content, newV.String())
+		out, err := handler.Replace(content, cur, newV.String())
 		if err != nil {
 			return err
 		}

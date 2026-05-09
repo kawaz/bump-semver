@@ -21,21 +21,17 @@ func (jsonHandler) Get(content []byte) (string, error) {
 	return doc.Version, nil
 }
 
-func (jsonHandler) Replace(content []byte, newVersion string) ([]byte, error) {
-	cur, err := (jsonHandler{}).Get(content)
-	if err != nil {
-		return nil, err
-	}
-	// Anchor on the literal "version": "<cur>" pattern. Using the current
+func (jsonHandler) Replace(content []byte, current, newVersion string) ([]byte, error) {
+	// Anchor on the literal "version": "<current>" pattern. Using the current
 	// value as part of the regex disambiguates the top-level version from
 	// nested "version" keys whose value happens to differ.
-	re := regexp.MustCompile(`("version"\s*:\s*)"` + regexp.QuoteMeta(cur) + `"`)
+	re := regexp.MustCompile(`("version"\s*:\s*)"` + regexp.QuoteMeta(current) + `"`)
 	matches := re.FindAllSubmatchIndex(content, -1)
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("JSON: cannot locate \"version\" line in source")
 	}
 	if len(matches) > 1 {
-		return nil, fmt.Errorf("JSON: multiple \"version\": %q occurrences; cannot disambiguate top-level version", cur)
+		return nil, fmt.Errorf("JSON: multiple \"version\": %q occurrences; cannot disambiguate top-level version", current)
 	}
 	m := matches[0]
 	out := make([]byte, 0, len(content)+len(newVersion))

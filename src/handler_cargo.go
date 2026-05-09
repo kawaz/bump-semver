@@ -32,7 +32,7 @@ var (
 	cargoVersionLineRe = regexp.MustCompile(`(?m)^(\s*version\s*=\s*)(["'])([^"']*)(["'])`)
 )
 
-func (cargoHandler) Replace(content []byte, newVersion string) ([]byte, error) {
+func (cargoHandler) Replace(content []byte, _ /* current */, newVersion string) ([]byte, error) {
 	hdr := cargoPackageHeaderRe.FindIndex(content)
 	if hdr == nil {
 		return nil, fmt.Errorf("Cargo.toml: missing [package] section")

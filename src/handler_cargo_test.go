@@ -47,7 +47,7 @@ serde = "1"
 # the dep below also has a "version" key — must not be touched
 serde_json = { version = "1.0.0" }
 `)
-	out, err := (cargoHandler{}).Replace(in, "2.0.0")
+	out, err := (cargoHandler{}).Replace(in, "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestCargoReplace_MissingVersion(t *testing.T) {
 	in := []byte(`[package]
 name = "foo"
 `)
-	if _, err := (cargoHandler{}).Replace(in, "2.0.0"); err == nil {
+	if _, err := (cargoHandler{}).Replace(in, "", "2.0.0"); err == nil {
 		t.Error("expected error for missing version line")
 	}
 }
@@ -81,7 +81,7 @@ func TestCargoReplace_MissingPackageSection(t *testing.T) {
 	in := []byte(`[dependencies]
 serde = "1"
 `)
-	if _, err := (cargoHandler{}).Replace(in, "2.0.0"); err == nil {
+	if _, err := (cargoHandler{}).Replace(in, "", "2.0.0"); err == nil {
 		t.Error("expected error for missing [package] section")
 	}
 }
@@ -93,7 +93,7 @@ name = "foo"
 version = '1.2.3'
 edition = "2021"
 `)
-	out, err := (cargoHandler{}).Replace(in, "1.2.4")
+	out, err := (cargoHandler{}).Replace(in, "1.2.3", "1.2.4")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -120,7 +120,7 @@ mockito = "1.0"
 [profile.release]
 opt-level = 3
 `)
-	out, err := (cargoHandler{}).Replace(in, "2.0.0")
+	out, err := (cargoHandler{}).Replace(in, "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}

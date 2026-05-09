@@ -45,7 +45,7 @@ func TestJSONReplace_PreservesKeyOrder(t *testing.T) {
   }
 }
 `)
-	out, err := (jsonHandler{}).Replace(in, "2.0.0")
+	out, err := (jsonHandler{}).Replace(in, "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestJSONReplace_AmbiguousValueErrors(t *testing.T) {
   }
 }
 `)
-	if _, err := (jsonHandler{}).Replace(in, "2.0.0"); err == nil {
+	if _, err := (jsonHandler{}).Replace(in, "1.0.0", "2.0.0"); err == nil {
 		t.Error("expected error for ambiguous version match")
 	}
 }
@@ -98,7 +98,7 @@ func TestJSONReplace_MoonModFixture(t *testing.T) {
   "description": "test"
 }
 `)
-	out, err := (jsonHandler{}).Replace(in, "0.2.0")
+	out, err := (jsonHandler{}).Replace(in, "0.1.0", "0.2.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestJSONReplace_MarketplaceFixture(t *testing.T) {
   ]
 }
 `)
-	out, err := (jsonHandler{}).Replace(in, "1.1.0")
+	out, err := (jsonHandler{}).Replace(in, "1.0.0", "1.1.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestJSONReplace_VersionAtEnd(t *testing.T) {
 	if err != nil || got != "1.2.3" {
 		t.Fatalf("Get = %q err=%v", got, err)
 	}
-	out, err := (jsonHandler{}).Replace(in, "1.2.4")
+	out, err := (jsonHandler{}).Replace(in, "1.2.3", "1.2.4")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}

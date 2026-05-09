@@ -7,9 +7,15 @@ import (
 )
 
 // Handler reads / writes the version string of a single file format.
+//
+// Replace is given both the current and new version explicitly. current is
+// what Get returned for the same content, threaded through so handlers can
+// disambiguate (e.g. the JSON handler anchors its regex on the current value
+// to avoid touching nested "version" keys with different values) without
+// having to parse the content a second time.
 type Handler interface {
 	Get(content []byte) (string, error)
-	Replace(content []byte, newVersion string) ([]byte, error)
+	Replace(content []byte, current, newVersion string) ([]byte, error)
 }
 
 // detectHandler picks a Handler by basename. Detection is intentionally

@@ -9,19 +9,26 @@ import (
 
 type cargoHandler struct{}
 
-func (cargoHandler) Get(content []byte) (string, error) {
+func (cargoHandler) Inspect(content []byte) (Inspection, error) {
 	var doc struct {
 		Package struct {
 			Version string `toml:"version"`
+			Name    string `toml:"name"`
 		} `toml:"package"`
 	}
 	if err := toml.Unmarshal(content, &doc); err != nil {
-		return "", fmt.Errorf("parse Cargo.toml: %w", err)
+		return Inspection{}, fmt.Errorf("parse Cargo.toml: %w", err)
 	}
 	if doc.Package.Version == "" {
-		return "", fmt.Errorf("Cargo.toml: missing [package].version")
+		return Inspection{}, fmt.Errorf("Cargo.toml: missing [package].version")
 	}
-	return doc.Package.Version, nil
+	insp := Inspection{
+		Versions: []Field{{Value: doc.Package.Version, Path: "[package].version"}},
+	}
+	if doc.Package.Name != "" {
+		insp.Names = append(insp.Names, Field{Value: doc.Package.Name, Path: "[package].name"})
+	}
+	return insp, nil
 }
 
 var (
@@ -47,7 +54,6 @@ func (cargoHandler) Replace(content []byte, _ /* current */, newVersion string) 
 	if loc == nil {
 		return nil, fmt.Errorf("Cargo.toml: missing [package].version line")
 	}
-	// loc indices: [matchS, matchE, g1S, g1E, g2S, g2E, g3S, g3E, g4S, g4E]
 	out := make([]byte, 0, len(content)+len(newVersion))
 	out = append(out, content[:sectionStart]...)
 	out = append(out, section[:loc[2]]...)       // before group1 (line up to "version =")

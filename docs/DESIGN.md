@@ -25,20 +25,25 @@ Hide format detection inside the tool, and keep the CLI surface to **action + in
 ### CLI surface
 
 ```
-bump-semver <ACTION> <FILE | --value VER> [--write]
+bump-semver <ACTION> <FILE...> [--write]
+bump-semver <ACTION> --value VER
 
 ACTION = major | minor | patch | get
 ```
 
 `ACTION` is a flat 4-value enum. Keeping `get` at the same level as the bump actions structurally eliminates subcommand branching and argument-order ambiguity.
 
+Multiple FILEs are bumped together as a single unit (DR-0004). Their detected versions must agree; their detected names are also cross-checked when available.
+
 ### Mutual exclusivity rules
 
 | Combination | Result |
 |---|---|
-| `FILE` + `--value` | Error (exactly one is required) |
+| `FILE...` + `--value` | Error (exactly one form is required) |
 | `--write` + `--value` | Error (no file to write back to) |
 | `--write` + `get` | Error (no meaning for a read-only operation) |
+| stdin pipe + multiple `FILE...` | stdin pipe is ignored, files are read from disk |
+| stdin pipe + single `FILE` + `--write` | Error (stdin is the source, conflicts with writing back) |
 | Otherwise | Proceed |
 
 ### Module layout
@@ -53,13 +58,14 @@ Go sources live under `src/`, leaving only metadata (README / docs / justfile / 
 ├── README{,-ja}.md
 ├── docs/
 └── src/
-    ├── main.go             # entrypoint, argv parsing, exclusivity checks
-    ├── handler.go          # Handler interface (Get / Replace) + dispatcher
-    ├── handler_cargo.go    # Cargo.toml (TOML, [package].version)
-    ├── handler_json.go     # *.json (.version)
-    ├── handler_version.go  # VERSION (plain text)
-    ├── semver.go           # X.Y.Z parsing + bump
-    └── *_test.go           # unit tests per handler / semver / main
+    ├── main.go              # entrypoint, argv parsing, multi-file orchestration
+    ├── handler.go           # Handler interface (Inspect / Replace) + dispatcher
+    ├── handler_cargo.go     # Cargo.toml (TOML, [package].version + .name)
+    ├── handler_json.go      # *.json ($.version + optional $.name)
+    ├── handler_npm_lock.go  # package-lock.json (npm 7+, $.version + $.packages[""].version)
+    ├── handler_version.go   # VERSION (plain text)
+    ├── semver.go            # X.Y.Z parsing + bump (with v/ver/version prefix and . _ - separators)
+    └── *_test.go            # unit + integration tests
 ```
 
 ### Format detection (by basename)
@@ -68,10 +74,39 @@ Go sources live under `src/`, leaving only metadata (README / docs / justfile / 
 |---|---|
 | `basename(path) == "Cargo.toml"` | cargo |
 | `basename(path) == "VERSION"` | version |
+| `basename(path) == "package-lock.json"` | npm-lock (must be checked before the generic `.json` branch) |
 | `path` ends with `.json` | json |
 | Otherwise | Error (`unsupported file: <path>`) |
 
-When stdin is a pipe, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin.
+When stdin is a pipe and exactly one FILE is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin. With multiple FILEs the stdin pipe is ignored — the explicit files take precedence (cat / sed convention).
+
+### Handler interface and consistency checks (DR-0004)
+
+Each handler returns an `Inspection` describing every detected version-like and name-like value in the file:
+
+```go
+type Field struct {
+    Value string
+    Path  string  // human-readable: "$.version", "[package].version", "(file content)" 等
+}
+
+type Inspection struct {
+    Versions []Field  // 1+
+    Names    []Field  // 0+ (optional)
+}
+
+type Handler interface {
+    Inspect(content []byte) (Inspection, error)
+    Replace(content []byte, current, newVersion string) ([]byte, error)
+}
+```
+
+main aggregates `Versions` and `Names` across all FILEs and requires:
+
+- All version fields agree (otherwise `version mismatch:` with file:path = value lines)
+- All name fields agree where available (otherwise `name mismatch:` ...). Files without a name are skipped, so `Cargo.toml` + `VERSION` works fine.
+
+`Replace` writes only the version field(s); names are never touched. The `package-lock.json` handler streams the JSON document with a decoder so dependency entries (`$.packages["node_modules/..."]`) are guaranteed not to be rewritten even when their version happens to equal the current root version.
 
 ### Bump semantics
 

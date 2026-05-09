@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestCargoGet(t *testing.T) {
+func TestCargoInspect(t *testing.T) {
 	t.Parallel()
 	in := []byte(`[package]
 name = "foo"
@@ -15,22 +15,44 @@ edition = "2021"
 [dependencies]
 serde = "1"
 `)
-	got, err := (cargoHandler{}).Get(in)
+	insp, err := (cargoHandler{}).Inspect(in)
 	if err != nil {
-		t.Fatalf("Get error: %v", err)
+		t.Fatalf("Inspect error: %v", err)
 	}
-	if got != "1.2.3" {
-		t.Errorf("Get = %q, want 1.2.3", got)
+	if len(insp.Versions) != 1 || insp.Versions[0].Value != "1.2.3" || insp.Versions[0].Path != "[package].version" {
+		t.Errorf("Versions = %+v, want one [package].version=1.2.3", insp.Versions)
+	}
+	if len(insp.Names) != 1 || insp.Names[0].Value != "foo" || insp.Names[0].Path != "[package].name" {
+		t.Errorf("Names = %+v, want one [package].name=foo", insp.Names)
 	}
 }
 
-func TestCargoGet_MissingPackage(t *testing.T) {
+func TestCargoInspect_MissingPackage(t *testing.T) {
 	t.Parallel()
 	in := []byte(`[dependencies]
 serde = "1"
 `)
-	if _, err := (cargoHandler{}).Get(in); err == nil {
+	if _, err := (cargoHandler{}).Inspect(in); err == nil {
 		t.Error("expected error for missing [package].version")
+	}
+}
+
+func TestCargoInspect_NoName(t *testing.T) {
+	t.Parallel()
+	// [package].name は optional 扱い: 無くても Inspect は通す (Versions だけ返す)
+	in := []byte(`[package]
+version = "1.2.3"
+edition = "2021"
+`)
+	insp, err := (cargoHandler{}).Inspect(in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Versions) != 1 {
+		t.Errorf("Versions = %+v, want one entry", insp.Versions)
+	}
+	if len(insp.Names) != 0 {
+		t.Errorf("Names should be empty when [package].name is missing, got %+v", insp.Names)
 	}
 }
 
@@ -139,10 +161,10 @@ opt-level = 3
 	}
 }
 
-func TestCargoGet_WorkspacePackageNotMatched(t *testing.T) {
+func TestCargoInspect_WorkspacePackageNotMatched(t *testing.T) {
 	t.Parallel()
 	// [workspace.package].version は MVP では扱わない (DR-0002 参照)。
-	// [package] が無い時点で Get がエラーになる必要がある。
+	// [package] が無い時点で Inspect がエラーになる必要がある。
 	in := []byte(`[workspace]
 members = ["crate-a", "crate-b"]
 
@@ -150,7 +172,7 @@ members = ["crate-a", "crate-b"]
 version = "1.0.0"
 edition = "2021"
 `)
-	if _, err := (cargoHandler{}).Get(in); err == nil {
+	if _, err := (cargoHandler{}).Inspect(in); err == nil {
 		t.Error("expected error: [workspace.package].version should not be matched as [package].version")
 	}
 }

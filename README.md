@@ -21,7 +21,8 @@ Pre-built binaries for Linux / macOS / Windows (amd64, arm64) are also published
 ## Usage
 
 ```
-bump-semver <ACTION> <FILE | --value VER> [--write]
+bump-semver <ACTION> <FILE...> [--write]
+bump-semver <ACTION> --value VER
 ```
 
 ### Actions
@@ -37,8 +38,8 @@ bump-semver <ACTION> <FILE | --value VER> [--write]
 
 | Option | Description |
 |---|---|
-| `--value VER` | Use VER as input instead of reading from FILE (mutually exclusive with FILE) |
-| `--write` | Write the new version back to FILE (only valid with `major` / `minor` / `patch`, mutually exclusive with `--value`) |
+| `--value VER` | Use VER as input instead of reading from FILE(s) (mutually exclusive with FILE) |
+| `--write` | Write the new version back to each FILE (only valid with `major` / `minor` / `patch`, mutually exclusive with `--value`) |
 
 ### Supported file formats
 
@@ -46,15 +47,27 @@ Auto-detected by basename:
 
 | Pattern | Format |
 |---|---|
-| `Cargo.toml` | TOML, `[package].version` |
-| `*.json` | JSON, `.version` (covers `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `moon.mod.json`) |
+| `Cargo.toml` | TOML, `[package].version` (and `[package].name` for cross-file checks) |
+| `package-lock.json` | npm 7+ lockfile, `$.version` + `$.packages[""].version` (deps untouched). Lockfile v1 is rejected — regenerate with npm 7+. |
+| `*.json` | JSON, `$.version` (and optional `$.name`). Covers `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `moon.mod.json`. |
 | `VERSION` | plain text |
 
 Unsupported files cause an explicit error (no regex fallback by design).
 
+### Multiple files: cross-file consistency
+
+Pass multiple FILEs to bump them as a single unit. Versions across files must already agree (otherwise: `version mismatch:` with file:path = value lines). Detected package names are also cross-checked when available, to guard against accidentally bumping files from a different project together; names are never written back.
+
+```bash
+bump-semver patch package.json package-lock.json --write
+bump-semver get   .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
+```
+
+`get` with multiple FILEs works as a CI-friendly consistency check (no `--write` needed, just verifies that all detected version fields agree).
+
 ### stdin pipe
 
-When stdin is a pipe, FILE is treated as a name hint and the content is read from stdin. Useful for comparing across revisions without checking out the file:
+When stdin is a pipe **and exactly one FILE is given**, FILE is treated as a name hint and content is read from stdin. With multiple FILEs the stdin pipe is ignored (files override stdin, matching the cat/sed convention). Useful for comparing across revisions without checking out the file:
 
 ```bash
 jj file show v0.1.0 Cargo.toml | bump-semver get Cargo.toml

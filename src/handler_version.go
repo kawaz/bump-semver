@@ -7,12 +7,14 @@ import (
 
 type versionHandler struct{}
 
-func (versionHandler) Get(content []byte) (string, error) {
+func (versionHandler) Inspect(content []byte) (Inspection, error) {
 	s := strings.TrimSpace(string(content))
 	if s == "" {
-		return "", fmt.Errorf("VERSION: empty")
+		return Inspection{}, fmt.Errorf("VERSION: empty")
 	}
-	return s, nil
+	return Inspection{
+		Versions: []Field{{Value: s, Path: "(file content)"}},
+	}, nil
 }
 
 func (versionHandler) Replace(content []byte, _ /* current */, newVersion string) ([]byte, error) {

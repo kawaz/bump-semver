@@ -25,20 +25,25 @@ bump {{level}} -w -f package.json                    -p '"version":\s*"([^"]+)"'
 ### CLI 構造
 
 ```
-bump-semver <ACTION> <FILE | --value VER> [--write]
+bump-semver <ACTION> <FILE...> [--write]
+bump-semver <ACTION> --value VER
 
 ACTION = major | minor | patch | get
 ```
 
 `ACTION` は flat な 4 値。`get` も他と同じ階層に置くことで、サブコマンド分岐や引数順不同問題を構造的に消す。
 
+複数 FILE は単一の単位として一括 bump する (DR-0004)。検出された全 version は事前に一致している必要があり、name (取れた範囲) も整合性検証される。
+
 ### 引数排他ルール
 
 | 組み合わせ | 動作 |
 |---|---|
-| `FILE` + `--value` | エラー (どちらか一方必須・両方は不可) |
+| `FILE...` + `--value` | エラー (どちらか一方必須・両方は不可) |
 | `--write` + `--value` | エラー (書き戻し対象なし) |
 | `--write` + `get` | エラー (取得操作に書き戻しは無意味) |
+| stdin pipe + 複数 `FILE...` | stdin pipe を無視、ファイルから読む |
+| stdin pipe + 単一 `FILE` + `--write` | エラー (stdin が入力源、書き戻し先と矛盾) |
 | いずれの違反もない | 正常実行 |
 
 ### モジュール構成
@@ -53,13 +58,14 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
 ├── README{,-ja}.md
 ├── docs/
 └── src/
-    ├── main.go             # entrypoint, argv parsing, exclusivity checks
-    ├── handler.go          # Handler interface (Get / Replace) + dispatcher
-    ├── handler_cargo.go    # Cargo.toml (TOML, [package].version)
-    ├── handler_json.go     # *.json (.version)
-    ├── handler_version.go  # VERSION (plain text)
-    ├── semver.go           # X.Y.Z parsing + bump
-    └── *_test.go           # 各ハンドラ・semver・main の単体テスト
+    ├── main.go              # entrypoint, argv パース, multi-file 整合性検証
+    ├── handler.go           # Handler interface (Inspect / Replace) + dispatcher
+    ├── handler_cargo.go     # Cargo.toml (TOML, [package].version + .name)
+    ├── handler_json.go      # *.json ($.version + optional $.name)
+    ├── handler_npm_lock.go  # package-lock.json (npm 7+, $.version + $.packages[""].version)
+    ├── handler_version.go   # VERSION (plain text)
+    ├── semver.go            # X.Y.Z parsing + bump (v / ver / version prefix と . _ - separator)
+    └── *_test.go            # 単体 + 統合テスト
 ```
 
 ### 形式判定 (basename)
@@ -68,10 +74,39 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
 |---|---|
 | `basename(path) == "Cargo.toml"` | cargo |
 | `basename(path) == "VERSION"` | version |
+| `basename(path) == "package-lock.json"` | npm-lock (`*.json` 一般枝より先に判定) |
 | `path` が `*.json` で終わる | json |
 | 上記以外 | エラー (`unsupported file: <path>`) |
 
-stdin がパイプの場合は FILE を「名前ヒント」として上記判定にだけ使い、内容は stdin から読む。
+stdin がパイプ **かつ FILE が 1 個** のときは FILE を「名前ヒント」として上記判定にだけ使い、内容は stdin から読む。複数 FILE のときは stdin pipe を無視してファイルから読む (cat / sed と同じく明示 FILE が優先)。
+
+### Handler interface と整合性検証 (DR-0004)
+
+各 handler はファイル中の version-like / name-like 値を全部記録した `Inspection` を返す:
+
+```go
+type Field struct {
+    Value string
+    Path  string  // エラー表示用: "$.version", "[package].version", "(file content)" 等
+}
+
+type Inspection struct {
+    Versions []Field  // 1+
+    Names    []Field  // 0+ (optional)
+}
+
+type Handler interface {
+    Inspect(content []byte) (Inspection, error)
+    Replace(content []byte, current, newVersion string) ([]byte, error)
+}
+```
+
+main は全 FILE 横断で `Versions` と `Names` を集約し、以下を要求:
+
+- 全 version field が一致 (不一致なら `version mismatch:` で file:path = value を列挙)
+- 取れた範囲で全 name field が一致 (不一致なら `name mismatch:` ...)。name を持たないファイルはスキップされるので `Cargo.toml` + `VERSION` 混在は問題なく通る。
+
+`Replace` は version field のみ書き換え、name は触らない。`package-lock.json` handler は `json.Decoder` で構造を辿るので、依存エントリ (`$.packages["node_modules/..."]`) の version は仮に root version と同値でも書き換わらないことが保証される。
 
 ### bump セマンティクス
 

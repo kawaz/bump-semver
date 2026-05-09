@@ -21,7 +21,8 @@ Linux / macOS / Windows (amd64, arm64) のビルド済みバイナリも GitHub 
 ## 使い方
 
 ```
-bump-semver <ACTION> <FILE | --value VER> [--write]
+bump-semver <ACTION> <FILE...> [--write]
+bump-semver <ACTION> --value VER
 ```
 
 ### アクション
@@ -38,7 +39,7 @@ bump-semver <ACTION> <FILE | --value VER> [--write]
 | オプション | 説明 |
 |---|---|
 | `--value VER` | FILE の代わりに VER を入力として使う (FILE と排他) |
-| `--write` | 新しいバージョンを FILE に書き戻す (`major` / `minor` / `patch` のみ、`--value` と排他) |
+| `--write` | 新しいバージョンを各 FILE に書き戻す (`major` / `minor` / `patch` のみ、`--value` と排他) |
 
 ### サポートするファイル形式
 
@@ -46,15 +47,27 @@ basename で自動判定:
 
 | パターン | 形式 |
 |---|---|
-| `Cargo.toml` | TOML、`[package].version` |
-| `*.json` | JSON、`.version` (`package.json`、`.claude-plugin/plugin.json`、`.claude-plugin/marketplace.json`、`moon.mod.json` を網羅) |
+| `Cargo.toml` | TOML、`[package].version` (整合性検証用に `[package].name` も読む) |
+| `package-lock.json` | npm 7+ の lockfile、`$.version` + `$.packages[""].version` (依存は触らない)。lockfile v1 はエラー (`npm 7+` で再生成) |
+| `*.json` | JSON、`$.version` (オプションで `$.name`)。`package.json` / `.claude-plugin/plugin.json` / `.claude-plugin/marketplace.json` / `moon.mod.json` を網羅 |
 | `VERSION` | プレーンテキスト |
 
 未対応ファイルは明示的なエラー (regex フォールバックは設計上持たない)。
 
+### 複数ファイル: 整合性検証
+
+複数の FILE を渡すと 1 つの単位として bump される。全 file 間で version は事前に一致している必要がある (不一致なら `version mismatch:` で file:path = value 列挙)。検出された package name も取れた範囲で整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
+
+```bash
+bump-semver patch package.json package-lock.json --write
+bump-semver get   .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
+```
+
+複数 FILE 指定時の `get` は CI 用の整合性チェックとして機能する (`--write` 不要、全 version が一致しているかだけ検証)。
+
 ### stdin パイプ
 
-stdin がパイプの場合、FILE は名前ヒントとして扱われ、内容は stdin から読み込まれる。ファイルをチェックアウトせずにリビジョン間で比較したい時に有用:
+stdin がパイプ **かつ FILE が 1 個のとき**、FILE は名前ヒントとして扱われ、内容は stdin から読み込まれる。複数 FILE のときは stdin pipe は無視される (cat / sed と同じく「明示 FILE が stdin より優先」)。ファイルをチェックアウトせずにリビジョン間で比較したい時に有用:
 
 ```bash
 jj file show v0.1.0 Cargo.toml | bump-semver get Cargo.toml

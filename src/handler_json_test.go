@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestJSONGet(t *testing.T) {
+func TestJSONInspect(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{
   "name": "foo",
@@ -15,20 +15,36 @@ func TestJSONGet(t *testing.T) {
   }
 }
 `)
-	got, err := (jsonHandler{}).Get(in)
+	insp, err := (jsonHandler{}).Inspect(in)
 	if err != nil {
-		t.Fatalf("Get error: %v", err)
+		t.Fatalf("Inspect error: %v", err)
 	}
-	if got != "1.2.3" {
-		t.Errorf("Get = %q, want 1.2.3", got)
+	if len(insp.Versions) != 1 || insp.Versions[0].Value != "1.2.3" || insp.Versions[0].Path != "$.version" {
+		t.Errorf("Versions = %+v, want one $.version=1.2.3", insp.Versions)
+	}
+	if len(insp.Names) != 1 || insp.Names[0].Value != "foo" || insp.Names[0].Path != "$.name" {
+		t.Errorf("Names = %+v, want one $.name=foo", insp.Names)
 	}
 }
 
-func TestJSONGet_MissingVersion(t *testing.T) {
+func TestJSONInspect_MissingVersion(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{"name": "foo"}`)
-	if _, err := (jsonHandler{}).Get(in); err == nil {
+	if _, err := (jsonHandler{}).Inspect(in); err == nil {
 		t.Error("expected error for missing version")
+	}
+}
+
+func TestJSONInspect_NoName(t *testing.T) {
+	t.Parallel()
+	// .name optional, .version 必須
+	in := []byte(`{"version": "1.2.3"}`)
+	insp, err := (jsonHandler{}).Inspect(in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Names) != 0 {
+		t.Errorf("Names should be empty when .name is absent, got %+v", insp.Names)
 	}
 }
 
@@ -146,9 +162,9 @@ func TestJSONReplace_VersionAtEnd(t *testing.T) {
   "version": "1.2.3"
 }
 `)
-	got, err := (jsonHandler{}).Get(in)
-	if err != nil || got != "1.2.3" {
-		t.Fatalf("Get = %q err=%v", got, err)
+	insp, err := (jsonHandler{}).Inspect(in)
+	if err != nil || len(insp.Versions) != 1 || insp.Versions[0].Value != "1.2.3" {
+		t.Fatalf("Inspect = %+v err=%v", insp, err)
 	}
 	out, err := (jsonHandler{}).Replace(in, "1.2.3", "1.2.4")
 	if err != nil {

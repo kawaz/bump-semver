@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -14,10 +15,10 @@ func TestParseArgs_Valid(t *testing.T) {
 		argv []string
 		want cliArgs
 	}{
-		{[]string{"patch", "Cargo.toml"}, cliArgs{action: "patch", file: "Cargo.toml"}},
-		{[]string{"patch", "Cargo.toml", "--write"}, cliArgs{action: "patch", file: "Cargo.toml", write: true}},
-		{[]string{"patch", "--write", "Cargo.toml"}, cliArgs{action: "patch", file: "Cargo.toml", write: true}},
-		{[]string{"get", "VERSION"}, cliArgs{action: "get", file: "VERSION"}},
+		{[]string{"patch", "Cargo.toml"}, cliArgs{action: "patch", files: []string{"Cargo.toml"}}},
+		{[]string{"patch", "Cargo.toml", "--write"}, cliArgs{action: "patch", files: []string{"Cargo.toml"}, write: true}},
+		{[]string{"patch", "--write", "Cargo.toml"}, cliArgs{action: "patch", files: []string{"Cargo.toml"}, write: true}},
+		{[]string{"get", "VERSION"}, cliArgs{action: "get", files: []string{"VERSION"}}},
 		{[]string{"minor", "--value", "1.2.3"}, cliArgs{action: "minor", value: "1.2.3"}},
 		{[]string{"minor", "--value=1.2.3"}, cliArgs{action: "minor", value: "1.2.3"}},
 		{[]string{"--version"}, cliArgs{special: "version"}},
@@ -25,7 +26,10 @@ func TestParseArgs_Valid(t *testing.T) {
 		{[]string{"--help"}, cliArgs{special: "help"}},
 		{[]string{"-h"}, cliArgs{special: "help"}},
 		{[]string{}, cliArgs{special: "help"}},
-		{[]string{"patch", "--", "--weird-file.json"}, cliArgs{action: "patch", file: "--weird-file.json"}},
+		{[]string{"patch", "--", "--weird-file.json"}, cliArgs{action: "patch", files: []string{"--weird-file.json"}}},
+		// 複数 FILE は valid に
+		{[]string{"get", "package.json", "package-lock.json"}, cliArgs{action: "get", files: []string{"package.json", "package-lock.json"}}},
+		{[]string{"patch", "a.json", "b.json", "c.json", "--write"}, cliArgs{action: "patch", files: []string{"a.json", "b.json", "c.json"}, write: true}},
 	}
 	for _, tc := range cases {
 		got, err := parseArgs(tc.argv)
@@ -33,7 +37,7 @@ func TestParseArgs_Valid(t *testing.T) {
 			t.Errorf("parseArgs(%v) error: %v", tc.argv, err)
 			continue
 		}
-		if got != tc.want {
+		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("parseArgs(%v) = %+v, want %+v", tc.argv, got, tc.want)
 		}
 	}
@@ -49,7 +53,6 @@ func TestParseArgs_Errors(t *testing.T) {
 		{"get", "VERSION", "--write"},                 // get + write
 		{"patch", "--value"},                          // --value missing arg
 		{"patch", "--value", "1.0", "--value", "1.1"}, // double --value
-		{"patch", "Cargo.toml", "Other"},              // multiple file
 		{"patch", "Cargo.toml", "--unknown"},          // unknown option
 		{"patch", "Cargo.toml", "--write", "--write"}, // double write
 	}
@@ -241,6 +244,152 @@ func TestRun_StdinPipeWriteRejected(t *testing.T) {
 	err = run([]string{"patch", "package.json", "--write"}, r, &bytes.Buffer{})
 	if err == nil {
 		t.Error("expected error for stdin pipe + --write")
+	}
+	_ = r.Close()
+}
+
+// --- multi-file tests --------------------------------------------------------
+
+func TestRun_MultiFile_AllSame(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package.json")
+	plug := filepath.Join(dir, "plugin.json")
+	if err := os.WriteFile(pkg, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plug, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := run([]string{"patch", pkg, plug, "--write"}, bytes.NewReader(nil), &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "1.2.4" {
+		t.Errorf("stdout = %q, want 1.2.4", got)
+	}
+	for _, p := range []string{pkg, plug} {
+		got, _ := os.ReadFile(p)
+		if !strings.Contains(string(got), `"version":"1.2.4"`) {
+			t.Errorf("%s not updated:\n%s", p, string(got))
+		}
+	}
+}
+
+func TestRun_MultiFile_VersionMismatch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	if err := os.WriteFile(a, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`{"name":"foo","version":"1.2.4"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"patch", a, b, "--write"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected version mismatch error, got nil")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "version mismatch:") {
+		t.Errorf("error does not start with 'version mismatch:': %q", msg)
+	}
+	if !strings.Contains(msg, "1.2.3") || !strings.Contains(msg, "1.2.4") {
+		t.Errorf("error should list both values, got: %q", msg)
+	}
+}
+
+func TestRun_MultiFile_NameMismatch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	if err := os.WriteFile(a, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`{"name":"bar","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"patch", a, b, "--write"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected name mismatch error, got nil")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "name mismatch:") {
+		t.Errorf("error does not start with 'name mismatch:': %q", msg)
+	}
+	if !strings.Contains(msg, "foo") || !strings.Contains(msg, "bar") {
+		t.Errorf("error should list both names, got: %q", msg)
+	}
+}
+
+func TestRun_MultiFile_NameOptional(t *testing.T) {
+	t.Parallel()
+	// VERSION (name 取れない) + package.json (name=foo) は version 一致してれば OK
+	dir := t.TempDir()
+	v := filepath.Join(dir, "VERSION")
+	pkg := filepath.Join(dir, "package.json")
+	if err := os.WriteFile(v, []byte("1.2.3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pkg, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if err := run([]string{"minor", v, pkg, "--write"}, bytes.NewReader(nil), &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "1.3.0" {
+		t.Errorf("stdout = %q, want 1.3.0", got)
+	}
+}
+
+func TestRun_MultiFile_GetForVerification(t *testing.T) {
+	t.Parallel()
+	// `get` モード単独でも整合性検証として機能する
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	if err := os.WriteFile(a, []byte(`{"name":"x","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`{"name":"x","version":"1.2.4"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"get", a, b}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected version mismatch on get, got nil")
+	}
+}
+
+func TestRun_StdinPipeIgnoredWithMultiFile(t *testing.T) {
+	t.Parallel()
+	// stdin pipe があっても複数 FILE 指定時はファイルから読む (cat 慣例)
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		// stdin pipe には無関係なゴミを流す。multi-file path なので
+		// 読まれずに済むこと (= 結果が file 内容で決まる) を確認する。
+		_, _ = w.Write([]byte(`garbage to be ignored`))
+		_ = w.Close()
+	}()
+	var stdout bytes.Buffer
+	if err := run([]string{"patch", a, b}, r, &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "1.2.4" {
+		t.Errorf("stdout = %q, want 1.2.4 (read from files, not stdin)", got)
 	}
 	_ = r.Close()
 }

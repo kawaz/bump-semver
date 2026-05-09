@@ -8,17 +8,24 @@ import (
 
 type jsonHandler struct{}
 
-func (jsonHandler) Get(content []byte) (string, error) {
+func (jsonHandler) Inspect(content []byte) (Inspection, error) {
 	var doc struct {
 		Version string `json:"version"`
+		Name    string `json:"name"`
 	}
 	if err := json.Unmarshal(content, &doc); err != nil {
-		return "", fmt.Errorf("parse JSON: %w", err)
+		return Inspection{}, fmt.Errorf("parse JSON: %w", err)
 	}
 	if doc.Version == "" {
-		return "", fmt.Errorf("JSON: missing top-level \"version\"")
+		return Inspection{}, fmt.Errorf("JSON: missing top-level \"version\"")
 	}
-	return doc.Version, nil
+	insp := Inspection{
+		Versions: []Field{{Value: doc.Version, Path: "$.version"}},
+	}
+	if doc.Name != "" {
+		insp.Names = append(insp.Names, Field{Value: doc.Name, Path: "$.name"})
+	}
+	return insp, nil
 }
 
 func (jsonHandler) Replace(content []byte, current, newVersion string) ([]byte, error) {

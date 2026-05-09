@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "VERSION"
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.current }}
+      changed: ${{ steps.version.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check version change
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          CURRENT_VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "current=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+
+          # VERSION=0.0.0 (or empty) はプレースホルダとしてスキップ
+          if [ -z "$CURRENT_VERSION" ] || [ "$CURRENT_VERSION" = "0.0.0" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Placeholder version (${CURRENT_VERSION:-empty}); skipping release."
+            exit 0
+          fi
+
+          # semver 形式の検証
+          if ! echo "$CURRENT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid VERSION format: ${CURRENT_VERSION}"
+            exit 1
+          fi
+
+          # 既にリリース済みかチェック
+          if gh release view "v${CURRENT_VERSION}" --repo "$REPO" >/dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Version unchanged: v${CURRENT_VERSION} already released"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "New version detected: v${CURRENT_VERSION}"
+          fi
+
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+          - goos: windows
+            goarch: arm64
+            ext: ".exe"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          OUTNAME="bump-semver-${GOOS}-${GOARCH}${EXT}"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=v${VERSION}" \
+            -o "${OUTNAME}" \
+            .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bump-semver-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bump-semver-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+
+  release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create release with tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create "v${VERSION}" \
+            --repo "$REPO" \
+            --title "v${VERSION}" \
+            --target "$COMMIT_SHA" \
+            --generate-notes \
+            bump-semver-*
+
+  update-homebrew:
+    needs: [check-version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          {
+            echo "darwin_arm64=$(sha256sum artifacts/bump-semver-darwin-arm64/bump-semver-darwin-arm64 | cut -d' ' -f1)"
+            echo "darwin_amd64=$(sha256sum artifacts/bump-semver-darwin-amd64/bump-semver-darwin-amd64 | cut -d' ' -f1)"
+            echo "linux_arm64=$(sha256sum artifacts/bump-semver-linux-arm64/bump-semver-linux-arm64 | cut -d' ' -f1)"
+            echo "linux_amd64=$(sha256sum artifacts/bump-semver-linux-amd64/bump-semver-linux-amd64 | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v5
+        with:
+          repository: kawaz/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: homebrew-tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          DARWIN_ARM64: ${{ steps.checksums.outputs.darwin_arm64 }}
+          DARWIN_AMD64: ${{ steps.checksums.outputs.darwin_amd64 }}
+          LINUX_ARM64: ${{ steps.checksums.outputs.linux_arm64 }}
+          LINUX_AMD64: ${{ steps.checksums.outputs.linux_amd64 }}
+        run: |
+          cat > homebrew-tap/Formula/bump-semver.rb <<FORMULA
+          class BumpSemver < Formula
+            desc "Focused semver bump CLI: detect by basename and operate on Cargo.toml / *.json / VERSION"
+            homepage "https://github.com/kawaz/bump-semver"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/kawaz/bump-semver/releases/download/v#{version}/bump-semver-darwin-arm64"
+                sha256 "${DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/kawaz/bump-semver/releases/download/v#{version}/bump-semver-darwin-amd64"
+                sha256 "${DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/kawaz/bump-semver/releases/download/v#{version}/bump-semver-linux-arm64"
+                sha256 "${LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/kawaz/bump-semver/releases/download/v#{version}/bump-semver-linux-amd64"
+                sha256 "${LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install Dir["bump-semver-*"].first => "bump-semver"
+            end
+
+            test do
+              assert_match "v#{version}", shell_output("#{bin}/bump-semver --version")
+            end
+          end
+          FORMULA
+
+      - name: Commit and push formula
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/bump-semver.rb
+          git diff --staged --quiet || git commit -m "Update bump-semver to ${VERSION}"
+          git push

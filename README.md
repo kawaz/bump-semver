@@ -43,16 +43,23 @@ bump-semver <ACTION> --value VER
 
 ### Supported file formats
 
-Auto-detected by basename:
+Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE, rules are tried in confidence order; if a high-confidence rule's path-pattern matches but extraction fails (e.g. a `marketplace.json` without `.metadata.version`), the next rule is tried. The lowest-confidence fallback covers any `*.json` with a top-level `.version`.
 
-| Pattern | Format |
-|---|---|
-| `Cargo.toml` | TOML, `[package].version` (and `[package].name` for cross-file checks) |
-| `package-lock.json` | npm 7+ lockfile, `$.version` + `$.packages[""].version` (deps untouched). Lockfile v1 is rejected — regenerate with npm 7+. |
-| `*.json` | JSON, `$.version` (and optional `$.name`). Covers `package.json`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `moon.mod.json`. |
-| `VERSION` | plain text |
+| Confidence | Pattern | Format | Version path(s) | Name path(s) |
+|---|---|---|---|---|
+| **3** (path-pinned) | `.claude-plugin/marketplace.json` | JSON | `$.metadata.version` | `$.name` |
+| **3** | `.claude-plugin/plugin.json` | JSON | `$.version` | `$.name` |
+| **3** | `package.json` | JSON | `$.version` | `$.name` |
+| **3** | `package-lock.json` | JSON | `$.version`, `$.packages[""].version` | `$.name`, `$.packages[""].name` |
+| **3** | `Cargo.toml` | TOML | `[package].version` | `[package].name` |
+| **3** | `VERSION` | plain text | (file content) | — |
+| **2** (basename) | any `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
+| **2** | any `plugin.json` | JSON | `$.version` (try) | `$.name` |
+| **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 
-Unsupported files cause an explicit error (no regex fallback by design).
+Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `unsupported file: <path>`. Adding a new format = adding one row to the rule table plus, if needed, one new format-specific function (no `--pattern` regex flag, by design).
+
+For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with `unsupported lockfileVersion: 1, please regenerate with npm 7+`. Dependency entries (`$.packages["node_modules/..."]`) are never rewritten even if their version happens to equal the project's own.
 
 ### Multiple files: cross-file consistency
 

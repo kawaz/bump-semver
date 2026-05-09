@@ -43,16 +43,23 @@ bump-semver <ACTION> --value VER
 
 ### サポートするファイル形式
 
-basename で自動判定:
+判定は **path-aware confidence ranked** (DR-0005)。各 FILE に対して確度順にルールを試行し、高確度ルールの path-pattern にマッチしても抽出失敗 (例: `.metadata.version` を持たない `marketplace.json`) なら次ルールへ降りる。最低確度の fallback ルールが top-level `.version` を持つ任意 `*.json` を網羅する。
 
-| パターン | 形式 |
-|---|---|
-| `Cargo.toml` | TOML、`[package].version` (整合性検証用に `[package].name` も読む) |
-| `package-lock.json` | npm 7+ の lockfile、`$.version` + `$.packages[""].version` (依存は触らない)。lockfile v1 はエラー (`npm 7+` で再生成) |
-| `*.json` | JSON、`$.version` (オプションで `$.name`)。`package.json` / `.claude-plugin/plugin.json` / `.claude-plugin/marketplace.json` / `moon.mod.json` を網羅 |
-| `VERSION` | プレーンテキスト |
+| 確度 | パターン | 形式 | version パス | name パス |
+|---|---|---|---|---|
+| **3** (path-pinned) | `.claude-plugin/marketplace.json` | JSON | `$.metadata.version` | `$.name` |
+| **3** | `.claude-plugin/plugin.json` | JSON | `$.version` | `$.name` |
+| **3** | `package.json` | JSON | `$.version` | `$.name` |
+| **3** | `package-lock.json` | JSON | `$.version`, `$.packages[""].version` | `$.name`, `$.packages[""].name` |
+| **3** | `Cargo.toml` | TOML | `[package].version` | `[package].name` |
+| **3** | `VERSION` | plain text | (ファイル内容) | — |
+| **2** (basename) | 任意 dir の `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
+| **2** | 任意 dir の `plugin.json` | JSON | `$.version` (try) | `$.name` |
+| **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 
-未対応ファイルは明示的なエラー (regex フォールバックは設計上持たない)。
+未対応ファイル (例: `README.md`, `Cargo.lock`) は `unsupported file: <path>` で明示エラー。新フォーマット追加 = テーブル 1 行追加 (+ 必要なら新 format-specific 関数 1 つ) で済む構造 (`--pattern` regex フラグは設計上持たない)。
+
+npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupported lockfileVersion: 1, please regenerate with npm 7+` エラー。依存エントリ (`$.packages["node_modules/..."]`) は仮に値が同じでも書き換わらない。
 
 ### 複数ファイル: 整合性検証
 

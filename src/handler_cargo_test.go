@@ -15,7 +15,7 @@ edition = "2021"
 [dependencies]
 serde = "1"
 `)
-	insp, err := (cargoHandler{}).Inspect(in)
+	insp, err := inspectVia("Cargo.toml", in)
 	if err != nil {
 		t.Fatalf("Inspect error: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestCargoInspect_MissingPackage(t *testing.T) {
 	in := []byte(`[dependencies]
 serde = "1"
 `)
-	if _, err := (cargoHandler{}).Inspect(in); err == nil {
+	if _, err := inspectVia("Cargo.toml", in); err == nil {
 		t.Error("expected error for missing [package].version")
 	}
 }
@@ -44,7 +44,7 @@ func TestCargoInspect_NoName(t *testing.T) {
 version = "1.2.3"
 edition = "2021"
 `)
-	insp, err := (cargoHandler{}).Inspect(in)
+	insp, err := inspectVia("Cargo.toml", in)
 	if err != nil {
 		t.Fatalf("Inspect error: %v", err)
 	}
@@ -69,7 +69,7 @@ serde = "1"
 # the dep below also has a "version" key — must not be touched
 serde_json = { version = "1.0.0" }
 `)
-	out, err := (cargoHandler{}).Replace(in, "1.2.3", "2.0.0")
+	out, err := replaceVia("Cargo.toml", in, "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestCargoReplace_MissingVersion(t *testing.T) {
 	in := []byte(`[package]
 name = "foo"
 `)
-	if _, err := (cargoHandler{}).Replace(in, "", "2.0.0"); err == nil {
+	if _, err := replaceVia("Cargo.toml", in, "", "2.0.0"); err == nil {
 		t.Error("expected error for missing version line")
 	}
 }
@@ -103,7 +103,7 @@ func TestCargoReplace_MissingPackageSection(t *testing.T) {
 	in := []byte(`[dependencies]
 serde = "1"
 `)
-	if _, err := (cargoHandler{}).Replace(in, "", "2.0.0"); err == nil {
+	if _, err := replaceVia("Cargo.toml", in, "", "2.0.0"); err == nil {
 		t.Error("expected error for missing [package] section")
 	}
 }
@@ -115,7 +115,7 @@ name = "foo"
 version = '1.2.3'
 edition = "2021"
 `)
-	out, err := (cargoHandler{}).Replace(in, "1.2.3", "1.2.4")
+	out, err := replaceVia("Cargo.toml", in, "1.2.3", "1.2.4")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -142,7 +142,7 @@ mockito = "1.0"
 [profile.release]
 opt-level = 3
 `)
-	out, err := (cargoHandler{}).Replace(in, "1.2.3", "2.0.0")
+	out, err := replaceVia("Cargo.toml", in, "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -172,7 +172,7 @@ members = ["crate-a", "crate-b"]
 version = "1.0.0"
 edition = "2021"
 `)
-	if _, err := (cargoHandler{}).Inspect(in); err == nil {
+	if _, err := inspectVia("Cargo.toml", in); err == nil {
 		t.Error("expected error: [workspace.package].version should not be matched as [package].version")
 	}
 }

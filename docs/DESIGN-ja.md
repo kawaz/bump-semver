@@ -68,15 +68,23 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
     └── *_test.go            # 単体 + 統合テスト
 ```
 
-### 形式判定 (basename)
+### 形式判定 — path-aware, confidence-ranked (DR-0005)
 
-| 判定キー | Handler |
-|---|---|
-| `basename(path) == "Cargo.toml"` | cargo |
-| `basename(path) == "VERSION"` | version |
-| `basename(path) == "package-lock.json"` | npm-lock (`*.json` 一般枝より先に判定) |
-| `path` が `*.json` で終わる | json |
-| 上記以外 | エラー (`unsupported file: <path>`) |
+判定は `CandidateRule` の **テーブル** で行う。各行が「path-pattern, format, version-paths, name-paths」のタプルで、確度降順に並ぶ。入力 FILE に対する手順:
+
+1. ルールを確度降順 (3 → 2 → 1) に巡回
+2. ルールの path-pattern にマッチしたら抽出 (Inspect) を試行
+3. 抽出成功 (全 `VersionPaths` が存在し semver パース可能) なら、そのルールが採用される
+4. 抽出失敗 → 次にマッチするルールに降りる
+5. 全てのマッチルールが失敗したら、最後のエラーを `<path>: <ruleName>: <reason>` で返す
+
+確度レベル:
+
+- **3 — path-pinned**: 相対パス suffix (`.claude-plugin/marketplace.json`) や一意な basename (`Cargo.toml`, `VERSION`, `package.json`, `package-lock.json`)
+- **2 — basename only**: 任意ディレクトリの `marketplace.json` / `plugin.json` (Claude plugin の慣習だが `.claude-plugin/` 配下とは限らない)
+- **1 — glob fallback**: 上記以外の `*.json` を top-level `.version` で網羅
+
+これにより `.claude-plugin/` 外の `marketplace.json` も Claude plugin としてまず試行され (確度 2)、`.metadata.version` を持たなければ素直に top-level `.version` の汎用 JSON に降格する (確度 1)。新ファイル形式の追加 = **テーブル 1 行追加** (新 format なら新 format-specific Inspect/Replace ペアを 1 つ追加) で済む。CLI 表面には `--pattern` フラグは出さない。
 
 stdin がパイプ **かつ FILE が 1 個** のときは FILE を「名前ヒント」として上記判定にだけ使い、内容は stdin から読む。複数 FILE のときは stdin pipe を無視してファイルから読む (cat / sed と同じく明示 FILE が優先)。
 

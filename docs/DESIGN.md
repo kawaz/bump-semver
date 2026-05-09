@@ -68,15 +68,23 @@ Go sources live under `src/`, leaving only metadata (README / docs / justfile / 
     └── *_test.go            # unit + integration tests
 ```
 
-### Format detection (by basename)
+### Format detection — path-aware, confidence-ranked (DR-0005)
 
-| Match | Handler |
-|---|---|
-| `basename(path) == "Cargo.toml"` | cargo |
-| `basename(path) == "VERSION"` | version |
-| `basename(path) == "package-lock.json"` | npm-lock (must be checked before the generic `.json` branch) |
-| `path` ends with `.json` | json |
-| Otherwise | Error (`unsupported file: <path>`) |
+The detector is a **table of `CandidateRule` rows**, each describing a `(path-pattern, format, version-paths, name-paths)` tuple, ordered by descending confidence. For an input FILE:
+
+1. Walk rules in confidence order (3 → 2 → 1)
+2. If the rule's path-pattern matches, attempt extraction (Inspect)
+3. If extraction succeeds (every `VersionPaths` entry is found and parses as semver), the rule is the resolved one
+4. If extraction fails, fall through to the next matching rule
+5. If every matching rule fails, the deepest error is returned with `<path>: <ruleName>: <reason>`
+
+Confidence levels:
+
+- **3 — path-pinned**: relative path-suffix anchors (`.claude-plugin/marketplace.json`) or unique basename (`Cargo.toml`, `VERSION`, `package.json`, `package-lock.json`)
+- **2 — basename only**: any directory's `marketplace.json` / `plugin.json` (Claude plugin convention, but not necessarily under `.claude-plugin/`)
+- **1 — glob fallback**: `*.json` with top-level `.version` for everything else
+
+This lets `marketplace.json` outside `.claude-plugin/` still get tried as a Claude-plugin marketplace first (confidence 2), and gracefully fall back to a plain `.version` JSON (confidence 1) if `.metadata.version` isn't present. Adding a new file format means **adding one row to the table** (and, if it's a brand new file format, one new format-specific Inspect/Replace pair). No `--pattern` flag is exposed at the CLI level.
 
 When stdin is a pipe and exactly one FILE is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin. With multiple FILEs the stdin pipe is ignored — the explicit files take precedence (cat / sed convention).
 

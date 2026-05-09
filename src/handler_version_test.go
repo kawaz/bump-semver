@@ -13,7 +13,7 @@ func TestVersionHandler_Inspect(t *testing.T) {
 		{"1.2.3", "1.2.3"},
 	}
 	for _, tc := range cases {
-		insp, err := (versionHandler{}).Inspect([]byte(tc.in))
+		insp, err := inspectVia("VERSION", []byte(tc.in))
 		if err != nil {
 			t.Errorf("Inspect(%q) error: %v", tc.in, err)
 			continue
@@ -25,7 +25,7 @@ func TestVersionHandler_Inspect(t *testing.T) {
 			t.Errorf("Inspect(%q).Names should be empty, got %+v", tc.in, insp.Names)
 		}
 	}
-	if _, err := (versionHandler{}).Inspect([]byte("   \n")); err == nil {
+	if _, err := inspectVia("VERSION", []byte("   \n")); err == nil {
 		t.Error("expected error for empty content")
 	}
 }
@@ -40,7 +40,7 @@ func TestVersionHandler_Replace(t *testing.T) {
 		{"0.0.0", "1.0.0"},
 	}
 	for _, tc := range cases {
-		got, err := (versionHandler{}).Replace([]byte(tc.in), "0.0.0", "1.0.0")
+		got, err := replaceVia("VERSION", []byte(tc.in), "0.0.0", "1.0.0")
 		if err != nil {
 			t.Errorf("Replace(%q) error: %v", tc.in, err)
 			continue

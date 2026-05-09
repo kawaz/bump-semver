@@ -35,7 +35,7 @@ const npmLockSample = `{
 
 func TestNpmLock_Inspect(t *testing.T) {
 	t.Parallel()
-	insp, err := (npmLockHandler{}).Inspect([]byte(npmLockSample))
+	insp, err := inspectVia("package-lock.json", []byte(npmLockSample))
 	if err != nil {
 		t.Fatalf("Inspect error: %v", err)
 	}
@@ -65,62 +65,26 @@ func TestNpmLock_Inspect(t *testing.T) {
 	}
 }
 
-func TestNpmLock_Inspect_LockfileV1Error(t *testing.T) {
-	t.Parallel()
-	in := []byte(`{
-  "name": "foo",
-  "version": "1.2.3",
-  "lockfileVersion": 1,
-  "dependencies": {
-    "left-pad": {"version": "1.3.0"}
-  }
-}
-`)
-	_, err := (npmLockHandler{}).Inspect(in)
-	if err == nil || !strings.Contains(err.Error(), "lockfileVersion: 1") {
-		t.Errorf("expected lockfileVersion 1 error, got: %v", err)
-	}
-}
-
-func TestNpmLock_Inspect_NoPackagesField(t *testing.T) {
-	t.Parallel()
-	// lockfileVersion を欠いていても packages が無ければ v1 扱いでエラー
-	in := []byte(`{
-  "name": "foo",
-  "version": "1.2.3",
-  "dependencies": {}
-}
-`)
-	_, err := (npmLockHandler{}).Inspect(in)
-	if err == nil {
-		t.Error("expected error for missing packages field")
-	}
-}
-
 func TestNpmLock_Replace_DepsUntouched(t *testing.T) {
 	t.Parallel()
-	out, err := (npmLockHandler{}).Replace([]byte(npmLockSample), "1.2.3", "2.0.0")
+	out, err := replaceVia("package-lock.json", []byte(npmLockSample), "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
 	s := string(out)
-	// top-level + root entry が更新されている
 	if !strings.Contains(s, `"version": "2.0.0"`) {
 		t.Errorf("expected $.version = 2.0.0:\n%s", s)
 	}
-	// 依存の version は不変
 	if !strings.Contains(s, `"version": "1.3.0"`) {
 		t.Errorf("expected node_modules/left-pad version 1.3.0 unchanged:\n%s", s)
 	}
 	if !strings.Contains(s, `"version": "1.0.0"`) {
 		t.Errorf("expected node_modules/right-pad version 1.0.0 unchanged:\n%s", s)
 	}
-	// 古い 1.2.3 (top-level/root) が完全に消えているか確認
 	count := strings.Count(s, `"version": "1.2.3"`)
 	if count != 0 {
 		t.Errorf("expected 0 occurrences of 1.2.3 (top-level + root) after bump, got %d:\n%s", count, s)
 	}
-	// 新値は 2 箇所 (top-level + root)
 	if got := strings.Count(s, `"version": "2.0.0"`); got != 2 {
 		t.Errorf("expected 2 occurrences of 2.0.0, got %d:\n%s", got, s)
 	}
@@ -128,7 +92,6 @@ func TestNpmLock_Replace_DepsUntouched(t *testing.T) {
 
 func TestRun_PackageJsonAndLock_Combined(t *testing.T) {
 	t.Parallel()
-	// package.json + package-lock.json の整合性チェック + bump
 	pkg := `{"name":"foo","version":"1.2.3"}`
 	lock := `{
   "name": "foo",
@@ -147,12 +110,10 @@ func TestRun_PackageJsonAndLock_Combined(t *testing.T) {
 	if strings.TrimSpace(out) != "1.2.4" {
 		t.Fatalf("stdout = %q, want 1.2.4", out)
 	}
-	// 依存の 9.9.9 は不変
 	got := readFile(t, lockPath)
 	if !strings.Contains(got, `"version": "9.9.9"`) {
 		t.Errorf("dep version touched:\n%s", got)
 	}
-	// top-level + root が 1.2.4 に
 	if got := strings.Count(got, `"version": "1.2.4"`); got != 2 {
 		t.Errorf("expected 2 occurrences of 1.2.4 in lock, got %d", got)
 	}

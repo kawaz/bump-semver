@@ -15,7 +15,7 @@ func TestJSONInspect(t *testing.T) {
   }
 }
 `)
-	insp, err := (jsonHandler{}).Inspect(in)
+	insp, err := inspectVia("package.json", in)
 	if err != nil {
 		t.Fatalf("Inspect error: %v", err)
 	}
@@ -30,16 +30,15 @@ func TestJSONInspect(t *testing.T) {
 func TestJSONInspect_MissingVersion(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{"name": "foo"}`)
-	if _, err := (jsonHandler{}).Inspect(in); err == nil {
+	if _, err := inspectVia("package.json", in); err == nil {
 		t.Error("expected error for missing version")
 	}
 }
 
 func TestJSONInspect_NoName(t *testing.T) {
 	t.Parallel()
-	// .name optional, .version 必須
 	in := []byte(`{"version": "1.2.3"}`)
-	insp, err := (jsonHandler{}).Inspect(in)
+	insp, err := inspectVia("package.json", in)
 	if err != nil {
 		t.Fatalf("Inspect error: %v", err)
 	}
@@ -61,7 +60,7 @@ func TestJSONReplace_PreservesKeyOrder(t *testing.T) {
   }
 }
 `)
-	out, err := (jsonHandler{}).Replace(in, "1.2.3", "2.0.0")
+	out, err := replaceVia("package.json", in, "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -72,30 +71,12 @@ func TestJSONReplace_PreservesKeyOrder(t *testing.T) {
 	if !strings.Contains(s, `"version": "9.9.9"`) {
 		t.Errorf("Replace touched nested version\n--- output ---\n%s", s)
 	}
-	// key order must be preserved
 	idxName := strings.Index(s, `"name"`)
 	idxVer := strings.Index(s, `"version": "2.0.0"`)
 	idxDesc := strings.Index(s, `"description"`)
 	idxDeps := strings.Index(s, `"dependencies"`)
 	if !(idxName < idxVer && idxVer < idxDesc && idxDesc < idxDeps) {
 		t.Errorf("key order not preserved: name=%d ver=%d desc=%d deps=%d", idxName, idxVer, idxDesc, idxDeps)
-	}
-}
-
-func TestJSONReplace_AmbiguousValueErrors(t *testing.T) {
-	t.Parallel()
-	// Top-level version 1.0.0 and a nested "version": "1.0.0" — same value.
-	// Replace must refuse rather than guess.
-	in := []byte(`{
-  "name": "foo",
-  "version": "1.0.0",
-  "dependencies": {
-    "bar": {"version": "1.0.0"}
-  }
-}
-`)
-	if _, err := (jsonHandler{}).Replace(in, "1.0.0", "2.0.0"); err == nil {
-		t.Error("expected error for ambiguous version match")
 	}
 }
 
@@ -114,7 +95,7 @@ func TestJSONReplace_MoonModFixture(t *testing.T) {
   "description": "test"
 }
 `)
-	out, err := (jsonHandler{}).Replace(in, "0.1.0", "0.2.0")
+	out, err := replaceVia("moon.mod.json", in, "0.1.0", "0.2.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -127,32 +108,6 @@ func TestJSONReplace_MoonModFixture(t *testing.T) {
 	}
 }
 
-func TestJSONReplace_MarketplaceFixture(t *testing.T) {
-	t.Parallel()
-	// claude-plugin/marketplace.json 風: top-level に version、plugins[] 各要素にも
-	// version が入る。値が異なるので top-level の現在値で値特定 → 単一マッチ。
-	in := []byte(`{
-  "$schema": "https://example/schema.json",
-  "version": "1.0.0",
-  "plugins": [
-    {"name": "foo", "version": "2.5.0"},
-    {"name": "bar", "version": "3.4.5"}
-  ]
-}
-`)
-	out, err := (jsonHandler{}).Replace(in, "1.0.0", "1.1.0")
-	if err != nil {
-		t.Fatalf("Replace error: %v", err)
-	}
-	s := string(out)
-	if !strings.Contains(s, `"version": "1.1.0"`) {
-		t.Errorf("top-level version not updated:\n%s", s)
-	}
-	if !strings.Contains(s, `"version": "2.5.0"`) || !strings.Contains(s, `"version": "3.4.5"`) {
-		t.Errorf("nested plugin versions touched:\n%s", s)
-	}
-}
-
 func TestJSONReplace_VersionAtEnd(t *testing.T) {
 	t.Parallel()
 	in := []byte(`{
@@ -162,15 +117,79 @@ func TestJSONReplace_VersionAtEnd(t *testing.T) {
   "version": "1.2.3"
 }
 `)
-	insp, err := (jsonHandler{}).Inspect(in)
+	insp, err := inspectVia("any.json", in)
 	if err != nil || len(insp.Versions) != 1 || insp.Versions[0].Value != "1.2.3" {
 		t.Fatalf("Inspect = %+v err=%v", insp, err)
 	}
-	out, err := (jsonHandler{}).Replace(in, "1.2.3", "1.2.4")
+	out, err := replaceVia("any.json", in, "1.2.3", "1.2.4")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
 	if !strings.Contains(string(out), `"version": "1.2.4"`) {
 		t.Errorf("version not updated:\n%s", string(out))
+	}
+}
+
+// TestMarketplace_HighConfidence verifies the path-pinned high-confidence
+// rule for the Claude plugin marketplace.json fixture.
+func TestMarketplace_HighConfidence(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{
+  "name": "foo",
+  "owner": { "name": "kawaz" },
+  "metadata": {
+    "description": "test",
+    "version": "0.3.0",
+    "license": "MIT"
+  },
+  "plugins": []
+}
+`)
+	insp, err := inspectVia(".claude-plugin/marketplace.json", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Versions) != 1 || insp.Versions[0].Value != "0.3.0" || insp.Versions[0].Path != "$.metadata.version" {
+		t.Errorf("Versions = %+v, want one $.metadata.version=0.3.0", insp.Versions)
+	}
+	out, err := replaceVia(".claude-plugin/marketplace.json", in, "0.3.0", "0.4.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"version": "0.4.0"`) {
+		t.Errorf("metadata.version not updated:\n%s", s)
+	}
+	// Description and other fields are untouched
+	if !strings.Contains(s, `"description": "test"`) {
+		t.Errorf("description lost:\n%s", s)
+	}
+}
+
+// TestMarketplace_AnyDir_MidConfidence: marketplace.json under arbitrary
+// directory still resolves via the confidence-2 basename rule.
+func TestMarketplace_AnyDir_MidConfidence(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{"name":"foo","metadata":{"version":"0.3.0"}}`)
+	insp, err := inspectVia("subdir/marketplace.json", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Versions) != 1 || insp.Versions[0].Path != "$.metadata.version" {
+		t.Errorf("Versions = %+v, want $.metadata.version", insp.Versions)
+	}
+}
+
+// TestMarketplace_FallbackToVersion: marketplace.json without .metadata.version
+// falls back to the *.json rule (.version) so the file still works.
+func TestMarketplace_FallbackToVersion(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{"name":"foo","version":"1.2.3"}`)
+	insp, err := inspectVia("subdir/marketplace.json", in)
+	if err != nil {
+		t.Fatalf("Inspect error (should have fallen back): %v", err)
+	}
+	if len(insp.Versions) != 1 || insp.Versions[0].Path != "$.version" {
+		t.Errorf("Versions = %+v, want $.version (fallback)", insp.Versions)
 	}
 }

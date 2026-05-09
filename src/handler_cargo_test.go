@@ -85,3 +85,72 @@ serde = "1"
 		t.Error("expected error for missing [package] section")
 	}
 }
+
+func TestCargoReplace_SingleQuotes(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[package]
+name = "foo"
+version = '1.2.3'
+edition = "2021"
+`)
+	out, err := (cargoHandler{}).Replace(in, "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `version = '1.2.4'`) {
+		t.Errorf("single-quote style not preserved:\n%s", string(out))
+	}
+}
+
+func TestCargoReplace_MultiSection(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[package]
+name = "foo"
+version = "1.2.3"
+edition = "2021"
+authors = ["kawaz"]
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+mockito = "1.0"
+
+[profile.release]
+opt-level = 3
+`)
+	out, err := (cargoHandler{}).Replace(in, "2.0.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `version = "2.0.0"`) {
+		t.Errorf("[package].version not updated:\n%s", s)
+	}
+	if !strings.Contains(s, `serde = { version = "1.0", features = ["derive"] }`) {
+		t.Errorf("dependencies version touched:\n%s", s)
+	}
+	if !strings.Contains(s, `mockito = "1.0"`) {
+		t.Errorf("dev-dependencies line lost:\n%s", s)
+	}
+	if !strings.Contains(s, `opt-level = 3`) {
+		t.Errorf("profile.release section lost:\n%s", s)
+	}
+}
+
+func TestCargoGet_WorkspacePackageNotMatched(t *testing.T) {
+	t.Parallel()
+	// [workspace.package].version は MVP では扱わない (DR-0002 参照)。
+	// [package] が無い時点で Get がエラーになる必要がある。
+	in := []byte(`[workspace]
+members = ["crate-a", "crate-b"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+`)
+	if _, err := (cargoHandler{}).Get(in); err == nil {
+		t.Error("expected error: [workspace.package].version should not be matched as [package].version")
+	}
+}

@@ -82,3 +82,79 @@ func TestJSONReplace_AmbiguousValueErrors(t *testing.T) {
 		t.Error("expected error for ambiguous version match")
 	}
 }
+
+func TestJSONReplace_MoonModFixture(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{
+  "name": "kawaz/example",
+  "version": "0.1.0",
+  "deps": {
+    "moonbitlang/core": "0.1.0"
+  },
+  "readme": "README.md",
+  "repository": "https://github.com/kawaz/example",
+  "license": "MIT",
+  "keywords": ["foo"],
+  "description": "test"
+}
+`)
+	out, err := (jsonHandler{}).Replace(in, "0.2.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"version": "0.2.0"`) {
+		t.Errorf("top-level version not updated:\n%s", s)
+	}
+	if !strings.Contains(s, `"moonbitlang/core": "0.1.0"`) {
+		t.Errorf("deps version touched:\n%s", s)
+	}
+}
+
+func TestJSONReplace_MarketplaceFixture(t *testing.T) {
+	t.Parallel()
+	// claude-plugin/marketplace.json 風: top-level に version、plugins[] 各要素にも
+	// version が入る。値が異なるので top-level の現在値で値特定 → 単一マッチ。
+	in := []byte(`{
+  "$schema": "https://example/schema.json",
+  "version": "1.0.0",
+  "plugins": [
+    {"name": "foo", "version": "2.5.0"},
+    {"name": "bar", "version": "3.4.5"}
+  ]
+}
+`)
+	out, err := (jsonHandler{}).Replace(in, "1.1.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"version": "1.1.0"`) {
+		t.Errorf("top-level version not updated:\n%s", s)
+	}
+	if !strings.Contains(s, `"version": "2.5.0"`) || !strings.Contains(s, `"version": "3.4.5"`) {
+		t.Errorf("nested plugin versions touched:\n%s", s)
+	}
+}
+
+func TestJSONReplace_VersionAtEnd(t *testing.T) {
+	t.Parallel()
+	in := []byte(`{
+  "name": "foo",
+  "description": "test",
+  "license": "MIT",
+  "version": "1.2.3"
+}
+`)
+	got, err := (jsonHandler{}).Get(in)
+	if err != nil || got != "1.2.3" {
+		t.Fatalf("Get = %q err=%v", got, err)
+	}
+	out, err := (jsonHandler{}).Replace(in, "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `"version": "1.2.4"`) {
+		t.Errorf("version not updated:\n%s", string(out))
+	}
+}

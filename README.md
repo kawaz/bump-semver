@@ -77,7 +77,7 @@ bump-semver get --value 1.2.3                 # parse-validate (1.2.3) or error
 
 ## Status
 
-This README documents the target API. Implementation is in progress; see [docs/decisions/](./docs/decisions/) for design rationale.
+v0.1.0 has been released — the MVP supports `Cargo.toml`, `*.json`, and `VERSION`. Further formats are added one handler at a time as concrete needs arise (see DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

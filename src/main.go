@@ -199,7 +199,7 @@ func run(argv []string, stdin io.Reader, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		newV, err := v.Bump(args.action)
+		newV, err := v.Bump(args.action, BumpOptions{})
 		if err != nil {
 			return err
 		}
@@ -273,7 +273,7 @@ func run(argv []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	newV, err := v.Bump(args.action)
+	newV, err := v.Bump(args.action, BumpOptions{})
 	if err != nil {
 		return err
 	}

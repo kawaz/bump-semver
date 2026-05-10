@@ -76,7 +76,9 @@ func TestRun_ValueBumps(t *testing.T) {
 		// v prefix / 柔軟 separator も最終的に同じ経路を通る
 		{[]string{"patch", "--value", "v1.2.3"}, "v1.2.4\n"},
 		{[]string{"minor", "--value", "version_1_2_3"}, "version_1_3_0\n"},
-		{[]string{"major", "--value", "ver-1-2-3"}, "ver-2-0-0\n"},
+		// DR-0006: body sep `-` removed. `ver-1.2.3` is still allowed
+		// (the `-` is part of the prefix, body sep is `.`).
+		{[]string{"major", "--value", "ver-1.2.3"}, "ver-2.0.0\n"},
 		{[]string{"get", "--value", "v1.2.3"}, "v1.2.3\n"},
 	}
 	for _, tc := range cases {
@@ -93,8 +95,10 @@ func TestRun_ValueBumps(t *testing.T) {
 
 func TestRun_ValueRejectsBadInput(t *testing.T) {
 	t.Parallel()
-	if err := run([]string{"patch", "--value", "1.2.3-alpha"}, bytes.NewReader(nil), &bytes.Buffer{}); err == nil {
-		t.Error("expected error for pre-release input")
+	// DR-0006: pre-release / build metadata are now VALID. Use a truly
+	// malformed input here.
+	if err := run([]string{"patch", "--value", "not-a-version"}, bytes.NewReader(nil), &bytes.Buffer{}); err == nil {
+		t.Error("expected error for malformed input")
 	}
 }
 

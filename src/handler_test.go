@@ -216,6 +216,83 @@ func TestDetectHandler_RegexFormatPaths(t *testing.T) {
 	}
 }
 
+// TestDetectHandler_PyProjectAndMojoProject covers the DR-0014 path-pinned
+// confidence-3 rules. Like Cargo.toml, both basenames register at any
+// depth in the tree.
+func TestDetectHandler_PyProjectAndMojoProject(t *testing.T) {
+	t.Parallel()
+	good := []string{
+		"pyproject.toml",
+		"sub/pyproject.toml",
+		"deeply/nested/pyproject.toml",
+		"mojoproject.toml",
+		"app/mojoproject.toml",
+	}
+	for _, p := range good {
+		if _, err := detectHandler(p); err != nil {
+			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
+		}
+	}
+}
+
+// TestResolveRule_PyProjectPrecedence pins the rule selection: the
+// path-pinned `pyproject.toml` rule (confidence 3) wins for any
+// pyproject.toml that has a parseable `[project].version` or
+// `[tool.poetry].version`.
+func TestResolveRule_PyProjectPrecedence(t *testing.T) {
+	t.Parallel()
+	type tc struct {
+		path    string
+		content string
+		want    string // CandidateRule.Name
+	}
+	cases := []tc{
+		// PEP 621
+		{"pyproject.toml", "[project]\nname = \"x\"\nversion = \"1.2.3\"\n", "pyproject.toml"},
+		// Poetry legacy
+		{"pyproject.toml", "[tool.poetry]\nname = \"x\"\nversion = \"1.2.3\"\n", "pyproject.toml"},
+		// Both present (PEP 621 wins inside the rule, but the rule itself is the same)
+		{"sub/pyproject.toml", "[project]\nname=\"x\"\nversion=\"1.2.3\"\n[tool.poetry]\nname=\"x\"\nversion=\"1.2.3\"\n", "pyproject.toml"},
+		// mojoproject
+		{"mojoproject.toml", "[workspace]\nname = \"m\"\nversion = \"1.2.3\"\n", "mojoproject.toml"},
+		{"app/mojoproject.toml", "[workspace]\nname = \"m\"\nversion = \"1.2.3\"\n", "mojoproject.toml"},
+	}
+	for _, c := range cases {
+		rule, _, err := resolveRule(c.path, []byte(c.content))
+		if err != nil {
+			t.Errorf("resolveRule(%q) error: %v", c.path, err)
+			continue
+		}
+		if rule.Name != c.want {
+			t.Errorf("resolveRule(%q) = %q, want %q", c.path, rule.Name, c.want)
+		}
+		if rule.Confidence != 3 {
+			t.Errorf("resolveRule(%q).Confidence = %d, want 3", c.path, rule.Confidence)
+		}
+	}
+}
+
+// TestResolveRule_PyProjectFallthroughToTopLevel guards the fallback
+// chain: a pyproject.toml whose version is NOT in `[project]` /
+// `[tool.poetry]` (e.g. the user has it at top level for whatever
+// reason) falls through to the DR-0011 `*.toml` fallback rule.
+func TestResolveRule_PyProjectFallthroughToTopLevel(t *testing.T) {
+	t.Parallel()
+	in := []byte(`name = "x"
+version = "1.2.3"
+`)
+	rule, insp, err := resolveRule("pyproject.toml", in)
+	if err != nil {
+		t.Fatalf("resolveRule error: %v", err)
+	}
+	if rule.Name != "*.toml (fallback)" {
+		t.Errorf("rule = %q, want *.toml fallback", rule.Name)
+	}
+	if insp.MatchedConfidence != 1 {
+		t.Errorf("MatchedConfidence = %d, want 1", insp.MatchedConfidence)
+	}
+}
+
 // TestResolveRule_RegexFormatConfidence pins the confidence band of
 // every DR-0012 rule so the dispatcher's hint emission picks the
 // right glob name.

@@ -42,9 +42,6 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 |---|---|---|
 | `pyproject.toml` | TOML | `.project.version` または `.tool.poetry.version` (try → fallback) |
 | `Chart.yaml` | **yaml (新規)** | `.version` (Helm chart) |
-| `bun.lock` | **jsonc (新規、JSONC parser)** | 仕様調査要 |
-| `pnpm-lock.yaml` | **yaml (新規)** | `.importers["."].version` 等、仕様調査要 |
-| `Cargo.lock` | TOML | `[[package]]` 配列の自パッケージ突き合わせ (path 表現拡張要) |
 | `*.gemspec` | Ruby (regex) | `s.version = '...'` 行 |
 | `setup.py` / `setup.cfg` | Python | `version = ...` (cfg) / `version='...'` (py) |
 | `composer.json` | JSON | 既に `*.json` fallback で対応済 |
@@ -53,6 +50,17 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 | `pom.xml` | **xml (新規、encoding/xml)** | `<version>` |
 
 これらは **すべて実需が出たら単独の DR で判断**。網羅は捨てる方針 (DR-0001)。
+
+### 対応対象外 (DR-0009)
+
+以下の lock files は **自プロジェクトの version を保持しない** ため bump-semver の対象外:
+
+- `bun.lock` (root の `version` フィールドが実運用で欠落、加えて JSONC パーサ依存が必要)
+- `pnpm-lock.yaml` (`importers["."]` は依存のみ、self-version を持たない設計)
+- `yarn.lock` (classic は self-entry なし、Berry は sentinel `0.0.0-use.local`)
+- `Cargo.lock` (`[[package]]` に self version はあるが、`cargo check` で自動同期するため bump 対象外)
+
+詳細は [DR-0009](./decisions/DR-0009-lockfile-support-scope.md) 参照。
 
 ### 未対応フォーマット候補
 

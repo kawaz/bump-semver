@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,74 +13,120 @@ import (
 func TestParseArgs_Valid(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
+		name string
 		argv []string
 		want cliArgs
 	}{
-		{[]string{"patch", "Cargo.toml"}, cliArgs{action: "patch", files: []string{"Cargo.toml"}}},
-		{[]string{"patch", "Cargo.toml", "--write"}, cliArgs{action: "patch", files: []string{"Cargo.toml"}, write: true}},
-		{[]string{"patch", "--write", "Cargo.toml"}, cliArgs{action: "patch", files: []string{"Cargo.toml"}, write: true}},
-		{[]string{"get", "VERSION"}, cliArgs{action: "get", files: []string{"VERSION"}}},
-		{[]string{"minor", "--value", "1.2.3"}, cliArgs{action: "minor", value: "1.2.3"}},
-		{[]string{"minor", "--value=1.2.3"}, cliArgs{action: "minor", value: "1.2.3"}},
-		{[]string{"--version"}, cliArgs{special: "version"}},
-		{[]string{"-V"}, cliArgs{special: "version"}},
-		{[]string{"--help"}, cliArgs{special: "help"}},
-		{[]string{"-h"}, cliArgs{special: "help"}},
-		{[]string{}, cliArgs{special: "help"}},
-		{[]string{"patch", "--", "--weird-file.json"}, cliArgs{action: "patch", files: []string{"--weird-file.json"}}},
-		// 複数 FILE は valid に
-		{[]string{"get", "package.json", "package-lock.json"}, cliArgs{action: "get", files: []string{"package.json", "package-lock.json"}}},
-		{[]string{"patch", "a.json", "b.json", "c.json", "--write"}, cliArgs{action: "patch", files: []string{"a.json", "b.json", "c.json"}, write: true}},
+		{"bump-file", []string{"patch", "Cargo.toml"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"Cargo.toml"}}},
+		{"bump-file-write", []string{"patch", "Cargo.toml", "--write"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"Cargo.toml"}, write: true}},
+		{"write-before-input", []string{"patch", "--write", "Cargo.toml"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"Cargo.toml"}, write: true}},
+		{"get-file", []string{"get", "VERSION"}, cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}}},
+		{"bump-ver", []string{"minor", "1.2.3"}, cliArgs{kind: "bump", action: "minor", inputs: []string{"1.2.3"}}},
+		{"version-flag", []string{"--version"}, cliArgs{kind: "version"}},
+		{"version-short", []string{"-V"}, cliArgs{kind: "version"}},
+		{"help-flag", []string{"--help"}, cliArgs{kind: "help"}},
+		{"help-short", []string{"-h"}, cliArgs{kind: "help"}},
+		{"empty", []string{}, cliArgs{kind: "help"}},
+		{"dash-dash-passthrough", []string{"patch", "--", "--weird-file.json"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"--weird-file.json"}}},
+		{"multi-file", []string{"get", "package.json", "package-lock.json"}, cliArgs{kind: "bump", action: "get", inputs: []string{"package.json", "package-lock.json"}}},
+		{"multi-file-write", []string{"patch", "a.json", "b.json", "c.json", "--write"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"a.json", "b.json", "c.json"}, write: true}},
+		// pre action with cross-cutting flags
+		{"pre-with-pre", []string{"pre", "1.2.3", "--pre", "rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, pre: "rc.0", preSet: true}},
+		{"pre-with-pre-eq", []string{"pre", "1.2.3", "--pre=rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, pre: "rc.0", preSet: true}},
+		{"pre-no-pre", []string{"pre", "1.2.3-rc.0", "--no-pre"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3-rc.0"}, noPre: true}},
+		{"patch-build-meta", []string{"patch", "1.2.3", "--build-metadata", "sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, buildMetadata: "sha.abc", buildMetadataSet: true}},
+		{"patch-build-meta-eq", []string{"patch", "1.2.3", "--build-metadata=sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, buildMetadata: "sha.abc", buildMetadataSet: true}},
+		{"patch-no-build-meta", []string{"patch", "1.2.3+x", "--no-build-metadata"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3+x"}, noBuildMetadata: true}},
+		// stdin marker
+		{"stdin-marker", []string{"patch", "-"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"-"}}},
+		// compare
+		{"compare-eq", []string{"compare", "eq", "1.2.3", "1.2.3"}, cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}}},
+		{"compare-lt-files", []string{"compare", "lt", "a.json", "b.json"}, cliArgs{kind: "compare", compareOp: "lt", inputs: []string{"a.json", "b.json"}}},
+		{"compare-ge-stdin", []string{"compare", "ge", "1.2.3", "-"}, cliArgs{kind: "compare", compareOp: "ge", inputs: []string{"1.2.3", "-"}}},
 	}
 	for _, tc := range cases {
-		got, err := parseArgs(tc.argv)
-		if err != nil {
-			t.Errorf("parseArgs(%v) error: %v", tc.argv, err)
-			continue
-		}
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("parseArgs(%v) = %+v, want %+v", tc.argv, got, tc.want)
-		}
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseArgs(tc.argv)
+			if err != nil {
+				t.Fatalf("parseArgs(%v) error: %v", tc.argv, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("parseArgs(%v)\n  got = %+v\n  want= %+v", tc.argv, got, tc.want)
+			}
+		})
 	}
 }
 
 func TestParseArgs_Errors(t *testing.T) {
 	t.Parallel()
-	cases := [][]string{
-		{"foo", "Cargo.toml"}, // unknown action
-		{"patch"},             // missing file/value
-		{"patch", "Cargo.toml", "--value", "1.0"},     // file + value
-		{"patch", "--value", "1.0", "--write"},        // value + write
-		{"get", "VERSION", "--write"},                 // get + write
-		{"patch", "--value"},                          // --value missing arg
-		{"patch", "--value", "1.0", "--value", "1.1"}, // double --value
-		{"patch", "Cargo.toml", "--unknown"},          // unknown option
-		{"patch", "Cargo.toml", "--write", "--write"}, // double write
+	cases := []struct {
+		name string
+		argv []string
+	}{
+		{"unknown-action", []string{"foo", "Cargo.toml"}},
+		{"missing-input", []string{"patch"}},
+		{"unknown-flag", []string{"patch", "Cargo.toml", "--unknown"}},
+		{"double-write", []string{"patch", "Cargo.toml", "--write", "--write"}},
+		{"get-with-write", []string{"get", "VERSION", "--write"}},
+		{"get-with-pre", []string{"get", "VERSION", "--pre", "rc.0"}},
+		{"get-with-build-metadata", []string{"get", "VERSION", "--build-metadata", "sha.x"}},
+		{"compare-with-write", []string{"compare", "eq", "1.2.3", "1.2.3", "--write"}},
+		{"compare-with-pre", []string{"compare", "eq", "1.2.3", "1.2.3", "--pre", "rc.0"}},
+		{"compare-with-build-meta", []string{"compare", "eq", "1.2.3", "1.2.3", "--build-metadata", "sha"}},
+		{"compare-too-few", []string{"compare", "eq", "1.2.3"}},
+		{"compare-too-many", []string{"compare", "eq", "1.2.3", "1.2.3", "1.2.4"}},
+		{"compare-no-op", []string{"compare"}},
+		{"compare-bad-op", []string{"compare", "neq", "1.2.3", "1.2.3"}},
+		{"pre-and-no-pre", []string{"pre", "1.2.3", "--pre", "rc.0", "--no-pre"}},
+		{"build-and-no-build", []string{"patch", "1.2.3", "--build-metadata", "x", "--no-build-metadata"}},
+		{"empty-pre", []string{"pre", "1.2.3", "--pre", ""}},
+		{"empty-build-metadata", []string{"patch", "1.2.3", "--build-metadata", ""}},
+		{"pre-missing-arg", []string{"pre", "1.2.3", "--pre"}},
+		{"build-missing-arg", []string{"patch", "1.2.3", "--build-metadata"}},
+		{"double-pre", []string{"pre", "1.2.3", "--pre", "rc.0", "--pre", "rc.1"}},
+		{"double-no-pre", []string{"pre", "1.2.3-rc.0", "--no-pre", "--no-pre"}},
 	}
-	for _, argv := range cases {
-		if _, err := parseArgs(argv); err == nil {
-			t.Errorf("parseArgs(%v) expected error, got nil", argv)
-		}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := parseArgs(tc.argv); err == nil {
+				t.Errorf("parseArgs(%v) expected error, got nil", tc.argv)
+			}
+		})
 	}
 }
 
-func TestRun_ValueBumps(t *testing.T) {
+func TestRun_VerBumps(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		argv []string
 		want string
 	}{
-		{[]string{"patch", "--value", "1.2.3"}, "1.2.4\n"},
-		{[]string{"minor", "--value", "1.2.3"}, "1.3.0\n"},
-		{[]string{"major", "--value", "1.2.3"}, "2.0.0\n"},
-		{[]string{"get", "--value", "1.2.3"}, "1.2.3\n"},
+		{[]string{"patch", "1.2.3"}, "1.2.4\n"},
+		{[]string{"minor", "1.2.3"}, "1.3.0\n"},
+		{[]string{"major", "1.2.3"}, "2.0.0\n"},
+		{[]string{"get", "1.2.3"}, "1.2.3\n"},
 		// v prefix / 柔軟 separator も最終的に同じ経路を通る
-		{[]string{"patch", "--value", "v1.2.3"}, "v1.2.4\n"},
-		{[]string{"minor", "--value", "version_1_2_3"}, "version_1_3_0\n"},
-		// DR-0006: body sep `-` removed. `ver-1.2.3` is still allowed
-		// (the `-` is part of the prefix, body sep is `.`).
-		{[]string{"major", "--value", "ver-1.2.3"}, "ver-2.0.0\n"},
-		{[]string{"get", "--value", "v1.2.3"}, "v1.2.3\n"},
+		{[]string{"patch", "v1.2.3"}, "v1.2.4\n"},
+		{[]string{"minor", "version_1_2_3"}, "version_1_3_0\n"},
+		// DR-0006: body sep `-` removed; "ver-1.2.3" still works because
+		// the `-` is part of the prefix.
+		{[]string{"major", "ver-1.2.3"}, "ver-2.0.0\n"},
+		{[]string{"get", "v1.2.3"}, "v1.2.3\n"},
+		// pre action
+		{[]string{"pre", "1.2.3-rc.0"}, "1.2.3-rc.1\n"},
+		{[]string{"pre", "1.2.3", "--pre", "rc.0"}, "1.2.3-rc.0\n"},
+		{[]string{"pre", "1.2.3-rc.0", "--no-pre"}, "1.2.3\n"},
+		// patch with --pre re-attaches pre after bump
+		{[]string{"patch", "1.2.3", "--pre", "rc.0"}, "1.2.4-rc.0\n"},
+		// patch with --build-metadata
+		{[]string{"patch", "1.2.3", "--build-metadata", "sha.abc"}, "1.2.4+sha.abc\n"},
+		// get with --no-pre / --no-build-metadata
+		{[]string{"get", "1.2.3-rc.0", "--no-pre"}, "1.2.3\n"},
+		{[]string{"get", "1.2.3+build", "--no-build-metadata"}, "1.2.3\n"},
 	}
 	for _, tc := range cases {
 		var stdout bytes.Buffer
@@ -93,12 +140,46 @@ func TestRun_ValueBumps(t *testing.T) {
 	}
 }
 
-func TestRun_ValueRejectsBadInput(t *testing.T) {
+func TestRun_RejectsBadVer(t *testing.T) {
 	t.Parallel()
-	// DR-0006: pre-release / build metadata are now VALID. Use a truly
-	// malformed input here.
-	if err := run([]string{"patch", "--value", "not-a-version"}, bytes.NewReader(nil), &bytes.Buffer{}); err == nil {
+	// Truly malformed input (1.2.3-alpha is now valid, see DR-0006).
+	if err := run([]string{"patch", "not-a-version"}, bytes.NewReader(nil), &bytes.Buffer{}); err == nil {
 		t.Error("expected error for malformed input")
+	}
+}
+
+func TestRun_PreActionErrorOriginContext(t *testing.T) {
+	t.Parallel()
+	// 確定論点 E: VER-origin pass-through (no file context).
+	err := run([]string{"pre", "1.2.3-rc1"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "rc1 is not incremental") {
+		t.Errorf("error should mention 'rc1 is not incremental': %q", msg)
+	}
+	// VER-origin: should NOT be wrapped with file path.
+	if strings.Contains(msg, "<argv>") {
+		t.Errorf("VER-origin error should be passed through, got: %q", msg)
+	}
+
+	// FILE-origin: wrap with file:path=value.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "VERSION")
+	if err := os.WriteFile(path, []byte("1.2.3-rc1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err = run([]string{"pre", path}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg = err.Error()
+	if !strings.Contains(msg, path) {
+		t.Errorf("FILE-origin error should contain file path %q, got: %q", path, msg)
+	}
+	if !strings.Contains(msg, "rc1 is not incremental") {
+		t.Errorf("error should preserve semver-layer message: %q", msg)
 	}
 }
 
@@ -148,9 +229,11 @@ func TestRun_FileWrite(t *testing.T) {
 
 func TestRun_UnsupportedFile(t *testing.T) {
 	t.Parallel()
+	// README.md is neither a supported file nor a parseable VER. We
+	// expect a clear error.
 	err := run([]string{"get", "README.md"}, bytes.NewReader(nil), &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "unsupported file") {
-		t.Errorf("expected unsupported-file error, got %v", err)
+	if err == nil {
+		t.Error("expected error for unsupported input, got nil")
 	}
 }
 
@@ -252,6 +335,27 @@ func TestRun_StdinPipeWriteRejected(t *testing.T) {
 	_ = r.Close()
 }
 
+// `-` marker reads VER from stdin (single line).
+func TestRun_StdinDashMarker(t *testing.T) {
+	t.Parallel()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_, _ = w.Write([]byte("1.2.3\n"))
+		_ = w.Close()
+	}()
+	var stdout bytes.Buffer
+	if err := run([]string{"patch", "-"}, r, &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "1.2.4" {
+		t.Errorf("stdout = %q, want 1.2.4", got)
+	}
+	_ = r.Close()
+}
+
 // --- multi-file tests --------------------------------------------------------
 
 func TestRun_MultiFile_AllSame(t *testing.T) {
@@ -330,7 +434,7 @@ func TestRun_MultiFile_NameMismatch(t *testing.T) {
 
 func TestRun_MultiFile_NameOptional(t *testing.T) {
 	t.Parallel()
-	// VERSION (name 取れない) + package.json (name=foo) は version 一致してれば OK
+	// VERSION (no name) + package.json (name=foo) — version match is enough.
 	dir := t.TempDir()
 	v := filepath.Join(dir, "VERSION")
 	pkg := filepath.Join(dir, "package.json")
@@ -351,7 +455,6 @@ func TestRun_MultiFile_NameOptional(t *testing.T) {
 
 func TestRun_MultiFile_GetForVerification(t *testing.T) {
 	t.Parallel()
-	// `get` モード単独でも整合性検証として機能する
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.json")
 	b := filepath.Join(dir, "b.json")
@@ -369,7 +472,6 @@ func TestRun_MultiFile_GetForVerification(t *testing.T) {
 
 func TestRun_StdinPipeIgnoredWithMultiFile(t *testing.T) {
 	t.Parallel()
-	// stdin pipe があっても複数 FILE 指定時はファイルから読む (cat 慣例)
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.json")
 	b := filepath.Join(dir, "b.json")
@@ -383,8 +485,6 @@ func TestRun_StdinPipeIgnoredWithMultiFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() {
-		// stdin pipe には無関係なゴミを流す。multi-file path なので
-		// 読まれずに済むこと (= 結果が file 内容で決まる) を確認する。
 		_, _ = w.Write([]byte(`garbage to be ignored`))
 		_ = w.Close()
 	}()
@@ -396,4 +496,227 @@ func TestRun_StdinPipeIgnoredWithMultiFile(t *testing.T) {
 		t.Errorf("stdout = %q, want 1.2.4 (read from files, not stdin)", got)
 	}
 	_ = r.Close()
+}
+
+// --- FILE / VER mix ----------------------------------------------------------
+
+func TestRun_FileVerMix_Consistent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package.json")
+	if err := os.WriteFile(pkg, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	// FILE + VER both at 1.2.3 — passes consistency, bumps to 1.2.4.
+	if err := run([]string{"patch", pkg, "1.2.3"}, bytes.NewReader(nil), &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "1.2.4" {
+		t.Errorf("stdout = %q, want 1.2.4", got)
+	}
+}
+
+func TestRun_FileVerMix_Mismatch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package.json")
+	if err := os.WriteFile(pkg, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"patch", pkg, "1.2.4"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected version mismatch")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "version mismatch:") {
+		t.Errorf("got: %q", msg)
+	}
+	if !strings.Contains(msg, "<argv>") {
+		t.Errorf("VER-origin entry should be labeled <argv>: %q", msg)
+	}
+}
+
+func TestRun_WriteRequiresFile(t *testing.T) {
+	t.Parallel()
+	// --write with only VER inputs is rejected. Validation happens
+	// before stdout is touched so error path is side-effect free.
+	var stdout bytes.Buffer
+	err := run([]string{"patch", "1.2.3", "--write"}, bytes.NewReader(nil), &stdout)
+	if err == nil {
+		t.Fatal("expected error for --write without FILE")
+	}
+	if !strings.Contains(err.Error(), "FILE") {
+		t.Errorf("error should mention FILE: %q", err.Error())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout should be empty on validation failure, got: %q", stdout.String())
+	}
+}
+
+func TestRun_MismatchErrorAlignment(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json") // uses $.version path
+	b := filepath.Join(dir, "VERSION")
+	if err := os.WriteFile(a, []byte(`{"name":"x","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("1.2.5\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"patch", a, b, "1.2.4"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	msg := err.Error()
+	// All three values must appear.
+	for _, v := range []string{"1.2.3", "1.2.4", "1.2.5"} {
+		if !strings.Contains(msg, v) {
+			t.Errorf("missing value %q in error: %q", v, msg)
+		}
+	}
+	// The `=` should be column-aligned: every line containing `=` must
+	// have the `=` at the same column. Lines other than the header
+	// start with two spaces.
+	lines := strings.Split(msg, "\n")
+	col := -1
+	for i, ln := range lines {
+		if i == 0 {
+			continue // header line
+		}
+		idx := strings.Index(ln, " = ")
+		if idx < 0 {
+			t.Errorf("line missing ' = ': %q", ln)
+			continue
+		}
+		if col < 0 {
+			col = idx
+		} else if col != idx {
+			t.Errorf("alignment broken: expected '=' at col %d, got %d in line %q", col, idx, ln)
+		}
+	}
+}
+
+// --- compare ----------------------------------------------------------------
+
+func TestRun_Compare_Eq_True(t *testing.T) {
+	t.Parallel()
+	var stdout bytes.Buffer
+	if err := run([]string{"compare", "eq", "1.2.3", "1.2.3"}, bytes.NewReader(nil), &stdout); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("compare should not print on success, got: %q", stdout.String())
+	}
+}
+
+func TestRun_Compare_Eq_False(t *testing.T) {
+	t.Parallel()
+	err := run([]string{"compare", "eq", "1.2.3", "1.2.4"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected predicate-false (exit 1) error")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) {
+		t.Fatalf("expected *exitErr, got %T: %v", err, err)
+	}
+	if ee.code != 1 {
+		t.Errorf("exit code = %d, want 1", ee.code)
+	}
+}
+
+func TestRun_Compare_AllOps(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		op       string
+		a, b     string
+		wantTrue bool
+	}{
+		{"eq", "1.2.3", "1.2.3", true},
+		{"eq", "v1.2.3", "1.2.3", true},    // prefix ignored
+		{"eq", "1.2.3+a", "1.2.3+b", true}, // build metadata ignored
+		{"eq", "1.2.3", "1.2.4", false},
+		{"lt", "1.2.3", "1.2.4", true},
+		{"lt", "1.2.3-rc.1", "1.2.3", true},
+		{"lt", "1.2.3", "1.2.3", false},
+		{"le", "1.2.3", "1.2.3", true},
+		{"le", "1.2.3", "1.2.4", true},
+		{"le", "1.2.4", "1.2.3", false},
+		{"gt", "2.0.0", "1.0.0", true},
+		{"gt", "1.0.0", "2.0.0", false},
+		{"gt", "1.0.0", "1.0.0", false},
+		{"ge", "1.0.0", "1.0.0", true},
+		{"ge", "1.0.0", "0.9.9", true},
+		{"ge", "1.0.0", "2.0.0", false},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.op+"_"+c.a+"_"+c.b, func(t *testing.T) {
+			t.Parallel()
+			err := run([]string{"compare", c.op, c.a, c.b}, bytes.NewReader(nil), &bytes.Buffer{})
+			if c.wantTrue {
+				if err != nil {
+					t.Errorf("expected success (true), got: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected predicate-false (exit 1), got success")
+			}
+			var ee *exitErr
+			if !errors.As(err, &ee) {
+				t.Fatalf("expected *exitErr, got %T: %v", err, err)
+			}
+			if ee.code != 1 {
+				t.Errorf("exit code = %d, want 1", ee.code)
+			}
+		})
+	}
+}
+
+func TestRun_Compare_ParseError(t *testing.T) {
+	t.Parallel()
+	err := run([]string{"compare", "eq", "1.2.3", "not-a-version"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	// Should NOT be *exitErr (which would mean "predicate false"); main
+	// will turn this into exit 2.
+	var ee *exitErr
+	if errors.As(err, &ee) {
+		t.Errorf("parse errors should not be *exitErr (would map to exit 1, want 2): %v", err)
+	}
+}
+
+func TestRun_Compare_File(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	if err := os.WriteFile(a, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`{"name":"foo","version":"1.2.4"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"compare", "lt", a, b}, bytes.NewReader(nil), &bytes.Buffer{}); err != nil {
+		t.Errorf("expected lt true, got: %v", err)
+	}
+}
+
+// --- exit code semantics for main ------------------------------------------
+
+// Sanity check: a plain semver-layer error returned from run() is NOT
+// an *exitErr (so main converts it to exit 2).
+func TestRun_BumpError_NotExitErr(t *testing.T) {
+	t.Parallel()
+	err := run([]string{"patch", "garbage"}, bytes.NewReader(nil), &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var ee *exitErr
+	if errors.As(err, &ee) {
+		t.Errorf("bump errors should not be *exitErr; main maps plain errors to exit 2: %v", err)
+	}
 }

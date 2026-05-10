@@ -2,6 +2,26 @@
 
 「必要が出たら 1 行追加」方針 (DR-0001 + DR-0005) に従い、以下は **見えている候補** であって即座の実装対象ではない。実需が出たら DR を立てて追加する。
 
+## Done (実装済)
+
+過去ロードマップから移送。実装履歴の参考用に残す。
+
+### pre-release / build metadata 対応 (v0.5.0 / DR-0006)
+
+`1.2.3-alpha.1+build.42` 形式を SemVer 2.0.0 仕様準拠でパース・bump・比較できるようになった。bump 時は default で drop、`--pre` / `--build-metadata` で明示的に再付与する単一規則 (npm 流 strip-don't-bump とは異なる)。
+
+### `compare` サブコマンド (v0.5.0 / DR-0006)
+
+`compare {eq|lt|le|gt|ge}` で 2 つの INPUT (FILE / VER / `-`) を SemVer 2.0.0 順序で比較。終了コード `0`/`1`/`2` (`test` 慣習)。
+
+### `pre` アクション (v0.5.0 / DR-0006)
+
+pre-release counter advance / 上書き / 削除を `pre` アクション + `--pre` / `--no-pre` で操作。
+
+### FILE | VER | `-` 統合 (v0.5.0 / DR-0006)
+
+`--value` フラグを廃止し、位置引数で FILE パスと VER 文字列と `-` (stdin) を統一受理。
+
 ## 候補ハンドラ
 
 DR-0005 の path-aware confidence ranked テーブルにより、新フォーマット追加は基本「`rules.go` のテーブルに 1 行追加」で済む。新 format (yaml / xml / 独自) が必要なら `format_<name>.go` を 1 つ追加 + `tryRule` / `formatReplace` の switch に分岐を 1 行追加。
@@ -34,27 +54,17 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 ## 機能候補
 
-### pre-release / build metadata 対応
-
-`1.2.3-alpha.1+build.42` 形式。MVP では `-` / `+` 含む入力をエラーで弾いている (DR-0001 不採用案 D + DR-0003 不採用案 D)。kawaz の現用途では未使用。要望が出たら semver パッケージ (`golang.org/x/mod/semver` 等) を導入して対応。
-
-なお prefix (`v` / `ver` / `version`) と separator (`. _ -`) の柔軟化は **DR-0003 で対応済**。`v1.2.3` / `version_1_2_3` / `ver-1-2-3` などはそのまま受理し、bump 後も prefix と separator を保持する。
-
 ### Cargo workspace の `[workspace.package].version` 対応
 
 `Cargo.toml` がワークスペースルートのとき、`[package]` は無く `[workspace.package].version` だけがある。MVP では非対応 (DR-0002)。DR-0005 の path-aware ルール体制で `[package]` フォールバック → `[workspace.package]` の優先順位で対応可能 (rules.go テーブル拡張)。
 
-## 機能候補
+### pre-release のラベル昇格 (alpha → beta → rc → stable)
 
-### pre-release / build metadata 対応
+poetry `--next-phase` 相当。`pre 1.2.3-alpha → 1.2.3-beta` のような順序昇格は v0.5.0 では非対応。需要が出れば追加検討 (DR-0006 スコープ外項目)。
 
-`1.2.3-alpha.1+build.42` 形式。MVP では `-` / `+` 含む入力をエラーで弾いている (DR-0001 不採用案 D + DR-0003 不採用案 D)。kawaz の現用途では未使用。要望が出たら semver パッケージ (`golang.org/x/mod/semver` 等) を導入して対応。
+### `sort` / `valid` アクション
 
-なお prefix (`v` / `ver` / `version`) と separator (`. _ -`) の柔軟化は **DR-0003 で対応済**。`v1.2.3` / `version_1_2_3` / `ver-1-2-3` などはそのまま受理し、bump 後も prefix と separator を保持する。
-
-### Cargo workspace の `[workspace.package].version` 対応
-
-`Cargo.toml` がワークスペースルートのとき、`[package]` は無く `[workspace.package].version` だけがある。MVP では非対応 (DR-0002)。実需が出れば `cargoHandler` 内で `[package]` フォールバック → `[workspace.package]` の優先順位で対応可能。
+複数 VER のソート (`sort` action) や、パース可能性チェックのみの `valid` action は v0.5.0 では非対応。`compare` 以外の比較系として将来検討 (DR-0006 スコープ外項目)。
 
 ### `--dry-run` の明示化
 
@@ -66,7 +76,7 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 ### `--from-stdin --to-stdout` 明示
 
-stdin pipe 時に `--write` を禁じている現仕様の延長で、明示的なストリームモードを設けるか。現状の暗黙挙動で足りているので不要寄り。
+stdin pipe 時に `--write` を禁じている現仕様の延長で、明示的なストリームモードを設けるか。現状の暗黙挙動 + `-` INPUT で足りているので不要寄り。
 
 ## CI / リリース
 

@@ -4,7 +4,7 @@
 
 ## Background
 
-The release workflows across `kawaz/*` repositories need to read and bump the semver string in `Cargo.toml`, `package.json`, `VERSION`, and `.claude-plugin/{plugin,marketplace}.json`. The existing generic `bump` tool (`kawaz/go/bin/bump`) requires `-f <file> -p <regex>` on every invocation, which makes justfiles verbose.
+The release workflows across `kawaz/*` repositories need to read, bump, and compare the semver string in `Cargo.toml`, `package.json`, `VERSION`, and `.claude-plugin/{plugin,marketplace}.json`. The existing generic `bump` tool (`kawaz/go/bin/bump`) requires `-f <file> -p <regex>` on every invocation, which makes justfiles verbose.
 
 Example (current `claude-cmux-msg` justfile):
 
@@ -14,36 +14,51 @@ bump {{level}} -w -f .claude-plugin/marketplace.json -p '"version":\s*"([^"]+)"'
 bump {{level}} -w -f package.json                    -p '"version":\s*"([^"]+)"'
 ```
 
-Replacing this — three files, the same regex repeated three times — with a CLI that detects the format by filename is the goal.
+Replacing this — three files, the same regex repeated three times — with a CLI that detects the format by filename is the goal. v0.5.0 additionally folds in a `compare` subcommand so pre-release drift checks etc. can be done with the same tool (DR-0006).
 
 ## Approach
 
-Hide format detection inside the tool, and keep the CLI surface to **action + input + optional flag** only.
+Hide format detection inside the tool, and keep the CLI surface to **action + input + optional flag** only. Inputs are unified positional **FILE / VER / `-`**, which composes well with shell pipelines.
 
 ## Architecture
 
 ### CLI surface
 
 ```
-bump-semver <ACTION> <FILE...> [--write]
-bump-semver <ACTION> --value VER
+bump-semver <ACTION> <INPUT...> [flags]
+bump-semver compare <OP> <INPUT> <INPUT>
 
-ACTION = major | minor | patch | get
+ACTION = major | minor | patch | pre | get
+OP     = eq | lt | le | gt | ge
+INPUT  = FILE | VER | -
 ```
 
-`ACTION` is a flat 4-value enum. Keeping `get` at the same level as the bump actions structurally eliminates subcommand branching and argument-order ambiguity.
+`ACTION` is a flat 5-value enum (`major` / `minor` / `patch` / `pre` / `get`). Comparison operators are placed under one nested subcommand (`compare`) so the bump/read surface stays flat while comparison gets its own namespace (DR-0006).
 
-Multiple FILEs are bumped together as a single unit (DR-0004). Their detected versions must agree; their detected names are also cross-checked when available.
+Multiple INPUTs are operated on as a single unit (DR-0004). Their detected versions must agree; their detected names are also cross-checked when available.
+
+### Input modes (FILE | VER | `-`)
+
+Each positional argument is resolved in this priority order (DR-0006 確定論点 B):
+
+1. `-` → read VER from stdin, one line (stdin can be consumed at most once across all `-` arguments)
+2. Exists as a file → FILE
+3. Parses as semver → VER
+4. Otherwise → error
+
+When a filename collides with a valid semver string (e.g. a local file literally named `1.2.3`), prefix with `./` to disambiguate, per Unix convention.
 
 ### Mutual exclusivity rules
 
 | Combination | Result |
 |---|---|
-| `FILE...` + `--value` | Error (exactly one form is required) |
-| `--write` + `--value` | Error (no file to write back to) |
-| `--write` + `get` | Error (no meaning for a read-only operation) |
-| stdin pipe + multiple `FILE...` | stdin pipe is ignored, files are read from disk |
-| stdin pipe + single `FILE` + `--write` | Error (stdin is the source, conflicts with writing back) |
+| `--pre` + `--no-pre` | Error (mutually exclusive) |
+| `--build-metadata` + `--no-build-metadata` | Error (mutually exclusive) |
+| `--write` + `get` / `compare` | Error (read-only / comparison has no writable target) |
+| `--write` with zero FILE inputs | Error (`--write requires at least one FILE`) |
+| Multiple INPUTs disagree | `version mismatch:` with column-aligned origin labels |
+| Single FILE INPUT + stdin pipe | FILE is a name hint, content read from stdin (legacy) |
+| Multiple INPUTs + stdin pipe | stdin pipe is ignored (explicit INPUTs win, cat / sed convention) |
 | Otherwise | Proceed |
 
 ### Module layout
@@ -56,16 +71,18 @@ Go sources live under `src/`, leaving only metadata (README / docs / justfile / 
 ├── justfile
 ├── VERSION
 ├── README{,-ja}.md
+├── UPGRADING.md             v0.4.x → v0.5.0 migration guide
 ├── docs/
 └── src/
-    ├── main.go              # entrypoint, argv parsing, multi-file orchestration
-    ├── handler.go           # Handler interface (Inspect / Replace) + dispatcher
-    ├── handler_cargo.go     # Cargo.toml (TOML, [package].version + .name)
-    ├── handler_json.go      # *.json ($.version + optional $.name)
-    ├── handler_npm_lock.go  # package-lock.json (npm 7+, $.version + $.packages[""].version)
-    ├── handler_version.go   # VERSION (plain text)
-    ├── semver.go            # X.Y.Z parsing + bump (with v/ver/version prefix and . _ - separators)
-    └── *_test.go            # unit + integration tests
+    ├── main.go              entrypoint, argv parsing, multi-input consistency
+    ├── compare.go           compare subcommand (Version.Compare → exit code)
+    ├── handler.go           Handler interface (Inspect / Replace) + dispatcher
+    ├── handler_*.go         Cargo.toml / *.json / package-lock.json / VERSION
+    ├── format_*.go          format-specific Inspect/Replace (JSON / TOML / plain)
+    ├── rules.go             path-aware confidence-ranked rule table (DR-0005)
+    ├── jsonpath.go          map[string]any-based simple JSONPath
+    ├── semver.go            SemVer 2.0.0 parser + Bump + Compare
+    └── *_test.go            unit + integration + spec_table_test.go (DR-0006 spec-driven)
 ```
 
 ### Format detection — path-aware, confidence-ranked (DR-0005)
@@ -86,7 +103,7 @@ Confidence levels:
 
 This lets `marketplace.json` outside `.claude-plugin/` still get tried as a Claude-plugin marketplace first (confidence 2), and gracefully fall back to a plain `.version` JSON (confidence 1) if `.metadata.version` isn't present. Adding a new file format means **adding one row to the table** (and, if it's a brand new file format, one new format-specific Inspect/Replace pair). No `--pattern` flag is exposed at the CLI level.
 
-When stdin is a pipe and exactly one FILE is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin. With multiple FILEs the stdin pipe is ignored — the explicit files take precedence (cat / sed convention).
+When stdin is a pipe and exactly one FILE INPUT is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin (legacy shortcut). With multiple INPUTs the stdin pipe is ignored (explicit INPUTs take precedence, cat / sed convention). Passing `-` as an INPUT explicitly invokes the new "read VER from stdin" path.
 
 ### Handler interface and consistency checks (DR-0004)
 
@@ -109,32 +126,88 @@ type Handler interface {
 }
 ```
 
-main aggregates `Versions` and `Names` across all FILEs and requires:
+main aggregates `Versions` and `Names` across all INPUTs and requires:
 
-- All version fields agree (otherwise `version mismatch:` with file:path = value lines)
+- All version fields agree (otherwise `version mismatch:` with column-aligned origin labels)
 - All name fields agree where available (otherwise `name mismatch:` ...). Files without a name are skipped, so `Cargo.toml` + `VERSION` works fine.
 
 `Replace` writes only the version field(s); names are never touched. The `package-lock.json` handler streams the JSON document with a decoder so dependency entries (`$.packages["node_modules/..."]`) are guaranteed not to be rewritten even when their version happens to equal the current root version.
 
 ### Bump semantics
 
-The version parser accepts `[v|ver|version][_.-]?X<sep>Y<sep>Z`, where `<sep>` is one of `.` / `_` / `-` and is required to be the same on both sides (DR-0003). The optional prefix and the chosen separator are preserved through `Bump` and `String`:
+The version parser accepts SemVer 2.0.0 syntax with the kawaz prefix/sep extension (DR-0003 + DR-0006):
+
+```
+body:  (v|ver|version)?[._]?\d+[._]\d+[._]\d+      (sep1 == sep2 enforced)
+pre:   -<id>(.<id>)*                                (per SemVer 2.0.0)
+meta:  +<id>(.<id>)*                                (per SemVer 2.0.0)
+```
+
+- Body separator is `.` or `_` only. `-` is **not allowed** (would collide with the pre-release `-`; DR-0006 narrowed `[._-]` down to `[._]`)
+- Numeric-only identifiers (in body and pre-release) must not have leading zeros (per SemVer)
+- Build metadata identifiers may have leading zeros (per SemVer)
+
+The optional prefix and the chosen separator are preserved through `Bump` and `String`. Pre-release and build metadata are **dropped** by default on bumps (DR-0006 — a single rule, distinct from the npm-style strip-don't-bump behaviour).
 
 | Input | Action | Output |
 |---|---|---|
 | `1.2.3` | `patch` | `1.2.4` |
 | `v1.2.3` | `patch` | `v1.2.4` |
 | `version_1_2_3` | `minor` | `version_1_3_0` |
-| `ver-1-2-3` | `major` | `ver-2-0-0` |
-| `1-2-3` | `get` | `1-2-3` |
+| `1.2.3-rc.0` | `patch` | `1.2.4` (drop) |
+| `1.2.3-rc.0` | `pre` | `1.2.3-rc.1` (counter advance) |
+| `1.2.3-rc1` | `pre` | error (alphanumeric-mixed is not incremental) |
+| `1.2.3` | `pre --pre rc.0` | `1.2.3-rc.0` (overwrite) |
+| `1.2.3-rc.0` | `pre --no-pre` | `1.2.3` (remove) |
+| `1.2.3-rc.0` | `patch --pre rc.0` | `1.2.4-rc.0` (bump + re-attach) |
+| `1.2.3-rc.0+build` | `patch` | `1.2.4` (both dropped) |
 
-Inconsistent separators (`1.2-3`) are rejected. Pre-release / build metadata (`-alpha.1`, `+build.42`, etc.) is **not** supported in the MVP — encountering one is an error. Add support to the semver module when concretely needed.
+Inconsistent separators (`1.2_3`) are rejected.
+
+The `pre` action has three modes:
+
+- No flag: counter-advance only when the trailing identifier is purely numeric (`rc.0 → rc.1`); otherwise error
+- `--pre PRE`: overwrite with PRE entirely (regardless of prior pre, going backwards is allowed)
+- `--no-pre`: remove pre-release (no-op if there was none)
+
+### Comparison semantics (compare subcommand)
+
+`compare <OP> <INPUT> <INPUT>` follows SemVer 2.0.0 § 11 ordering:
+
+1. MAJOR/MINOR/PATCH numerically
+2. Pre-release version is "less than" the corresponding release (`1.0.0-rc.1 < 1.0.0`)
+3. Pre-release identifiers are compared field-by-field — numeric vs numeric numerically, alphanumeric vs alphanumeric by ASCII, numeric < alphanumeric
+4. Build metadata is **completely excluded** from ordering (`1.0.0+a == 1.0.0+b`)
+5. Prefix / separator differences are normalised away (`v1.2.3` == `1.2.3` == `version_1_2_3`)
+
+Each INPUT is resolved by the same FILE/VER/`-` logic as the bump path. INPUTs that contribute multiple version fields (e.g. `package-lock.json` exposing `$.version` and `$.packages[""].version`) are checked for internal agreement and collapsed to one value before comparison.
+
+Exit codes:
+- `0` — predicate true
+- `1` — predicate false
+- `2` — error (parse failure, mismatch, unsupported file, etc.)
+
+This follows the `test` / `dpkg --compare-versions` convention (DR-0006 確定論点 A). The bump path's old "error = exit 1" behaviour was also unified to `2` here; shell scripts that previously branched on `$? -eq 1` for errors should switch to `$? -ne 0` (see UPGRADING.md).
 
 ### Output
 
-The new version is **always written to stdout on a single line** on success, regardless of `--write`. That makes `NEW=$(bump-semver patch Cargo.toml --write)` an easy shell idiom.
+The new version is **always written to stdout on a single line** on success (regardless of `--write`, for bump actions). `compare` writes nothing to stdout even on a true predicate (avoids pipeline pollution; the result is signalled via exit code only).
 
-Errors print `bump-semver: <reason>` to stderr and exit non-zero.
+Errors print `bump-semver: <reason>` to stderr and exit non-zero. The error message format depends on the input origin (DR-0006 確定論点 E):
+
+- VER origin: the raw error message is passed through verbatim (e.g. `rc1 is not incremental, use --pre PRE`)
+- FILE origin: wrapped as `<file>:<path>=<value>: <semver-error>`
+
+When multiple INPUTs disagree, the values are listed column-aligned (DR-0006 確定論点 F):
+
+```
+bump-semver: version mismatch:
+  Cargo.toml:[package].version = 1.2.3
+  package.json:$.version       = 1.2.4
+  <argv>                       = 1.2.3-rc.1
+```
+
+Origin labels: `<file>:<path>` (FILE) / `<argv>` or `<argv:N>` (positional VER) / `<stdin>` (`-`).
 
 ## Distribution
 

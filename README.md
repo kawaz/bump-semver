@@ -2,7 +2,7 @@
 
 > English | [日本語](./README-ja.md)
 
-A focused CLI for reading and bumping the semver string in version-tracking files. Detects the file format by basename (no `--pattern` regex flag), supports four flat actions (`major` / `minor` / `patch` / `get`), and writes the new version to stdout always so it composes well in shell pipelines.
+A focused CLI for reading, bumping, and comparing the semver string in version-tracking files. Detects the file format by basename (no `--pattern` regex flag), supports five flat actions (`major` / `minor` / `patch` / `pre` / `get`) plus one nested subcommand (`compare`). The new version is always written to stdout so it composes well in shell pipelines.
 
 ## Why
 
@@ -21,25 +21,108 @@ Pre-built binaries for Linux / macOS / Windows (amd64, arm64) are also published
 ## Usage
 
 ```
-bump-semver <ACTION> <FILE...> [--write]
-bump-semver <ACTION> --value VER
+bump-semver <ACTION> <INPUT...> [flags]
+bump-semver compare <OP> <INPUT> <INPUT>
+bump-semver --version
+bump-semver --help
 ```
+
+`<INPUT>` is either a **FILE path**, a **raw VER string**, or **`-` (read VER from stdin, single line)**. Multiple inputs of mixed kinds may be given.
 
 ### Actions
 
 | Action | Effect |
 |---|---|
-| `major` | Bump major (`X.0.0`) |
-| `minor` | Bump minor (`x.Y.0`) |
-| `patch` | Bump patch (`x.y.Z`) |
-| `get`   | Print the current version |
+| `major` | Bump major (`X.0.0`); pre-release / build metadata dropped by default |
+| `minor` | Bump minor (`x.Y.0`); same drop default |
+| `patch` | Bump patch (`x.y.Z`); same drop default |
+| `pre`   | Pre-release counter advance / overwrite / remove (three modes, see below) |
+| `get`   | Print the current version (also doubles as a consistency check) |
 
-### Options
+### compare subcommand
 
-| Option | Description |
+```
+bump-semver compare <OP> <INPUT> <INPUT>
+```
+
+`<OP>` is one of `eq` / `lt` / `le` / `gt` / `ge`. Comparison follows SemVer 2.0.0 ordering (build metadata excluded from ordering, prefix / sep differences normalised).
+
+| OP | True when |
 |---|---|
-| `--value VER` | Use VER as input instead of reading from FILE(s) (mutually exclusive with FILE) |
-| `--write` | Write the new version back to each FILE (only valid with `major` / `minor` / `patch`, mutually exclusive with `--value`) |
+| `eq` | first == second |
+| `lt` | first <  second |
+| `le` | first <= second |
+| `gt` | first >  second |
+| `ge` | first >= second |
+
+Exit codes: `0` = true / `1` = false / `2` = error (`test` / `dpkg --compare-versions` convention).
+
+```bash
+bump-semver compare eq Cargo.toml v1.2.3 && echo same
+bump-semver compare lt 1.2.3-rc.1 1.2.3                       # exit 0 (rc < release)
+bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
+                                                              # CI check: drifted from main?
+```
+
+### Flags
+
+| Flag | Description |
+|---|---|
+| `--pre PRE`            | Set pre-release identifiers (e.g. `--pre rc.0`) |
+| `--no-pre`             | Remove pre-release identifiers |
+| `--build-metadata META`| Set build metadata identifiers (e.g. `--build-metadata sha.abc`) |
+| `--no-build-metadata`  | Remove build metadata identifiers |
+| `--write`              | Write the bumped version back to each FILE input (`major` / `minor` / `patch` / `pre` only) |
+| `--version`, `-V`      | Print the binary version |
+| `--help`, `-h`         | Show help |
+
+Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the build-metadata pair; `--write` cannot be combined with `get` or `compare`.
+
+### Input (INPUT)
+
+| Form | Meaning |
+|---|---|
+| FILE | Path to a supported file (auto-detected by basename) |
+| VER  | A raw semver string (e.g. `1.2.3`, `v1.2.3`, `1.2.3-rc.1+build.42`) |
+| `-`  | Read VER from stdin, one line (used at most once) |
+
+If a local file is literally named `1.2.3` and you mean the file, write `./1.2.3` (Unix convention).
+
+### Supported version syntax
+
+```
+body:  (v|ver|version)?[._]?\d+[._]\d+[._]\d+      (sep1 == sep2 enforced)
+pre:   -<id>(.<id>)*                                (SemVer 2.0.0 compliant)
+meta:  +<id>(.<id>)*                                (SemVer 2.0.0 compliant)
+```
+
+- The `v` / `ver` / `version` prefix is optional (e.g. `v1.2.3`, `version_1_2_3`)
+- Body separator is `.` or `_`, and must match on both sides (DR-0003 + DR-0006)
+- Body separator `-` is **not allowed** (would collide with the pre-release `-`)
+- Pre-release: `rc.0`, `alpha`, `beta.1`, etc. Numeric-only identifiers must not have leading zeros
+- Build metadata: `build.42`, `sha.5114f85`, etc. Leading zeros are allowed (per SemVer)
+
+The chosen prefix and separator are **preserved** on output.
+
+### Bump behavior (drop default)
+
+On bump, unless `--pre` / `--build-metadata` is explicitly given, any existing pre-release / build metadata is **dropped** (DR-0006).
+
+| Input | `patch` | `pre` | `pre --pre alpha` | `pre --no-pre` |
+|---|---|---|---|---|
+| `1.2.3`            | `1.2.4` | error: no pre-release | `1.2.3-alpha` | `1.2.3` (nop) |
+| `1.2.3-rc.0`       | `1.2.4` (drop) | `1.2.3-rc.1` | `1.2.3-alpha` | `1.2.3` |
+| `1.2.3-rc1`        | `1.2.4` | error: not incremental | `1.2.3-alpha` | `1.2.3` |
+| `1.2.3+build`      | `1.2.4` (drop) | error: no pre-release | `1.2.3-alpha` | `1.2.3` (nop) |
+| `1.2.3-rc.0+build` | `1.2.4` (both dropped) | `1.2.3-rc.1` | `1.2.3-alpha` | `1.2.3` |
+
+This **differs from the npm-style strip-don't-bump (`patch 1.2.3-rc.0 → 1.2.3`)**. We use a single rule — `patch` always advances the patch number; pre-release / build metadata are dropped unless explicitly carried over with `--pre` / `--build-metadata` — for internal consistency.
+
+### `pre` action: three modes
+
+- **No flag (`pre INPUT`)**: counter-advance only when the existing pre-release's last identifier is purely numeric (e.g. `rc.0` → `rc.1`). Otherwise (e.g. `rc1`, `alpha`) error
+- **`--pre PRE`**: overwrite the pre-release with PRE entirely (regardless of prior pre, including going backwards)
+- **`--no-pre`**: remove pre-release (no-op if there was none)
 
 ### Supported file formats
 
@@ -61,47 +144,97 @@ Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `un
 
 For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with `unsupported lockfileVersion: 1, please regenerate with npm 7+`. Dependency entries (`$.packages["node_modules/..."]`) are never rewritten even if their version happens to equal the project's own.
 
-### Multiple files: cross-file consistency
+### Multiple INPUTs: cross-input consistency
 
-Pass multiple FILEs to bump them as a single unit. Versions across files must already agree (otherwise: `version mismatch:` with file:path = value lines). Detected package names are also cross-checked when available, to guard against accidentally bumping files from a different project together; names are never written back.
+Pass multiple INPUTs to operate on them as a single unit. Versions across all INPUTs must already agree (otherwise: a `version mismatch:` error lists each origin and value, column-aligned). Detected package names are also cross-checked when available, to guard against accidentally bumping files from a different project together; names are never written back.
 
 ```bash
 bump-semver patch package.json package-lock.json --write
 bump-semver get   .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
+bump-semver patch 1.2.3 a.json b.json --write   # use VER as the "expected current value" for consistency, write bumped result to a/b
 ```
 
-`get` with multiple FILEs works as a CI-friendly consistency check (no `--write` needed, just verifies that all detected version fields agree).
+`get` with multiple INPUTs works as a CI-friendly consistency check (no `--write` needed, just verifies that all detected version fields agree).
+
+With `--write`, only **FILE-origin inputs** are written back; VER and stdin inputs are reference values used for consistency checking only. Specifying `--write` without any FILE input is an error (`--write requires at least one FILE`).
 
 ### stdin pipe
 
-When stdin is a pipe **and exactly one FILE is given**, FILE is treated as a name hint and content is read from stdin. With multiple FILEs the stdin pipe is ignored (files override stdin, matching the cat/sed convention). Useful for comparing across revisions without checking out the file:
+When stdin is a pipe **and exactly one FILE INPUT is given**, that FILE is treated as a name hint and content is read from stdin (legacy shortcut, kept for backward compatibility). With multiple INPUTs the stdin pipe is ignored. Useful for comparing across revisions without checking out the file:
 
 ```bash
 jj file show v0.1.0 Cargo.toml | bump-semver get Cargo.toml
 ```
 
+To explicitly read VER from stdin (the new unified form), pass `-` as an INPUT — it can be mixed with FILE INPUTs:
+
+```bash
+echo 1.2.3 | bump-semver compare eq Cargo.toml -
+```
+
 ### Examples
 
 ```bash
-bump-semver patch Cargo.toml --write          # bump + write back, prints new version
-bump-semver minor package.json                # bump in memory, prints new version (file untouched)
-bump-semver get .claude-plugin/plugin.json    # current version
-bump-semver patch --value 1.2.3               # 1.2.4
-bump-semver get --value 1.2.3                 # parse-validate (1.2.3) or error
-bump-semver patch --value v1.2.3              # v1.2.4 (prefix preserved)
-bump-semver minor --value version_1_2_3       # version_1_3_0 (prefix + separator preserved)
+bump-semver patch Cargo.toml --write              # bump + write back, prints new version
+bump-semver minor package.json                    # bump in memory, prints new version (file untouched)
+bump-semver get .claude-plugin/plugin.json        # current version
+bump-semver patch 1.2.3                           # 1.2.4 (raw VER)
+bump-semver patch v1.2.3                          # v1.2.4 (prefix preserved)
+bump-semver minor version_1_2_3                   # version_1_3_0 (prefix + separator preserved)
+bump-semver pre 1.2.3-rc.0                        # 1.2.3-rc.1 (counter advance)
+bump-semver pre 1.2.3 --pre rc.0                  # 1.2.3-rc.0 (overwrite)
+bump-semver patch Cargo.toml --pre rc.0           # 1.2.4-rc.0 (bump + re-attach pre)
+bump-semver patch Cargo.toml --no-pre             # 1.2.4 (release-promotion equivalent)
+bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < release)
+bump-semver compare eq Cargo.toml package.json    # cross-file equality
 ```
 
-The version parser also accepts an optional `v` / `ver` / `version` prefix and `.` / `_` / `-` separators (e.g. `v1.2.3`, `ver-1-2-3`, `version_1_2_3`); the chosen prefix and separator are preserved on output. Pre-release / build metadata (`-alpha.1`, `+build.42`) is not supported.
+### Error message format
+
+Errors print `bump-semver: <reason>` to stderr on a single line. The format depends on the input origin (VER vs FILE), so callers can grep for known substrings.
+
+**VER origin** (positional argument or stdin-supplied raw semver):
+
+```
+bump-semver: rc1 is not incremental, use --pre PRE
+bump-semver: 1.2.3 does not have a pre-release, use --pre PRE
+```
+
+**FILE origin** (version read from a file): wrapped with the file path and in-file version field path.
+
+```
+bump-semver: Cargo.toml:[package].version=1.2.3-rc1: rc1 is not incremental, use --pre PRE
+bump-semver: package.json:$.version=1.2.3: 1.2.3 does not have a pre-release, use --pre PRE
+```
+
+**Mismatch errors** (multiple INPUTs disagree): printed column-aligned, vertically.
+
+```
+bump-semver: version mismatch:
+  Cargo.toml:[package].version = 1.2.3
+  package.json:$.version       = 1.2.4
+  <argv>                       = 1.2.3-rc.1
+```
+
+Origin labels: `<file>:<path>` (FILE origin) / `<argv>` or `<argv:N>` (positional VER) / `<stdin>` (`-`).
 
 ### Exit codes
 
-- `0` — success
-- non-zero — error (unsupported file, exclusive option violation, parse failure, IO error, etc.)
+- `0` — success / compare predicate true
+- `1` — compare predicate false
+- `2` — error (parse failure, mismatch, unsupported file, exclusivity violation, IO error, etc.)
+
+## Migrating from v0.4.x
+
+v0.5.0 ships three breaking changes. See [UPGRADING.md](./UPGRADING.md) for full details and rewrite examples:
+
+1. **`--value` flag removed** → pass the VER directly as a positional argument (`bump-semver patch 1.2.3`)
+2. **Body separator `-` removed** → use `.` or `_` instead (`1-2-3` is no longer accepted)
+3. **Bump-path error exit code 1 → 2** (unified with the compare convention)
 
 ## Status
 
-v0.1.0 has been released — the MVP supports `Cargo.toml`, `*.json`, and `VERSION`. Further formats are added one handler at a time as concrete needs arise (see DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+v0.5.0 introduces pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

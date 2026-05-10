@@ -2,7 +2,7 @@
 
 > [English](./README.md) | 日本語
 
-バージョン管理用ファイル中の semver 文字列を取得・bump するための、絞り込まれた CLI。ファイル形式は basename で自動判定 (`--pattern` regex フラグ不要)、4 つの flat なアクション (`major` / `minor` / `patch` / `get`) を持ち、新しいバージョンは常に stdout に出力するのでシェルパイプラインに合成しやすい。
+バージョン管理用ファイル中の semver 文字列を取得・bump・比較するための、絞り込まれた CLI。ファイル形式は basename で自動判定 (`--pattern` regex フラグ不要)、5 つの flat なアクション (`major` / `minor` / `patch` / `pre` / `get`) と 1 つのネストサブコマンド (`compare`) を持つ。新しいバージョンは常に stdout に出力するのでシェルパイプラインに合成しやすい。
 
 ## なぜ作ったか
 
@@ -21,25 +21,108 @@ Linux / macOS / Windows (amd64, arm64) のビルド済みバイナリも GitHub 
 ## 使い方
 
 ```
-bump-semver <ACTION> <FILE...> [--write]
-bump-semver <ACTION> --value VER
+bump-semver <ACTION> <INPUT...> [flags]
+bump-semver compare <OP> <INPUT> <INPUT>
+bump-semver --version
+bump-semver --help
 ```
+
+`<INPUT>` は **FILE パス** / **生の VER 文字列** / **`-` (stdin から VER 1 行読込)** のいずれかで、複数指定時は混在可能。
 
 ### アクション
 
 | アクション | 効果 |
 |---|---|
-| `major` | major を bump (`X.0.0`) |
-| `minor` | minor を bump (`x.Y.0`) |
-| `patch` | patch を bump (`x.y.Z`) |
-| `get`   | 現在のバージョンを出力 |
+| `major` | major を bump (`X.0.0`)。pre-release / build metadata はデフォルトで drop |
+| `minor` | minor を bump (`x.Y.0`)。同上 |
+| `patch` | patch を bump (`x.y.Z`)。同上 |
+| `pre`   | pre-release の counter advance / 上書き / 削除 (3 モード、後述) |
+| `get`   | 現在のバージョンを出力 (整合性チェック兼用) |
 
-### オプション
+### compare サブコマンド
 
-| オプション | 説明 |
+```
+bump-semver compare <OP> <INPUT> <INPUT>
+```
+
+`<OP>` は `eq` / `lt` / `le` / `gt` / `ge` のいずれか。SemVer 2.0.0 順序仕様準拠で比較する (build metadata は順序比較から除外、prefix / sep の違いは正規化)。
+
+| OP | 真となる条件 |
 |---|---|
-| `--value VER` | FILE の代わりに VER を入力として使う (FILE と排他) |
-| `--write` | 新しいバージョンを各 FILE に書き戻す (`major` / `minor` / `patch` のみ、`--value` と排他) |
+| `eq` | 第1引数 == 第2引数 |
+| `lt` | 第1引数 <  第2引数 |
+| `le` | 第1引数 <= 第2引数 |
+| `gt` | 第1引数 >  第2引数 |
+| `ge` | 第1引数 >= 第2引数 |
+
+終了コード: `0` = 真 / `1` = 偽 / `2` = エラー (`test` / `dpkg --compare-versions` 慣習)。
+
+```bash
+bump-semver compare eq Cargo.toml v1.2.3 && echo same
+bump-semver compare lt 1.2.3-rc.1 1.2.3                       # exit 0 (rc < 確定版)
+bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
+                                                              # main からズレてないか CI チェック
+```
+
+### フラグ
+
+| フラグ | 説明 |
+|---|---|
+| `--pre PRE`            | pre-release 識別子を設定 (例 `--pre rc.0`) |
+| `--no-pre`             | pre-release を削除 |
+| `--build-metadata META`| build metadata を設定 (例 `--build-metadata sha.abc`) |
+| `--no-build-metadata`  | build metadata を削除 |
+| `--write`              | bump 結果を各 FILE 入力に書き戻す (`major` / `minor` / `patch` / `pre` のみ) |
+| `--version`, `-V`      | バイナリのバージョン |
+| `--help`, `-h`         | ヘルプ |
+
+排他: `--pre` と `--no-pre` 同時指定はエラー、`--build-metadata` と `--no-build-metadata` 同時指定はエラー、`--write` と `get` / `compare` の組み合わせはエラー。
+
+### 入力 (INPUT)
+
+| 形式 | 解釈 |
+|---|---|
+| FILE | サポート形式のファイルパス (basename で自動判定) |
+| VER  | semver 文字列を直接 (`1.2.3` / `v1.2.3` / `1.2.3-rc.1+build.42` 等) |
+| `-`  | stdin から VER を 1 行読込 (1 回のみ使用可) |
+
+`1.2.3` という名前のローカルファイルを明示したいときは `./1.2.3` で曖昧さを回避 (Unix 慣習)。
+
+### サポートする version 形式
+
+```
+本体: (v|ver|version)?[._]?\d+[._]\d+[._]\d+      (sep1 == sep2 を強制)
+pre:  -<id>(.<id>)*                                (SemVer 2.0.0 仕様準拠)
+meta: +<id>(.<id>)*                                (SemVer 2.0.0 仕様準拠)
+```
+
+- prefix `v` / `ver` / `version` は省略可 (例 `v1.2.3`, `version_1_2_3`)
+- 本体セパレータは `.` または `_` のいずれか、両側で一致が必要 (DR-0003 + DR-0006)
+- 本体に `-` セパレータは **不可** (pre-release の `-` と衝突するため)
+- pre-release: `rc.0`, `alpha`, `beta.1` 等。数値のみ識別子は leading zero 禁止
+- build metadata: `build.42`, `sha.5114f85` 等。leading zero 許容 (SemVer 仕様)
+
+入力にあった prefix と sep は出力で**保持される**。
+
+### bump 挙動 (drop デフォルト)
+
+bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre-release / build metadata は **drop** する (DR-0006)。
+
+| 入力 | `patch` | `pre` | `pre --pre alpha` | `pre --no-pre` |
+|---|---|---|---|---|
+| `1.2.3`            | `1.2.4` | error: pre-release 不在 | `1.2.3-alpha` | `1.2.3` (nop) |
+| `1.2.3-rc.0`       | `1.2.4` (drop) | `1.2.3-rc.1` | `1.2.3-alpha` | `1.2.3` |
+| `1.2.3-rc1`        | `1.2.4` | error: not incremental | `1.2.3-alpha` | `1.2.3` |
+| `1.2.3+build`      | `1.2.4` (drop) | error: pre-release 不在 | `1.2.3-alpha` | `1.2.3` (nop) |
+| `1.2.3-rc.0+build` | `1.2.4` (両 drop) | `1.2.3-rc.1` | `1.2.3-alpha` | `1.2.3` |
+
+これは **npm 流の strip-don't-bump (`patch 1.2.3-rc.0 → 1.2.3`) とは異なる**。`patch` は常に patch を上げる、`--pre` / `--build-metadata` を明示しなければ drop、という単一規則を採用 (内部一貫性優先)。
+
+### `pre` アクションの 3 モード
+
+- **引数なし (`pre INPUT`)**: 既存 pre が `rc.N` のように末尾識別子が pure numeric のときのみ counter advance。それ以外 (`rc1` 等の英数字混在) はエラー
+- **`--pre PRE`**: PRE 値で完全上書き (元 pre 有無問わず、巻き戻りも許容)
+- **`--no-pre`**: pre 削除 (元 pre 不在でも nop)
 
 ### サポートするファイル形式
 
@@ -61,47 +144,97 @@ bump-semver <ACTION> --value VER
 
 npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupported lockfileVersion: 1, please regenerate with npm 7+` エラー。依存エントリ (`$.packages["node_modules/..."]`) は仮に値が同じでも書き換わらない。
 
-### 複数ファイル: 整合性検証
+### 複数 INPUT: 整合性検証
 
-複数の FILE を渡すと 1 つの単位として bump される。全 file 間で version は事前に一致している必要がある (不一致なら `version mismatch:` で file:path = value 列挙)。検出された package name も取れた範囲で整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
+複数 INPUT を渡すと 1 つの単位として処理される。全 INPUT 間で version は事前に一致している必要がある (不一致なら `version mismatch:` でカラム揃え縦列挙)。検出された package name も取れた範囲で整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
 
 ```bash
 bump-semver patch package.json package-lock.json --write
 bump-semver get   .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
+bump-semver patch 1.2.3 a.json b.json --write   # VER 引数で「期待値」を指定して整合性確認、結果は a/b に書き戻す
 ```
 
-複数 FILE 指定時の `get` は CI 用の整合性チェックとして機能する (`--write` 不要、全 version が一致しているかだけ検証)。
+複数 INPUT 指定時の `get` は CI 用の整合性チェックとして機能する (`--write` 不要、全 version が一致しているかだけ検証)。
+
+`--write` 時、書き戻し対象は **FILE 入力のみ**。VER / stdin 入力は参照値として整合性検証だけに使われる。`--write` 指定時に FILE 入力が 1 つもない場合はエラー (`--write requires at least one FILE`)。
 
 ### stdin パイプ
 
-stdin がパイプ **かつ FILE が 1 個のとき**、FILE は名前ヒントとして扱われ、内容は stdin から読み込まれる。複数 FILE のときは stdin pipe は無視される (cat / sed と同じく「明示 FILE が stdin より優先」)。ファイルをチェックアウトせずにリビジョン間で比較したい時に有用:
+stdin がパイプ **かつ INPUT が単一の FILE のとき**、その FILE は名前ヒントとして扱われ、内容は stdin から読み込まれる (legacy ショートカット、後方互換)。複数 INPUT のときは stdin pipe は無視される。ファイルをチェックアウトせずにリビジョン間で比較したい時に有用:
 
 ```bash
 jj file show v0.1.0 Cargo.toml | bump-semver get Cargo.toml
 ```
 
+`-` を INPUT として明示すれば、stdin から VER 1 行を読み込む新方式 (FILE 入力と混在可能):
+
+```bash
+echo 1.2.3 | bump-semver compare eq Cargo.toml -
+```
+
 ### 使用例
 
 ```bash
-bump-semver patch Cargo.toml --write          # bump + 書き戻し、新バージョンを出力
-bump-semver minor package.json                # メモリ上で bump、新バージョン出力 (ファイル不変)
-bump-semver get .claude-plugin/plugin.json    # 現在のバージョン
-bump-semver patch --value 1.2.3               # 1.2.4
-bump-semver get --value 1.2.3                 # パース検証 (1.2.3) かエラー
-bump-semver patch --value v1.2.3              # v1.2.4 (prefix を保持)
-bump-semver minor --value version_1_2_3       # version_1_3_0 (prefix + separator を保持)
+bump-semver patch Cargo.toml --write              # bump + 書き戻し、新バージョンを出力
+bump-semver minor package.json                    # メモリ上で bump、新バージョン出力 (ファイル不変)
+bump-semver get .claude-plugin/plugin.json        # 現在のバージョン
+bump-semver patch 1.2.3                           # 1.2.4 (VER 直接指定)
+bump-semver patch v1.2.3                          # v1.2.4 (prefix を保持)
+bump-semver minor version_1_2_3                   # version_1_3_0 (prefix + separator を保持)
+bump-semver pre 1.2.3-rc.0                        # 1.2.3-rc.1 (counter advance)
+bump-semver pre 1.2.3 --pre rc.0                  # 1.2.3-rc.0 (上書き)
+bump-semver patch Cargo.toml --pre rc.0           # 1.2.4-rc.0 (bump + pre 再付与)
+bump-semver patch Cargo.toml --no-pre             # 1.2.4 (確定昇格相当)
+bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < 確定)
+bump-semver compare eq Cargo.toml package.json    # cross-file 等値判定
 ```
 
-バージョン文字列は `v` / `ver` / `version` の任意プレフィックスと `.` / `_` / `-` のセパレータを受理する (例: `v1.2.3`, `ver-1-2-3`, `version_1_2_3`)。プレフィックスとセパレータは bump 後の出力でも保持される。pre-release / build metadata (`-alpha.1`, `+build.42`) は非対応。
+### エラーメッセージの形式
+
+エラーは stderr に `bump-semver: <reason>` として 1 行出力される。grep でフィルタする運用も想定し、起源 (VER / FILE) によってフォーマットを使い分けている。
+
+**VER 起源** (位置引数または stdin 経由の生 semver 文字列):
+
+```
+bump-semver: rc1 is not incremental, use --pre PRE
+bump-semver: 1.2.3 does not have a pre-release, use --pre PRE
+```
+
+**FILE 起源** (ファイルから読まれた version): file path + version field path で wrap される。
+
+```
+bump-semver: Cargo.toml:[package].version=1.2.3-rc1: rc1 is not incremental, use --pre PRE
+bump-semver: package.json:$.version=1.2.3: 1.2.3 does not have a pre-release, use --pre PRE
+```
+
+**不一致エラー** (複数 INPUT で値がズレている場合): カラム整列で縦列挙される。
+
+```
+bump-semver: version mismatch:
+  Cargo.toml:[package].version = 1.2.3
+  package.json:$.version       = 1.2.4
+  <argv>                       = 1.2.3-rc.1
+```
+
+起源ラベル: `<file>:<path>` (FILE 起源) / `<argv>` または `<argv:N>` (位置引数の VER) / `<stdin>` (`-` 経由)。
 
 ### 終了コード
 
-- `0` — 成功
-- 非ゼロ — エラー (未対応ファイル、排他オプション違反、パース失敗、IO エラー等)
+- `0` — 成功 / compare 述語が真
+- `1` — compare 述語が偽
+- `2` — エラー (パース失敗、整合性 NG、未対応ファイル、排他オプション違反、IO エラー等)
+
+## v0.4.x からの移行
+
+v0.5.0 で 3 つの破壊変更が入っている。詳細とサンプルは [UPGRADING.md](./UPGRADING.md) を参照:
+
+1. **`--value` フラグ廃止** → 位置引数で直接 VER を渡す (`bump-semver patch 1.2.3`)
+2. **本体セパレータ `-` 廃止** → `.` または `_` を使う (`1-2-3` は不可)
+3. **bump 系のエラー時 exit code 1 → 2** (compare 規約に合わせて統一)
 
 ## 開発状況
 
-v0.1.0 をリリース済 (Cargo.toml / `*.json` / VERSION の 3 形式に対応した MVP)。今後は「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
+v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合が入った (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
 
 ## ライセンス
 

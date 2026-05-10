@@ -174,7 +174,7 @@ func TestDetectHandler_NewFallbackExtensions(t *testing.T) {
 		}
 	}
 	// Still unsupported: pom.xml etc.
-	bad := []string{"pom.xml", "Info.plist"}
+	bad := []string{"pom.xml"}
 	for _, p := range bad {
 		if _, err := detectHandler(p); err == nil {
 			t.Errorf("detectHandler(%q) expected error, got nil", p)
@@ -290,6 +290,96 @@ version = "1.2.3"
 	}
 	if insp.MatchedConfidence != 1 {
 		t.Errorf("MatchedConfidence = %d, want 1", insp.MatchedConfidence)
+	}
+}
+
+// TestDetectHandler_PbxprojAndInfoPlist covers the DR-0015 path-pinned
+// confidence-3 rules. Both basenames register at any depth in the
+// tree (Xcode bundles them inside `<project>.xcodeproj/`).
+func TestDetectHandler_PbxprojAndInfoPlist(t *testing.T) {
+	t.Parallel()
+	good := []string{
+		"project.pbxproj",
+		"App.xcodeproj/project.pbxproj",
+		"deeply/nested/App.xcodeproj/project.pbxproj",
+		"Info.plist",
+		"App/Info.plist",
+		"deeply/nested/Info.plist",
+	}
+	for _, p := range good {
+		if _, err := detectHandler(p); err != nil {
+			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
+		}
+	}
+}
+
+// TestResolveRule_PbxprojAndInfoPlistPrecedence pins the rule
+// selection: both basenames resolve to their dedicated confidence-3
+// rule rather than falling through to a generic format.
+func TestResolveRule_PbxprojAndInfoPlistPrecedence(t *testing.T) {
+	t.Parallel()
+	type tc struct {
+		path    string
+		content string
+		want    string // CandidateRule.Name
+	}
+	cases := []tc{
+		{
+			"project.pbxproj",
+			"\t\tABC = {\n\t\t\tMARKETING_VERSION = 1.2.3;\n\t\t};\n",
+			"project.pbxproj",
+		},
+		{
+			"App.xcodeproj/project.pbxproj",
+			"MARKETING_VERSION = 1.2.3;\n",
+			"project.pbxproj",
+		},
+		{
+			"Info.plist",
+			`<?xml version="1.0"?><plist><dict><key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>`,
+			"Info.plist",
+		},
+		{
+			"App/Info.plist",
+			`<plist><dict><key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>`,
+			"Info.plist",
+		},
+	}
+	for _, c := range cases {
+		rule, _, err := resolveRule(c.path, []byte(c.content))
+		if err != nil {
+			t.Errorf("resolveRule(%q) error: %v", c.path, err)
+			continue
+		}
+		if rule.Name != c.want {
+			t.Errorf("resolveRule(%q) = %q, want %q", c.path, rule.Name, c.want)
+		}
+		if rule.Confidence != 3 {
+			t.Errorf("resolveRule(%q).Confidence = %d, want 3", c.path, rule.Confidence)
+		}
+	}
+}
+
+// TestResolveRule_PbxprojMismatchSurfaces: when an inconsistent
+// pbxproj is read end-to-end through `tryRun`, the dispatcher emits
+// a `version mismatch:` error sourced from main.go's existing
+// column-aligned formatter. The mismatch is detected at the
+// per-input layer (inside resolveFile) before any cross-file logic
+// kicks in.
+func TestResolveRule_PbxprojMismatchSurfaces(t *testing.T) {
+	t.Parallel()
+	dir := tempWriteFiles(t, map[string]string{
+		"project.pbxproj": "MARKETING_VERSION = 1.2.3;\nMARKETING_VERSION = 1.2.4;\n",
+	})
+	err := tryRun("get", dir+"/project.pbxproj")
+	if err == nil {
+		t.Fatal("expected version mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "version mismatch:") {
+		t.Errorf("error does not mention 'version mismatch:': %v", err)
+	}
+	if !strings.Contains(err.Error(), "line:") {
+		t.Errorf("mismatch labels missing 'line:' annotation: %v", err)
 	}
 }
 

@@ -403,6 +403,154 @@ func TestSpec_PreActionErrorMessages(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------
+// TestSpec_JSONOutput: DR-0007 § "確定スキーマ" + § "pre_id / pre_rest の分割定義"
+//
+// Each row exercises Version.ToJSON for one input shape from the DR's
+// example tables, verifying:
+//   - version  (input format preserved: prefix + body sep)
+//   - semver   (strict form: prefix removed, body sep normalised to ".")
+//   - major / minor / patch
+//   - pre / pre_id / pre_rest (split at first '.', or null)
+//   - build_metadata / build_id / build_rest (same rule)
+//
+// ----------------------------------------------------------------------
+func TestSpec_JSONOutput(t *testing.T) {
+	t.Parallel()
+	type tc struct {
+		in            string
+		wantVersion   string
+		wantSemver    string
+		wantMajor     int
+		wantMinor     int
+		wantPatch     int
+		wantPre       *string
+		wantPreID     *string
+		wantPreRest   *string
+		wantBuild     *string
+		wantBuildID   *string
+		wantBuildRest *string
+	}
+	sp := func(s string) *string { return &s }
+	cases := []tc{
+		// Plain version: pre/build all null.
+		{
+			in: "1.2.3", wantVersion: "1.2.3", wantSemver: "1.2.3",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+		},
+		// Pre-release decomposition (DR-0007 example table).
+		{
+			in: "1.2.3-rc.1", wantVersion: "1.2.3-rc.1", wantSemver: "1.2.3-rc.1",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("rc.1"), wantPreID: sp("rc"), wantPreRest: sp("1"),
+		},
+		{
+			in: "1.2.3-alpha.beta.5", wantVersion: "1.2.3-alpha.beta.5", wantSemver: "1.2.3-alpha.beta.5",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("alpha.beta.5"), wantPreID: sp("alpha"), wantPreRest: sp("beta.5"),
+		},
+		{
+			in: "1.2.3-alpha", wantVersion: "1.2.3-alpha", wantSemver: "1.2.3-alpha",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("alpha"), wantPreID: sp("alpha"), wantPreRest: nil,
+		},
+		{
+			in: "1.2.3-rc1", wantVersion: "1.2.3-rc1", wantSemver: "1.2.3-rc1",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("rc1"), wantPreID: sp("rc1"), wantPreRest: nil,
+		},
+		{
+			in: "1.2.3-0", wantVersion: "1.2.3-0", wantSemver: "1.2.3-0",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("0"), wantPreID: sp("0"), wantPreRest: nil,
+		},
+		{
+			in: "1.2.3-0.3.7", wantVersion: "1.2.3-0.3.7", wantSemver: "1.2.3-0.3.7",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("0.3.7"), wantPreID: sp("0"), wantPreRest: sp("3.7"),
+		},
+		// Build metadata follows the same rule.
+		{
+			in: "1.2.3+build.42", wantVersion: "1.2.3+build.42", wantSemver: "1.2.3+build.42",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantBuild: sp("build.42"), wantBuildID: sp("build"), wantBuildRest: sp("42"),
+		},
+		{
+			in: "1.2.3+build", wantVersion: "1.2.3+build", wantSemver: "1.2.3+build",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantBuild: sp("build"), wantBuildID: sp("build"), wantBuildRest: nil,
+		},
+		// Combined pre + build.
+		{
+			in: "1.2.3-rc.1+build.42", wantVersion: "1.2.3-rc.1+build.42", wantSemver: "1.2.3-rc.1+build.42",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("rc.1"), wantPreID: sp("rc"), wantPreRest: sp("1"),
+			wantBuild: sp("build.42"), wantBuildID: sp("build"), wantBuildRest: sp("42"),
+		},
+		// Prefix + body sep: version preserves, semver normalises (DR-0007 § 2).
+		{
+			in: "v1.2.3", wantVersion: "v1.2.3", wantSemver: "1.2.3",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+		},
+		{
+			in: "version_1_2_3", wantVersion: "version_1_2_3", wantSemver: "1.2.3",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+		},
+		{
+			// prefix `v_` + body sep `.` + pre + build — covers the full
+			// surface area (the DR's headline example uses this shape).
+			in: "v_1.2.3-rc.1+build.42", wantVersion: "v_1.2.3-rc.1+build.42", wantSemver: "1.2.3-rc.1+build.42",
+			wantMajor: 1, wantMinor: 2, wantPatch: 3,
+			wantPre: sp("rc.1"), wantPreID: sp("rc"), wantPreRest: sp("1"),
+			wantBuild: sp("build.42"), wantBuildID: sp("build"), wantBuildRest: sp("42"),
+		},
+	}
+	for _, c := range cases {
+		v, err := ParseVersion(c.in)
+		if err != nil {
+			t.Fatalf("ParseVersion(%q) error: %v", c.in, err)
+		}
+		got := v.ToJSON(nil)
+		if got.Version != c.wantVersion {
+			t.Errorf("%q: Version = %q, want %q", c.in, got.Version, c.wantVersion)
+		}
+		if got.Semver != c.wantSemver {
+			t.Errorf("%q: Semver = %q, want %q", c.in, got.Semver, c.wantSemver)
+		}
+		if got.Major != c.wantMajor || got.Minor != c.wantMinor || got.Patch != c.wantPatch {
+			t.Errorf("%q: M.m.p = %d.%d.%d, want %d.%d.%d", c.in,
+				got.Major, got.Minor, got.Patch, c.wantMajor, c.wantMinor, c.wantPatch)
+		}
+		checkOptStr(t, c.in, "pre", got.Pre, c.wantPre)
+		checkOptStr(t, c.in, "pre_id", got.PreID, c.wantPreID)
+		checkOptStr(t, c.in, "pre_rest", got.PreRest, c.wantPreRest)
+		checkOptStr(t, c.in, "build_metadata", got.BuildMetadata, c.wantBuild)
+		checkOptStr(t, c.in, "build_id", got.BuildID, c.wantBuildID)
+		checkOptStr(t, c.in, "build_rest", got.BuildRest, c.wantBuildRest)
+		// Name nil by default: VER-origin parses don't carry a name.
+		if got.Name != nil {
+			t.Errorf("%q: Name = %v, want nil (VER origin)", c.in, *got.Name)
+		}
+	}
+}
+
+// checkOptStr compares two *string values for equality, distinguishing
+// nil (= JSON null) from an empty string. Errors include the input
+// label and field name so failure output points at the offending row.
+func checkOptStr(t *testing.T, in, field string, got, want *string) {
+	t.Helper()
+	switch {
+	case got == nil && want == nil:
+		// match
+	case got == nil && want != nil:
+		t.Errorf("%q: %s = nil, want %q", in, field, *want)
+	case got != nil && want == nil:
+		t.Errorf("%q: %s = %q, want nil", in, field, *got)
+	case *got != *want:
+		t.Errorf("%q: %s = %q, want %q", in, field, *got, *want)
+	}
+}
+
+// ----------------------------------------------------------------------
 // helpers
 // ----------------------------------------------------------------------
 

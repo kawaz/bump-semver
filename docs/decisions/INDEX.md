@@ -10,6 +10,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0004](./DR-0004-multi-file-and-name-consistency.md) — 複数 FILE 一括 bump + name 整合性検証 + package-lock.json 特殊化
 - [DR-0005](./DR-0005-path-aware-confidence-ranked-candidates.md) — basename 決め打ちから path-aware confidence ranked candidates へ
 - [DR-0006](./DR-0006-pre-release-and-compare.md) — pre-release/build-metadata 対応 + compare サブコマンド + FILE\|VER 統合
+- [DR-0007](./DR-0007-json-output-option.md) — `--json` 出力オプション (構造化 JSON、`get` / bump 系のみ)
 
 ## Archived
 

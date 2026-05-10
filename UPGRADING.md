@@ -1,5 +1,30 @@
 # Upgrading guide
 
+## v0.5.x → v0.6.0
+
+Pure additive release; no breaking changes. See
+[`docs/decisions/DR-0007-json-output-option.md`](./docs/decisions/DR-0007-json-output-option.md).
+
+### New feature: `--json` output
+
+`get` and the bump actions (`major` / `minor` / `patch` / `pre`) accept
+`--json`, producing one line of structured JSON (terminated with a
+newline) suitable for `jq` pipelines:
+
+```bash
+bump-semver get Cargo.toml --json
+# {"name":"my-pkg","version":"1.2.3","semver":"1.2.3","major":1,...}
+
+bump-semver patch Cargo.toml --json
+# bumped version, fully decomposed
+```
+
+The schema covers `name` / `version` / `semver` / `major` / `minor` /
+`patch` / `pre` / `pre_id` / `pre_rest` / `build_metadata` / `build_id`
+/ `build_rest`. `compare` does not accept `--json` (its answer is the
+exit code, by design). See README's "JSON output" section for the full
+field reference.
+
 ## v0.4.x → v0.5.0
 
 v0.5.0 introduces pre-release / build-metadata support, the `compare`

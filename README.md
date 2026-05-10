@@ -76,6 +76,7 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--no-hint`            | Suppress the "files not modified" hint (bump only) |
 | `-q`, `--quiet`        | Suppress stdout (and the hint) |
 | `-qq`, `--quiet-all`   | Suppress stdout, hint, and error output (use with caution when debugging) |
+| `--json`               | Output structured JSON for `get` / `major` / `minor` / `patch` / `pre` (rejected with `compare`) |
 | `--version`, `-V`      | Print the binary version |
 | `--help`, `-h`         | Show help |
 
@@ -194,7 +195,34 @@ bump-semver patch Cargo.toml --pre rc.0           # 1.2.4-rc.0 (bump + re-attach
 bump-semver patch Cargo.toml --no-pre             # 1.2.4 (release-promotion equivalent)
 bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < release)
 bump-semver compare eq Cargo.toml package.json    # cross-file equality
+bump-semver get   Cargo.toml --json               # structured output for jq
+bump-semver patch Cargo.toml --json               # bumped version, fully decomposed
 ```
+
+### JSON output (`--json`)
+
+`get` and the bump actions (`major` / `minor` / `patch` / `pre`) accept `--json`. The result is a single line of JSON terminated by a newline (DR-0007), suitable for piping into `jq`. `compare` does not accept `--json` — its answer is the exit code, by design.
+
+```bash
+bump-semver get Cargo.toml --json
+# {"name":"my-pkg","version":"1.2.3","semver":"1.2.3","major":1,"minor":2,"patch":3,"pre":null,"pre_id":null,"pre_rest":null,"build_metadata":null,"build_id":null,"build_rest":null}
+
+bump-semver patch v_1.2.3-rc.1+build.42 --json
+# {"name":null,"version":"v_1.2.4","semver":"1.2.4","major":1,"minor":2,"patch":4,"pre":null,...}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string \| null | From the FILE-origin name field (e.g. `package.json $.name`); null for VER / stdin origin |
+| `version` | string | Input format preserved (prefix + body separator kept) |
+| `semver` | string | Strict SemVer 2.0.0 form (prefix removed, body sep normalised to `.`) |
+| `major` / `minor` / `patch` | int | Numeric components |
+| `pre` | string \| null | Joined pre-release identifiers (e.g. `"rc.1"`); null when absent |
+| `pre_id` / `pre_rest` | string \| null | `pre` split at the first `.` (`pre_rest` is null when there's no `.`) |
+| `build_metadata` | string \| null | Joined build metadata (e.g. `"build.42"`); null when absent |
+| `build_id` / `build_rest` | string \| null | Same first-`.` split rule as pre |
+
+The CLI provides **structural decomposition only**. It does not encode semantic judgements such as "is this counter advanceable" — for that kind of check, run `bump-semver pre VER` and look at the exit code.
 
 ### Error message format
 

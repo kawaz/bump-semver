@@ -63,6 +63,7 @@ Flags:
   --no-hint              Suppress the "files not modified" hint (bump only)
   -q, --quiet            Suppress stdout (and the hint)
   -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+  --json                 Output structured JSON (get / bump only, not for compare)
   --version, -V          Print the binary version
   --help, -h             Show this help
 
@@ -92,6 +93,7 @@ Examples:
   bump-semver patch Cargo.toml --pre rc.0        # 1.2.4-rc.0 (pre re-attached)
   bump-semver compare lt 1.2.3-rc.1 1.2.3        # exit 0
   bump-semver compare eq Cargo.toml package.json # cross-file equality
+  bump-semver get Cargo.toml --json              # structured output for jq
 `
 
 func main() {
@@ -145,6 +147,11 @@ type cliArgs struct {
 	quiet    bool // -q / --quiet:    suppress stdout + hint
 	quietAll bool // -qq / --quiet-all: also suppress error output
 	noHint   bool // --no-hint:        suppress only the hint
+
+	// Structured-output flag (DR-0007). When true, runBump emits a
+	// single-line JSON rendering of the bumped/get version instead of
+	// the bare String(). Rejected for compare (predicate-only output).
+	json bool // --json
 }
 
 var bumpActions = map[string]bool{
@@ -247,6 +254,11 @@ func parseArgs(argv []string) (cliArgs, error) {
 			out.quiet = true
 		case a == "-qq", a == "--quiet-all":
 			out.quietAll = true
+		case a == "--json":
+			// Idempotent: silently absorb duplicates. Same policy as
+			// --no-hint — boolean flags don't benefit from a strict
+			// double-set check (no value is being lost).
+			out.json = true
 		case a == "--":
 			// Treat all remaining argv as inputs (lets paths starting with `-` through).
 			out.inputs = append(out.inputs, rest[i+1:]...)
@@ -282,6 +294,12 @@ func parseArgs(argv []string) (cliArgs, error) {
 		}
 		if out.buildMetadataSet {
 			return cliArgs{}, fmt.Errorf("--build-metadata is not valid with compare")
+		}
+		// DR-0007: compare is a predicate-only command — exit code is
+		// the answer, stdout is intentionally empty. There is nothing
+		// to render as JSON.
+		if out.json {
+			return cliArgs{}, fmt.Errorf("compare does not support --json")
 		}
 		if len(out.inputs) != 2 {
 			return cliArgs{}, fmt.Errorf("compare requires exactly two inputs, got %d", len(out.inputs))
@@ -629,9 +647,25 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "hint: %d %s not modified; use --write to update or --no-hint to suppress\n", n, suffix)
 	}
 
-	// stdout output (suppressed by -q/-qq).
+	// stdout output (suppressed by -q/-qq). With --json the bumped/get
+	// version is rendered as a single-line JSON object (DR-0007); the
+	// `name` field is populated from the cross-input-validated set of
+	// FILE-origin names (which DR-0004 already collapses to one value).
 	if !args.quiet && !args.quietAll {
-		fmt.Fprintln(stdout, newV.String())
+		if args.json {
+			var name *string
+			if len(allNames) > 0 {
+				n := allNames[0].Value
+				name = &n
+			}
+			data, mErr := marshalJSONOutput(newV.ToJSON(name))
+			if mErr != nil {
+				return emitErr(stderr, args, fmt.Errorf("marshal json: %w", mErr))
+			}
+			_, _ = stdout.Write(data)
+		} else {
+			fmt.Fprintln(stdout, newV.String())
+		}
 	}
 
 	if args.write {

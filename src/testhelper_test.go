@@ -22,14 +22,14 @@ func tempWriteFiles(t *testing.T, files map[string]string) string {
 func mustRun(t *testing.T, argv ...string) string {
 	t.Helper()
 	var stdout bytes.Buffer
-	if err := run(argv, bytes.NewReader(nil), &stdout); err != nil {
+	if err := run(argv, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("run %v: %v", argv, err)
 	}
 	return stdout.String()
 }
 
 func tryRun(argv ...string) error {
-	return run(argv, bytes.NewReader(nil), &bytes.Buffer{})
+	return run(argv, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 }
 
 func readFile(t *testing.T, p string) string {

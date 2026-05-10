@@ -73,10 +73,17 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--build-metadata META`| build metadata を設定 (例 `--build-metadata sha.abc`) |
 | `--no-build-metadata`  | build metadata を削除 |
 | `--write`              | bump 結果を各 FILE 入力に書き戻す (`major` / `minor` / `patch` / `pre` のみ) |
+| `--no-hint`            | 「files not modified」hint を抑制 (bump 系のみ) |
+| `-q`, `--quiet`        | stdout (および hint) を抑制 |
+| `-qq`, `--quiet-all`   | stdout / hint / エラー出力をすべて抑制 (debug 時注意) |
 | `--version`, `-V`      | バイナリのバージョン |
 | `--help`, `-h`         | ヘルプ |
 
 排他: `--pre` と `--no-pre` 同時指定はエラー、`--build-metadata` と `--no-build-metadata` 同時指定はエラー、`--write` と `get` / `compare` の組み合わせはエラー。
+
+`-q` / `-qq` / `--no-hint` は排他チェックなし: `-qq` は `-q` の上位互換、`-q` は `--no-hint` の上位互換 (両方指定でも黙って吸収)。`compare` は元々 stdout を持たないので `-q` は no-op、`get` は元々 hint を出さないので `--no-hint` は no-op (引数として受理されるだけ)。
+
+bump 系 (`major` / `minor` / `patch` / `pre`) で **FILE 入力があり `--write` を指定しない**とき、stderr に `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` を 1 行出力する。VER のみの bump や `get` / `compare` では出ない。
 
 ### 入力 (INPUT)
 

@@ -17,35 +17,41 @@ import (
 //   - 0  predicate true
 //   - 1  predicate false
 //   - 2  any error (parse failure, mismatch, missing input, ...)
-func runCompare(args cliArgs, stdin io.Reader, stdout io.Writer) error {
+//
+// Quiet flags (Phase 5):
+//   - -q / --quiet:   no-op for compare (it has no stdout to suppress)
+//   - -qq / --quiet-all: also suppresses the stderr "bump-semver: ..."
+//     diagnostic emitted on exit-2 errors. Predicate-false exit-1 has
+//     no diagnostic to begin with, so quiet flags do not affect it.
+//   - --no-hint:      no-op (compare never emits a hint)
+func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
+	_ = stdout // compare prints nothing on success; consumers read the exit code.
 	if len(args.inputs) != 2 {
-		return fmt.Errorf("compare requires exactly two inputs, got %d", len(args.inputs))
+		return emitErr(stderr, args, fmt.Errorf("compare requires exactly two inputs, got %d", len(args.inputs)))
 	}
 	resolved, err := resolveInputs(args.inputs, stdin, false)
 	if err != nil {
-		return err
+		return emitErr(stderr, args, err)
 	}
 	if len(resolved) != 2 {
-		return fmt.Errorf("compare: internal: expected 2 resolved inputs, got %d", len(resolved))
+		return emitErr(stderr, args, fmt.Errorf("compare: internal: expected 2 resolved inputs, got %d", len(resolved)))
 	}
 
 	left, err := collapseToOneVersion(resolved[0])
 	if err != nil {
-		return err
+		return emitErr(stderr, args, err)
 	}
 	right, err := collapseToOneVersion(resolved[1])
 	if err != nil {
-		return err
+		return emitErr(stderr, args, err)
 	}
 
 	cmp := left.Compare(right)
 	if evalCompareOp(args.compareOp, cmp) {
-		// stdout is intentionally empty for compare; the caller reads
-		// the exit code. No newline avoids polluting pipelines.
-		_ = stdout
 		return nil
 	}
-	// Predicate false: exit 1, no message.
+	// Predicate false: exit 1, no diagnostic. quietAll has nothing to
+	// suppress here (the documented contract is "false has no message").
 	return &exitErr{code: 1}
 }
 

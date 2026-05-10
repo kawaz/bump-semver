@@ -73,10 +73,17 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--build-metadata META`| Set build metadata identifiers (e.g. `--build-metadata sha.abc`) |
 | `--no-build-metadata`  | Remove build metadata identifiers |
 | `--write`              | Write the bumped version back to each FILE input (`major` / `minor` / `patch` / `pre` only) |
+| `--no-hint`            | Suppress the "files not modified" hint (bump only) |
+| `-q`, `--quiet`        | Suppress stdout (and the hint) |
+| `-qq`, `--quiet-all`   | Suppress stdout, hint, and error output (use with caution when debugging) |
 | `--version`, `-V`      | Print the binary version |
 | `--help`, `-h`         | Show help |
 
 Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the build-metadata pair; `--write` cannot be combined with `get` or `compare`.
+
+`-q` / `-qq` / `--no-hint` are not mutually exclusive: `-qq` is a strict superset of `-q`, which is a strict superset of `--no-hint`, so combinations are silently absorbed. `-q` is a no-op for `compare` (it has no stdout to suppress); `--no-hint` is a no-op for `get` (it never emits a hint) — both are silently accepted for global-flag consistency.
+
+For bump actions (`major` / `minor` / `patch` / `pre`) **with at least one FILE input but no `--write`**, a single line `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` is written to stderr. VER-only bumps and `get` / `compare` never emit the hint.
 
 ### Input (INPUT)
 

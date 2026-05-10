@@ -60,6 +60,9 @@ Flags:
   --build-metadata META  Set build metadata identifiers (e.g. --build-metadata sha.abc)
   --no-build-metadata    Remove build metadata identifiers
   --write                Write the new version back to each FILE input (bump only)
+  --no-hint              Suppress the "files not modified" hint (bump only)
+  -q, --quiet            Suppress stdout (and the hint)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
   --version, -V          Print the binary version
   --help, -h             Show this help
 
@@ -92,14 +95,16 @@ Examples:
 `
 
 func main() {
-	if err := run(os.Args[1:], os.Stdin, os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		var ee *exitErr
 		if errors.As(err, &ee) {
-			if ee.msg != "" {
-				fmt.Fprintln(os.Stderr, "bump-semver: "+ee.msg)
-			}
+			// run() is responsible for writing any user-facing error
+			// message to stderr (so it can honor --quiet-all). main only
+			// translates the carried code into the process exit status.
 			os.Exit(ee.code)
 		}
+		// Unexpected: run() must always wrap errors as *exitErr before
+		// returning. Defensive fallback so we still exit non-zero.
 		fmt.Fprintln(os.Stderr, "bump-semver: "+err.Error())
 		os.Exit(2)
 	}
@@ -130,6 +135,16 @@ type cliArgs struct {
 	buildMetadata    string
 	buildMetadataSet bool
 	noBuildMetadata  bool
+
+	// Output suppression flags (Phase 5).
+	//
+	// Precedence: quietAll > quiet > noHint. -qq and -q given together
+	// collapse to quietAll silently (-qq is a strict superset of -q);
+	// likewise --no-hint with -q/-qq is absorbed by the quiet flag (which
+	// already suppresses the hint).
+	quiet    bool // -q / --quiet:    suppress stdout + hint
+	quietAll bool // -qq / --quiet-all: also suppress error output
+	noHint   bool // --no-hint:        suppress only the hint
 }
 
 var bumpActions = map[string]bool{
@@ -223,6 +238,15 @@ func parseArgs(argv []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("--no-build-metadata specified twice")
 			}
 			out.noBuildMetadata = true
+		case a == "--no-hint":
+			// Idempotent: silently absorb duplicates rather than erroring,
+			// to match the "no-op flags are silently accepted" policy from
+			// Phase 5 (a -qq subsumes --no-hint anyway).
+			out.noHint = true
+		case a == "-q", a == "--quiet":
+			out.quiet = true
+		case a == "-qq", a == "--quiet-all":
+			out.quietAll = true
 		case a == "--":
 			// Treat all remaining argv as inputs (lets paths starting with `-` through).
 			out.inputs = append(out.inputs, rest[i+1:]...)
@@ -491,10 +515,18 @@ func wrapOriginErr(originLabel, value string, err error) error {
 	return fmt.Errorf("%s=%s: %w", originLabel, value, err)
 }
 
-func run(argv []string, stdin io.Reader, stdout io.Writer) error {
+// run is the testable entry point. It always returns nil on success or
+// an *exitErr on failure (so main only has to translate the carried code
+// into a process exit status). User-facing diagnostics — including the
+// "bump-semver: <reason>" prefix — are written to stderr from here so
+// the --quiet-all flag can suppress them.
+func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	args, err := parseArgs(argv)
 	if err != nil {
-		return err
+		// parse errors precede any quiet flag taking effect (the flag
+		// itself may be malformed). Always print to stderr.
+		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+		return &exitErr{code: 2}
 	}
 	switch args.kind {
 	case "version":
@@ -504,16 +536,28 @@ func run(argv []string, stdin io.Reader, stdout io.Writer) error {
 		fmt.Fprint(stdout, helpText)
 		return nil
 	case "compare":
-		return runCompare(args, stdin, stdout)
+		return runCompare(args, stdin, stdout, stderr)
 	}
 
-	return runBump(args, stdin, stdout)
+	return runBump(args, stdin, stdout, stderr)
 }
 
-func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
+// emitErr writes a "bump-semver: <reason>" line to stderr unless the
+// caller requested -qq/--quiet-all, then returns *exitErr{code: 2}
+// carrying the same message so callers (especially tests) can still
+// inspect err.Error() for substrings. main does NOT re-print the
+// message because run() has already done so.
+func emitErr(stderr io.Writer, args cliArgs, err error) error {
+	if !args.quietAll {
+		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+	}
+	return &exitErr{code: 2, msg: err.Error()}
+}
+
+func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	resolved, err := resolveInputs(args.inputs, stdin, args.write)
 	if err != nil {
-		return err
+		return emitErr(stderr, args, err)
 	}
 
 	// Validate --write has at least one FILE-origin input early, before
@@ -526,7 +570,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
 			}
 		}
 		if writable == 0 {
-			return fmt.Errorf("--write requires at least one FILE")
+			return emitErr(stderr, args, fmt.Errorf("--write requires at least one FILE"))
 		}
 	}
 
@@ -538,7 +582,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
 	}
 	cur, ok := allSameValue(allVersions)
 	if !ok {
-		return formatMismatchError("version", allVersions)
+		return emitErr(stderr, args, formatMismatchError("version", allVersions))
 	}
 
 	// Aggregate names across FILE-origin entries (VER/stdin contribute none).
@@ -549,7 +593,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
 		}
 	}
 	if _, ok := allSameValue(allNames); len(allNames) > 0 && !ok {
-		return formatMismatchError("name", allNames)
+		return emitErr(stderr, args, formatMismatchError("name", allNames))
 	}
 
 	// Use the first contributing field as the origin source for parse
@@ -558,7 +602,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
 
 	v, err := ParseVersion(cur)
 	if err != nil {
-		return wrapOriginErr(origin.label(), cur, err)
+		return emitErr(stderr, args, wrapOriginErr(origin.label(), cur, err))
 	}
 	opts := BumpOptions{
 		Pre:              args.pre,
@@ -570,9 +614,25 @@ func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
 	}
 	newV, err := v.Bump(args.action, opts)
 	if err != nil {
-		return wrapOriginErr(origin.label(), cur, err)
+		return emitErr(stderr, args, wrapOriginErr(origin.label(), cur, err))
 	}
-	fmt.Fprintln(stdout, newV.String())
+
+	// Hint output (Phase 5): bump-only, when at least one FILE was given
+	// but --write was not, and no quiet/no-hint flag suppresses it. The
+	// hint reminds users that a successful bump did not touch any file.
+	if shouldShowHint(args, resolved) {
+		n := countFileInputs(resolved)
+		suffix := "files"
+		if n == 1 {
+			suffix = "file"
+		}
+		fmt.Fprintf(stderr, "hint: %d %s not modified; use --write to update or --no-hint to suppress\n", n, suffix)
+	}
+
+	// stdout output (suppressed by -q/-qq).
+	if !args.quiet && !args.quietAll {
+		fmt.Fprintln(stdout, newV.String())
+	}
 
 	if args.write {
 		for _, ri := range resolved {
@@ -581,18 +641,54 @@ func runBump(args cliArgs, stdin io.Reader, stdout io.Writer) error {
 			}
 			out, err := ri.handler.Replace(ri.content, cur, newV.String())
 			if err != nil {
-				return fmt.Errorf("replace %s: %w", ri.file, err)
+				return emitErr(stderr, args, fmt.Errorf("replace %s: %w", ri.file, err))
 			}
 			mode := os.FileMode(0644)
 			if fi, statErr := os.Stat(ri.file); statErr == nil {
 				mode = fi.Mode().Perm()
 			}
 			if err := os.WriteFile(ri.file, out, mode); err != nil {
-				return fmt.Errorf("write %s: %w", ri.file, err)
+				return emitErr(stderr, args, fmt.Errorf("write %s: %w", ri.file, err))
 			}
 		}
 	}
 	return nil
+}
+
+// shouldShowHint returns true when runBump should emit the
+// "files not modified" hint. The hint is bump-specific (not get) and
+// only meaningful when the user passed at least one FILE input but
+// omitted --write — it surfaces a successful no-op write.
+func shouldShowHint(args cliArgs, resolved []resolvedInput) bool {
+	if args.kind != "bump" {
+		return false
+	}
+	switch args.action {
+	case "major", "minor", "patch", "pre":
+	default:
+		return false // get is read-only, never has a "modified" outcome
+	}
+	if args.write {
+		return false
+	}
+	if args.quiet || args.quietAll || args.noHint {
+		return false
+	}
+	return countFileInputs(resolved) > 0
+}
+
+// countFileInputs returns the number of FILE-origin resolved inputs
+// (i.e. anything whose Inspect succeeded against an on-disk file). VER
+// and stdin (`-`) inputs are not counted because they were never going
+// to be "modified" in the first place.
+func countFileInputs(resolved []resolvedInput) int {
+	n := 0
+	for _, ri := range resolved {
+		if ri.handler != nil && ri.file != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // resolveInputs walks the positional inputs and resolves each. It also

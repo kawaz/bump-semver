@@ -1,79 +1,116 @@
 # bump-semver
+#
+# kawaz/* リポの共通テンプレ候補。基本は jj 統一前提 (git bare + jj workspace)、
+# main / origin / src/ 等のハードコードは kawaz スタイルに揃えてある。
+# 各リポで上書きするのは bump-trigger-paths くらい。
+# git only リポへ流用する場合は push / bump-version の jj 呼び出しを書き換える必要あり。
+# ---------- settings ----------
 
-# デフォルト: レシピ一覧
+set unstable := true
+set guards := true
+set lazy := true
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+set script-interpreter := ["bash", "-eu", "-o", "pipefail"]
+
+# ---------- variables ----------
+# jj/git 判定 (path_exists は "true"/"false" 文字列を返すので、bash の `if {{ is-jj }}; then` で
+# bash builtin true/false コマンドとして評価できる)。jj/git 両方が並存するときは jj 優先で
+# git は false に倒す (kawaz の git bare + .jj 構成と整合)。
+
+is-jj := path_exists('.jj')
+is-git := if is-jj == "true" { "false" } else { path_exists('.git') }
+
+# bump-version トリガとなる product code パス (テンプレ流用時に各リポで上書き)。
+# docs/ や *.md だけの変更なら VERSION bump 不要。
+
+bump-trigger-paths := "src/"
+
+# ---------- default ----------
+
+# レシピ一覧を表示
 default:
     @just --list
 
-# format + lint (auto-fix 込み、残った警告はエラー)
+# ---------- main entries (利用者が直接叩く) ----------
+
+# push (release.yml が VERSION 変更を検出して tag + GitHub Release を作成)
+push: ensure-clean test check-translations check-version-bumped
+    jj bookmark set main -r @-
+    jj git push --bookmark main
+
+# VERSION を bump して Release commit を作成 (push は別途 `just push`)
+bump-version bump="patch": ensure-clean
+    new_version=$(bump-semver {{ bump }} VERSION --write --no-hint) && jj commit -m "Release v${new_version}"
+
+# CI 単一エントリ (lint→test→build を依存重複排除で1回ずつ保証)
+ci: lint test build
+
+# ---------- dev recipes (push/ci の依存、利用者が直接叩くこともある) ----------
+
+# format + lint (auto-fix 込み、残った警告はエラー、justfile も canonical 確認)
 lint:
+    # 注: gofmt -w が dirty を生むと ensure-clean が落ちる → push 前に commit して再実行する想定
     gofmt -w .
     go vet ./...
+    just --fmt --check --unstable
 
 # テスト
 test: lint
     go test ./...
 
 # release ビルド (ローカル動作確認用、host target)
-# `-buildvcs=false` は jj+git-bare 構成で go の VCS スタンプ取得が失敗する回避策
-# (port-peeker と同じ理由)
 build: lint
+    # `-buildvcs=false` は jj+git-bare 構成で go の VCS スタンプ取得が失敗する回避策 (port-peeker と同じ理由)
     go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=v$(cat VERSION)" -o bin/bump-semver ./src
 
 # ビルドして実行
 run *ARGS: build
-    ./bin/bump-semver {{ARGS}}
+    ./bin/bump-semver {{ ARGS }}
 
-# CI で呼ぶ単一エントリ (lint→test→build を依存重複排除で1回ずつ)
-ci: lint test build
+# ---------- check recipes (push の sanity 検証、基本は push 経由でしか叩かない) ----------
 
-# ワーキングコピーがクリーンであることを確認 (jj / git 両対応)
-# `lint` を依存に取ることで auto-fix で生じた変更を確実に検出する
+# ワーキングコピーがクリーン (jj は @ が empty、git は porcelain 空)
 ensure-clean: lint
-    [ ! -d .jj ] || test "$(jj log -r @ --no-graph -T 'empty')" = "true"
-    [   -d .jj ] || [ -z "$(git status --porcelain)" ]
+    if {{ is-jj }}; then [ "$(jj log -r @ --no-graph -T 'empty')" = "true" ]; fi
+    if {{ is-git }}; then [ -z "$(git status --porcelain)" ]; fi
 
-# 翻訳ペア (*-ja.md / *.md) の整合性チェック
-# テンプレ: ~/.claude/rules/docs-structure.md の「check-translations の実装」セクション
-check-translations: ensure-clean
-    #!/usr/bin/env bash
-    set -euo pipefail
-    die() { echo "$*" >&2; exit 1; }
+# 翻訳ペア (NAME-ja.md / NAME.md) の整合性チェック (対象は明示列挙、-ja.md 不在ならスキップ)
+check-translations: ensure-clean (_check-translation "README") (_check-translation "docs/DESIGN") (_check-translation "docs/MANUAL")
 
-    file_ts() {
-        local f="$1"
-        if [ -d .jj ]; then
-            jj log --no-graph -T 'committer.timestamp().format("%s")' \
-                -r "latest(::@ & files('$f'))" 2>/dev/null || echo 0
-        else
-            git log -1 --format=%ct -- "$f" 2>/dev/null || echo 0
-        fi
-    }
+# 翻訳ペア NAME-ja.md / NAME.md の存在 + 相互リンク + timestamp 順序確認
 
-    while IFS= read -r ja; do
-        en="${ja/-ja/}"
-        [ -f "$en" ] || die "ERROR: $ja exists but $en is missing"
-        head -5 "$ja" | grep -qF "> [English](./${en##*/}) | 日本語" \
-            || die "ERROR: $ja: missing '> [English](./${en##*/}) | 日本語' link near the top"
-        head -5 "$en" | grep -qF "> English | [日本語](./${ja##*/})" \
-            || die "ERROR: $en: missing '> English | [日本語](./${ja##*/})' link near the top"
-        ja_ts=$(file_ts "$ja")
-        en_ts=$(file_ts "$en")
-        [ "$ja_ts" -le "$en_ts" ] \
-            || die "ERROR: $ja was updated after $en. Update the English translation before pushing."
-    done < <(find . -name '*-ja.md' -not -path './.git/*' -not -path './.jj/*')
+# `?` sigil (set guards := true) で -ja.md 不在時は recipe 全体を success として早期 return
+_check-translation name:
+    ?test -f {{ name }}-ja.md
+    test -f {{ name }}.md
+    head -5 {{ name }}-ja.md | grep -qF "> [English](./{{ file_name(name) }}.md) | 日本語"
+    head -5 {{ name }}.md    | grep -qF "> English | [日本語](./{{ file_name(name) }}-ja.md)"
+    test "$(just _file-ts {{ name }}-ja.md)" -le "$(just _file-ts {{ name }}.md)"
 
-# VERSION が origin/main より退化していないこと (push 前 sanity check、dogfooding)
-# compare lt: exit 0 = 退化(NG)、exit 1 = OK (>=)、exit 2 = origin/main 不在 (許容)
-# fetch は走らせない (利用者責任)
-check-version-not-regressed: build
-    ! ./bin/bump-semver compare lt VERSION vcs:origin/main --no-hint
+# file の最終 commit timestamp (jj/git 自動切替、stdout に epoch 秒)
+[script]
+_file-ts file:
+    if {{ is-jj }}; then
+        jj log --no-graph -T 'committer.timestamp().format("%s")' -r "latest(::@ & files('{{ file }}'))" 2>/dev/null || echo 0
+    elif {{ is-git }}; then
+        git log -1 --format=%ct -- {{ file }} 2>/dev/null || echo 0
+    else
+        echo 0
+    fi
 
-# push (依存階層で lint/ensure-clean は重複排除されて1回ずつ実行)
-push: ensure-clean test check-translations check-version-not-regressed
-    jj bookmark set main -r @-
-    jj git push --bookmark main
+# product code に変更があれば VERSION も origin/main より bump 済 (変更なしならスキップ)
 
-# VERSION を bump して Release commit を作成 (bump-semver 自身を使う dogfooding)
-# push はレシピに含めない: 確認後に `just push` を別途実行する
-bump-version bump="patch": ensure-clean test build
-    new_version=$(./bin/bump-semver {{bump}} VERSION --write --no-hint) && jj describe -m "Release v${new_version}" && jj new
+# bump-semver compare gt VERSION vcs:origin/main: ローカル VERSION > origin/main の VERSION なら exit 0
+[script]
+check-version-bumped:
+    # 変更なしなら早期 return (success)
+    if {{ is-jj }}; then
+        # jj diff の exit code は常に 0 だが、main@origin 未 track 等の失敗は伝播させる必要がある
+        diff_out=$(jj diff -r 'main@origin..@' --summary -- {{ bump-trigger-paths }}) || { echo 'ERROR: jj diff failed (main@origin not tracked? run jj git fetch first)' >&2; exit 1; }
+        [ -z "$diff_out" ] && exit 0
+    elif {{ is-git }}; then
+        git diff --quiet origin/main -- {{ bump-trigger-paths }} && exit 0
+    fi
+    # バージョン更新済みだったなら return (success)
+    bump-semver compare gt VERSION vcs:origin/main --no-hint && exit 0
+    echo 'ERROR: code changed but VERSION not bumped; run "just bump-version"' >&2; exit 1

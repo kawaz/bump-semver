@@ -80,6 +80,8 @@ Supported file formats (auto-detected by basename):
   *.json             JSON, $.version (and optional $.name)
   *.yaml / *.yml     YAML, top-level .version (and optional .name) [DR-0011 fallback]
   *.toml             TOML, top-level version  (and optional name)  [DR-0011 fallback]
+  v.mod / build.zig.zon / mix.exs / build.sbt        regex (basename) [DR-0012]
+  *.xcconfig / *.podspec / *.nimble / *.gemspec      regex (fallback) [DR-0012]
   VERSION            plain text
 
 Multiple inputs (FILE / VER / -) may be mixed. All extracted versions must

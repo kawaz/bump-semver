@@ -118,6 +118,42 @@ var rules = []CandidateRule{
 		NamePaths:    []string{".name"},
 		VersionPaths: []string{".version"},
 	},
+	{
+		// DR-0011: top-level `.version` fallback for arbitrary YAML
+		// (Helm Chart.yaml, GitHub Actions workflow metadata, etc.).
+		// Multi-document YAML (`---` separators) is intentionally
+		// out of scope — only the first document is examined.
+		Name:         "*.yaml (fallback)",
+		Glob:         "*.yaml",
+		Confidence:   1,
+		Format:       "yaml",
+		NamePaths:    []string{".name"},
+		VersionPaths: []string{".version"},
+	},
+	{
+		// DR-0011: same as `*.yaml` but for the `.yml` extension
+		// (carried separately because the rule table doesn't model
+		// alternation in glob patterns).
+		Name:         "*.yml (fallback)",
+		Glob:         "*.yml",
+		Confidence:   1,
+		Format:       "yaml",
+		NamePaths:    []string{".name"},
+		VersionPaths: []string{".version"},
+	},
+	{
+		// DR-0011: top-level `version = "..."` fallback for arbitrary
+		// TOML files. Cargo.toml's `[package].version` is handled by
+		// the confidence-3 rule above; this one only catches files
+		// that put `version` at top level (e.g. `pyproject.toml` with
+		// the version outside `[project]`, custom manifest TOMLs).
+		Name:         "*.toml (fallback)",
+		Glob:         "*.toml",
+		Confidence:   1,
+		Format:       "toml",
+		NamePaths:    []string{".name"},
+		VersionPaths: []string{".version"},
+	},
 }
 
 // pathMatches checks whether the rule could apply to path on its own (no
@@ -192,6 +228,8 @@ func tryRule(rule CandidateRule, content []byte) (Inspection, error) {
 		return jsonInspect(rule, content)
 	case "toml":
 		return tomlInspect(rule, content)
+	case "yaml":
+		return yamlInspect(rule, content)
 	case "plain":
 		return plainInspect(rule, content)
 	default:
@@ -205,6 +243,8 @@ func formatReplace(rule CandidateRule, content []byte, current, newVersion strin
 		return jsonReplace(rule, content, current, newVersion)
 	case "toml":
 		return tomlReplace(rule, content, current, newVersion)
+	case "yaml":
+		return yamlReplace(rule, content, current, newVersion)
 	case "plain":
 		return plainReplace(rule, content, current, newVersion)
 	default:

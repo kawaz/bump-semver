@@ -45,11 +45,16 @@ func tomlInspect(rule CandidateRule, content []byte) (Inspection, error) {
 //
 // The first segment becomes a `[section]` header; remaining segments are
 // joined with `.`. Multi-section paths (`.workspace.package.version`)
-// become `[workspace.package].version`.
+// become `[workspace.package].version`. A single-segment path
+// (`.version`, used by the DR-0011 top-level TOML fallback) renders as
+// just `version` — TOML's natural form for a top-level key.
 func tomlDisplayPath(p string) string {
 	segs, err := parseJSONPath(p)
-	if err != nil || len(segs) < 2 {
+	if err != nil {
 		return p
+	}
+	if len(segs) == 1 {
+		return segs[0]
 	}
 	sectionEnd := len(segs) - 1
 	return "[" + joinDot(segs[:sectionEnd]) + "]." + segs[sectionEnd]
@@ -66,11 +71,13 @@ func joinDot(segs []string) string {
 	return out
 }
 
-// tomlReplace handles only the Cargo-style `[package].version` rewrite.
-// More general TOML path rewriting can be added when concretely needed.
+// tomlReplace dispatches on the rule's VersionPath: the path-pinned
+// Cargo rule (`.package.version`) drives the section-aware rewriter
+// below; the DR-0011 top-level fallback (`.version`) drives the
+// section-less rewriter that touches the file's pre-section region.
 //
-// The implementation preserves the original quoting style (single or
-// double quotes) and any trailing comment on the version line.
+// In both branches the original quoting style (single or double
+// quotes) and any trailing comment on the version line are preserved.
 var (
 	cargoPackageHeaderRe = regexp.MustCompile(`(?m)^\s*\[package\]\s*$`)
 	cargoSectionStartRe  = regexp.MustCompile(`(?m)^\s*\[`)
@@ -78,9 +85,23 @@ var (
 )
 
 func tomlReplace(rule CandidateRule, content []byte, _ /* current */, newVersion string) ([]byte, error) {
-	if len(rule.VersionPaths) != 1 || rule.VersionPaths[0] != ".package.version" {
-		return nil, fmt.Errorf("TOML format currently supports only [package].version (got %v)", rule.VersionPaths)
+	if len(rule.VersionPaths) != 1 {
+		return nil, fmt.Errorf("TOML format currently supports a single version path per rule (got %v)", rule.VersionPaths)
 	}
+	switch rule.VersionPaths[0] {
+	case ".package.version":
+		return tomlReplaceCargoPackage(content, newVersion)
+	case ".version":
+		return tomlReplaceTopLevel(content, newVersion)
+	default:
+		return nil, fmt.Errorf("TOML format does not yet support version path %q", rule.VersionPaths[0])
+	}
+}
+
+// tomlReplaceCargoPackage rewrites `[package].version` while leaving
+// every other section (including `[dependencies]` entries that carry
+// their own `version = ...`) untouched.
+func tomlReplaceCargoPackage(content []byte, newVersion string) ([]byte, error) {
 	hdr := cargoPackageHeaderRe.FindIndex(content)
 	if hdr == nil {
 		return nil, fmt.Errorf("Cargo.toml: missing [package] section")
@@ -104,5 +125,30 @@ func tomlReplace(rule CandidateRule, content []byte, _ /* current */, newVersion
 	out = append(out, section[loc[8]:loc[9]]...) // closing quote
 	out = append(out, section[loc[1]:]...)
 	out = append(out, content[sectionEnd:]...)
+	return out, nil
+}
+
+// tomlReplaceTopLevel rewrites the top-level `version = "..."` line
+// (DR-0011). The "top-level region" is everything before the first
+// `[section]` header — keys that come after a section header belong
+// to that section in TOML semantics, so the regex must not stray
+// into them.
+func tomlReplaceTopLevel(content []byte, newVersion string) ([]byte, error) {
+	region := content
+	if loc := cargoSectionStartRe.FindIndex(content); loc != nil {
+		region = content[:loc[0]]
+	}
+	loc := cargoVersionLineRe.FindSubmatchIndex(region)
+	if loc == nil {
+		return nil, fmt.Errorf("missing top-level version line")
+	}
+	out := make([]byte, 0, len(content)+len(newVersion))
+	out = append(out, region[:loc[2]]...)       // before "version ="
+	out = append(out, region[loc[2]:loc[3]]...) // "version = " verbatim
+	out = append(out, region[loc[4]:loc[5]]...) // opening quote
+	out = append(out, newVersion...)
+	out = append(out, region[loc[8]:loc[9]]...) // closing quote
+	out = append(out, region[loc[1]:]...)
+	out = append(out, content[len(region):]...)
 	return out, nil
 }

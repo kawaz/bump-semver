@@ -78,6 +78,8 @@ Supported file formats (auto-detected by basename):
   Cargo.toml         TOML, [package].version (and [package].name for cross-input checks)
   package-lock.json  npm 7+ lockfile, $.version + $.packages[""].version (deps untouched)
   *.json             JSON, $.version (and optional $.name)
+  *.yaml / *.yml     YAML, top-level .version (and optional .name) [DR-0011 fallback]
+  *.toml             TOML, top-level version  (and optional name)  [DR-0011 fallback]
   VERSION            plain text
 
 Multiple inputs (FILE / VER / -) may be mixed. All extracted versions must

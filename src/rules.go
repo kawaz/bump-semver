@@ -117,6 +117,31 @@ var rules = []CandidateRule{
 		VersionPaths: []string{".package.version"},
 	},
 	{
+		// DR-0014: PEP 621 (`[project]` section) is the modern Python
+		// packaging standard; Poetry's legacy `[tool.poetry]` is still
+		// in widespread use mid-migration. The TOML format treats
+		// VersionPaths as OR (first match wins), so this rule reads /
+		// rewrites whichever section the file uses, with PEP 621
+		// taking precedence when both happen to be present.
+		Name:         "pyproject.toml",
+		Basename:     "pyproject.toml",
+		Confidence:   3,
+		Format:       "toml",
+		NamePaths:    []string{".project.name", ".tool.poetry.name"},
+		VersionPaths: []string{".project.version", ".tool.poetry.version"},
+	},
+	{
+		// DR-0014: Modular Mojo's package manifest. `[workspace]` is
+		// the only place the project's name / version live in this
+		// format, so a single-path rule suffices.
+		Name:         "mojoproject.toml",
+		Basename:     "mojoproject.toml",
+		Confidence:   3,
+		Format:       "toml",
+		NamePaths:    []string{".workspace.name"},
+		VersionPaths: []string{".workspace.version"},
+	},
+	{
 		Name:       "VERSION (plain text)",
 		Basename:   "VERSION",
 		Confidence: 3,

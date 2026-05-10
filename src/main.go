@@ -76,6 +76,8 @@ Environment:
 
 Supported file formats (auto-detected by basename):
   Cargo.toml         TOML, [package].version (and [package].name for cross-input checks)
+  pyproject.toml     TOML, [project].version (try) -> [tool.poetry].version (fallback) [DR-0014]
+  mojoproject.toml   TOML, [workspace].version (and [workspace].name) [DR-0014]
   package-lock.json  npm 7+ lockfile, $.version + $.packages[""].version (deps untouched)
   *.json             JSON, $.version (and optional $.name)
   *.yaml / *.yml     YAML, top-level .version (and optional .name) [DR-0011 fallback]

@@ -74,8 +74,8 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--no-build-metadata`  | build metadata を削除 |
 | `--write`              | bump 結果を各 FILE 入力に書き戻す (`major` / `minor` / `patch` / `pre` のみ) |
 | `--vcs jj\|git`         | `vcs:` 入力の VCS を強制指定 (`BUMP_SEMVER_VCS` 環境変数より優先) |
-| `--no-hint`            | 「files not modified」hint を抑制 (bump 系のみ) |
-| `-q`, `--quiet`        | stdout (および hint) を抑制 |
+| `--no-hint`            | 全 `hint:` 行を抑制 (fallback match / unsupported file / 「files not modified」) |
+| `-q`, `--quiet`        | stdout と全 `hint:` 行を抑制 |
 | `-qq`, `--quiet-all`   | stdout / hint / エラー出力をすべて抑制 (debug 時注意) |
 | `--json`               | `get` / `major` / `minor` / `patch` / `pre` の出力を構造化 JSON にする (`compare` では不可) |
 | `--version`, `-V`      | バイナリのバージョン |
@@ -83,9 +83,15 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 
 排他: `--pre` と `--no-pre` 同時指定はエラー、`--build-metadata` と `--no-build-metadata` 同時指定はエラー、`--write` と `get` / `compare` の組み合わせはエラー。
 
-`-q` / `-qq` / `--no-hint` は排他チェックなし: `-qq` は `-q` の上位互換、`-q` は `--no-hint` の上位互換 (両方指定でも黙って吸収)。`compare` は元々 stdout を持たないので `-q` は no-op、`get` は元々 hint を出さないので `--no-hint` は no-op (引数として受理されるだけ)。
+`-q` / `-qq` / `--no-hint` は排他チェックなし: `-qq` は `-q` の上位互換、`-q` は `--no-hint` の上位互換 (両方指定でも黙って吸収)。`compare` は元々 stdout を持たないので `-q` は stdout 抑制部分は no-op。
 
-bump 系 (`major` / `minor` / `patch` / `pre`) で **FILE 入力があり `--write` を指定しない**とき、stderr に `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` を 1 行出力する。VER のみの bump や `get` / `compare` では出ない。
+`bump-semver` は通常の stdout に加えて状況に応じて stderr に `hint:` 行を 1 つ以上出力する。すべての hint は共通の `hint:` prefix を持ち、`--no-hint` / `-q` / `-qq` で一括抑制される。現状の hint 一覧:
+
+| Hint | 発火条件 | 対象 / 抑制 |
+|---|---|---|
+| `hint: <path> matched as *.json fallback. Open issue if explicit support is needed.` | FILE 入力が confidence 1 (`*.json` fallback) で解決された (DR-0010)。該当ファイルごとに 1 行 | FILE を resolve するすべての場面 (`get` / bump 系 / `compare`) |
+| `hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.` | FILE が `unsupported file:` でエラーになった時、その直後の hint 行 | 上に同じ |
+| `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` | bump 系 (`major` / `minor` / `patch` / `pre`) で FILE 入力があり `--write` 未指定 | bump 系のみ。VER のみの bump や `get` / `compare` では出ない |
 
 ### 入力 (INPUT)
 

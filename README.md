@@ -74,18 +74,24 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--no-build-metadata`  | Remove build metadata identifiers |
 | `--write`              | Write the bumped version back to each FILE input (`major` / `minor` / `patch` / `pre` only) |
 | `--vcs jj\|git`         | Force VCS detection for `vcs:` inputs (overrides `BUMP_SEMVER_VCS` env) |
-| `--no-hint`            | Suppress the "files not modified" hint (bump only) |
-| `-q`, `--quiet`        | Suppress stdout (and the hint) |
-| `-qq`, `--quiet-all`   | Suppress stdout, hint, and error output (use with caution when debugging) |
+| `--no-hint`            | Suppress all `hint:` lines (fallback match / unsupported file / "files not modified") |
+| `-q`, `--quiet`        | Suppress stdout (and all `hint:` lines) |
+| `-qq`, `--quiet-all`   | Suppress stdout, hints, and error output (use with caution when debugging) |
 | `--json`               | Output structured JSON for `get` / `major` / `minor` / `patch` / `pre` (rejected with `compare`) |
 | `--version`, `-V`      | Print the binary version |
 | `--help`, `-h`         | Show help |
 
 Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the build-metadata pair; `--write` cannot be combined with `get` or `compare`.
 
-`-q` / `-qq` / `--no-hint` are not mutually exclusive: `-qq` is a strict superset of `-q`, which is a strict superset of `--no-hint`, so combinations are silently absorbed. `-q` is a no-op for `compare` (it has no stdout to suppress); `--no-hint` is a no-op for `get` (it never emits a hint) — both are silently accepted for global-flag consistency.
+`-q` / `-qq` / `--no-hint` are not mutually exclusive: `-qq` is a strict superset of `-q`, which is a strict superset of `--no-hint`, so combinations are silently absorbed. `-q` is a no-op for `compare` (it has no stdout to suppress).
 
-For bump actions (`major` / `minor` / `patch` / `pre`) **with at least one FILE input but no `--write`**, a single line `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` is written to stderr. VER-only bumps and `get` / `compare` never emit the hint.
+`bump-semver` may emit one or more `hint:` lines on stderr alongside the normal stdout output. All hints share the `hint:` prefix and are suppressed together by `--no-hint` / `-q` / `-qq`. The hints currently in use:
+
+| Hint | Trigger | Action / `-q` |
+|---|---|---|
+| `hint: <path> matched as *.json fallback. Open issue if explicit support is needed.` | A FILE input matched the lowest-confidence (`*.json`) fallback rule (DR-0010). One line per such input. | Anywhere a FILE is resolved (`get` / bump / `compare`). |
+| `hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.` | A FILE path doesn't match any rule, so `unsupported file:` is reported. The hint follows the error line. | Same as above. |
+| `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` | A bump action (`major` / `minor` / `patch` / `pre`) had at least one FILE input but no `--write`. | Bump actions only. VER-only bumps and `get` / `compare` never emit it. |
 
 ### Input (INPUT)
 

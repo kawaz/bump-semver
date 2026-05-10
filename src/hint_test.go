@@ -238,6 +238,78 @@ func TestRun_FallbackHint_NoHintSuppressesBoth(t *testing.T) {
 	}
 }
 
+// DR-0011: fallback hint also fires for the new `*.yaml` / `*.yml` /
+// `*.toml` confidence-1 rules. Same `hint:` prefix and same
+// suppression mechanism as the original `*.json` fallback.
+func TestRun_FallbackHint_YAMLExtension(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Chart.yaml")
+	if err := os.WriteFile(path, []byte("name: x\nversion: 1.2.3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"get", path}, bytes.NewReader(nil), &stdout, &stderr); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "1.2.3" {
+		t.Errorf("stdout = %q, want 1.2.3", got)
+	}
+	if !strings.Contains(stderr.String(), "matched as *.yaml fallback") {
+		t.Errorf("expected *.yaml fallback hint, got: %q", stderr.String())
+	}
+}
+
+func TestRun_FallbackHint_YMLExtension(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.yml")
+	if err := os.WriteFile(path, []byte("version: 1.2.3\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"get", path}, bytes.NewReader(nil), &stdout, &stderr); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "matched as *.yml fallback") {
+		t.Errorf("expected *.yml fallback hint, got: %q", stderr.String())
+	}
+}
+
+func TestRun_FallbackHint_TOMLExtension(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.toml")
+	if err := os.WriteFile(path, []byte("name = \"x\"\nversion = \"1.2.3\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"get", path}, bytes.NewReader(nil), &stdout, &stderr); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "matched as *.toml fallback") {
+		t.Errorf("expected *.toml fallback hint, got: %q", stderr.String())
+	}
+}
+
+// path-pinned Cargo.toml must not trigger the fallback hint even
+// though `*.toml` exists as a confidence-1 rule.
+func TestRun_FallbackHint_NotShownForCargoToml(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Cargo.toml")
+	if err := os.WriteFile(path, []byte("[package]\nname = \"x\"\nversion = \"1.2.3\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"get", path}, bytes.NewReader(nil), &stdout, &stderr); err != nil {
+		t.Fatalf("run error: %v", err)
+	}
+	if strings.Contains(stderr.String(), "fallback") {
+		t.Errorf("Cargo.toml (confidence 3) must not trigger fallback hint, got: %q", stderr.String())
+	}
+}
+
 // fallback hint fires for compare too (the action is irrelevant; the
 // hint reflects the file detection).
 func TestRun_FallbackHint_FiresForCompare(t *testing.T) {
@@ -263,7 +335,7 @@ func TestRun_FallbackHint_FiresForCompare(t *testing.T) {
 func TestRun_UnsupportedFile_HintWithIssueURL(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "unknown.toml")
+	path := filepath.Join(dir, "unknown.xml")
 	if err := os.WriteFile(path, []byte("nothing\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +361,7 @@ func TestRun_UnsupportedFile_HintWithIssueURL(t *testing.T) {
 func TestRun_UnsupportedFile_NoHintSuppressesHintOnly(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "unknown.toml")
+	path := filepath.Join(dir, "unknown.xml")
 	if err := os.WriteFile(path, []byte("nothing\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +383,7 @@ func TestRun_UnsupportedFile_NoHintSuppressesHintOnly(t *testing.T) {
 func TestRun_UnsupportedFile_QuietAllSuppressesAll(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "unknown.toml")
+	path := filepath.Join(dir, "unknown.xml")
 	if err := os.WriteFile(path, []byte("nothing\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +402,7 @@ func TestRun_UnsupportedFile_QuietAllSuppressesAll(t *testing.T) {
 func TestRun_UnsupportedFile_QuietSuppressesHintOnly(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "unknown.toml")
+	path := filepath.Join(dir, "unknown.xml")
 	if err := os.WriteFile(path, []byte("nothing\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

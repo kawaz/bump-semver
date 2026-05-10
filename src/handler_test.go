@@ -103,3 +103,81 @@ func TestResolveRule_AllCandidatesFail(t *testing.T) {
 		t.Errorf("error should mention path: %v", err)
 	}
 }
+
+// TestResolveRule_FallbackYAMLAndYML pins the DR-0011 confidence-1
+// fallback for both YAML extensions: a previously-unsupported
+// `Chart.yaml` / `manifest.yml` resolves through the new rules.
+func TestResolveRule_FallbackYAMLAndYML(t *testing.T) {
+	t.Parallel()
+	type tc struct {
+		path    string
+		want    string
+		wantGlb string
+	}
+	cases := []tc{
+		{"Chart.yaml", "*.yaml (fallback)", "*.yaml"},
+		{"helm/Chart.yaml", "*.yaml (fallback)", "*.yaml"},
+		{"manifest.yml", "*.yml (fallback)", "*.yml"},
+		{"sub/dir/manifest.yml", "*.yml (fallback)", "*.yml"},
+	}
+	in := []byte("name: x\nversion: 1.2.3\n")
+	for _, c := range cases {
+		rule, insp, err := resolveRule(c.path, in)
+		if err != nil {
+			t.Errorf("resolveRule(%q) error: %v", c.path, err)
+			continue
+		}
+		if rule.Name != c.want {
+			t.Errorf("resolveRule(%q) = %q, want %q", c.path, rule.Name, c.want)
+		}
+		if insp.MatchedConfidence != 1 {
+			t.Errorf("resolveRule(%q) MatchedConfidence = %d, want 1", c.path, insp.MatchedConfidence)
+		}
+		if insp.MatchedGlob != c.wantGlb {
+			t.Errorf("resolveRule(%q) MatchedGlob = %q, want %q", c.path, insp.MatchedGlob, c.wantGlb)
+		}
+	}
+}
+
+// TestResolveRule_FallbackTOMLTopLevel checks that an arbitrary `.toml`
+// file with a top-level `version = "..."` is rescued by the new
+// `*.toml` fallback when no path-pinned rule applies.
+func TestResolveRule_FallbackTOMLTopLevel(t *testing.T) {
+	t.Parallel()
+	in := []byte("name = \"x\"\nversion = \"1.2.3\"\n")
+	rule, insp, err := resolveRule("manifest.toml", in)
+	if err != nil {
+		t.Fatalf("resolveRule error: %v", err)
+	}
+	if rule.Name != "*.toml (fallback)" {
+		t.Errorf("rule = %q, want fallback", rule.Name)
+	}
+	if insp.MatchedConfidence != 1 || insp.MatchedGlob != "*.toml" {
+		t.Errorf("matched-rule metadata wrong: confidence=%d glob=%q", insp.MatchedConfidence, insp.MatchedGlob)
+	}
+}
+
+// TestDetectHandler_NewFallbackExtensions extends the recognised-paths
+// list to cover the DR-0011 additions (`*.yaml`, `*.yml`, `*.toml`).
+func TestDetectHandler_NewFallbackExtensions(t *testing.T) {
+	t.Parallel()
+	good := []string{
+		"Chart.yaml",
+		"helm/Chart.yaml",
+		"manifest.yml",
+		"any.toml",
+		"sub/any.toml",
+	}
+	for _, p := range good {
+		if _, err := detectHandler(p); err != nil {
+			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
+		}
+	}
+	// Still unsupported: `xml`, `gemspec`, etc.
+	bad := []string{"pom.xml", "thing.gemspec"}
+	for _, p := range bad {
+		if _, err := detectHandler(p); err == nil {
+			t.Errorf("detectHandler(%q) expected error, got nil", p)
+		}
+	}
+}

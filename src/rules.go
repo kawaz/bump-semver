@@ -147,6 +147,35 @@ var rules = []CandidateRule{
 		Confidence: 3,
 		Format:     "plain",
 	},
+	{
+		// DR-0015: Xcode `<project>.xcodeproj/project.pbxproj`. The
+		// file is OpenStep plist (Apple's pre-XML key=value notation)
+		// and carries one `MARKETING_VERSION = ...;` line per
+		// build configuration per target. Every match must agree —
+		// the dedicated `pbxproj` format reports each match as a
+		// `Field` with `Path = "line:N"` so main.go's existing
+		// `formatMismatchError` produces a column-aligned diagnostic
+		// when they don't.
+		Name:       "project.pbxproj",
+		Basename:   "project.pbxproj",
+		Confidence: 3,
+		Format:     "pbxproj",
+	},
+	{
+		// DR-0015: Apple `Info.plist` (XML plist). Reads / writes the
+		// `<key>CFBundleShortVersionString</key><string>X.Y.Z</string>`
+		// pair. Files that use `$(MARKETING_VERSION)` placeholders
+		// (Xcode 11+ default) extract the placeholder text verbatim,
+		// which then fails ParseVersion further up the pipeline and
+		// the input becomes an `unsupported file:` outcome — that's
+		// the intended cue for users to add `project.pbxproj` to the
+		// invocation, where the real value lives.
+		Name:         "Info.plist",
+		Basename:     "Info.plist",
+		Confidence:   3,
+		Format:       "xml",
+		VersionPaths: []string{"CFBundleShortVersionString"},
+	},
 	// --- DR-0012: regex format rules (basename, confidence 2) ----------
 	//
 	// These are fixed-name files for languages whose version is a
@@ -430,6 +459,10 @@ func tryRule(rule CandidateRule, content []byte) (Inspection, error) {
 		return plainInspect(rule, content)
 	case "regex":
 		return regexInspect(rule, content)
+	case "pbxproj":
+		return pbxprojInspect(rule, content)
+	case "xml":
+		return xmlInspect(rule, content)
 	default:
 		return Inspection{}, fmt.Errorf("unknown format %q in rule %q", rule.Format, rule.Name)
 	}
@@ -447,6 +480,10 @@ func formatReplace(rule CandidateRule, content []byte, current, newVersion strin
 		return plainReplace(rule, content, current, newVersion)
 	case "regex":
 		return regexReplace(rule, content, current, newVersion)
+	case "pbxproj":
+		return pbxprojReplace(rule, content, current, newVersion)
+	case "xml":
+		return xmlReplace(rule, content, current, newVersion)
 	default:
 		return nil, fmt.Errorf("unknown format %q in rule %q", rule.Format, rule.Name)
 	}

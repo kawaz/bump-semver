@@ -16,4 +16,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - uses: extractions/setup-just@v4
+        with:
+          # ローカル開発と CI で `just --fmt --check --unstable` の判定を揃えるため version pin
+          just-version: 1.49.0
       - run: just ci

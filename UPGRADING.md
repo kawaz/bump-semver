@@ -1,5 +1,47 @@
 # Upgrading guide
 
+## v0.7.1 → v0.7.2
+
+Pure additive patch release; no breaking changes. See
+[`docs/decisions/DR-0010-fallback-match-hint.md`](./docs/decisions/DR-0010-fallback-match-hint.md).
+
+### New: confidence-1 fallback hint (DR-0010)
+
+When a FILE input matches DR-0005's lowest-confidence `*.json` glob
+fallback rule, `bump-semver` now writes a one-line hint to stderr per
+such input:
+
+```
+$ bump-semver get unknown.json
+hint: unknown.json matched as *.json fallback. Open issue if explicit support is needed.
+1.2.3
+```
+
+This makes it visible when a filename was handled by the generic
+fallback rather than an explicit rule, and invites issues for filenames
+that should get explicit support.
+
+The hint fires for `get` / `major` / `minor` / `patch` / `pre` /
+`compare` alike — it reflects the file detection, not the action.
+
+### New: issue-tracker pointer in `unsupported file:` errors
+
+When a FILE doesn't match any rule at all, the `unsupported file:`
+error is followed by a hint pointing at the issue tracker:
+
+```
+$ bump-semver get unknown.toml
+bump-semver: unsupported file: unknown.toml
+hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.
+```
+
+### Suppression
+
+Both new hints share the existing `hint:` prefix and are suppressed by
+the existing `--no-hint` / `-q` / `-qq` flags — same way as the v0.5.0
+"files not modified" hint. CI invocations that don't want the noise can
+keep using `--no-hint`. No change to `compare`'s exit-code semantics.
+
 ## v0.7.0 → v0.7.1
 
 Pure additive patch release; no breaking changes.

@@ -17,6 +17,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0011](./DR-0011-yaml-yml-toml-fallback.md) — `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback 追加
 - [DR-0012](./DR-0012-regex-format.md) — regex format 抽象 + xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt 対応
 - [DR-0013](./DR-0013-suffix-stripped-format-detection.md) — 既知 suffix を剥がして既存ルールで再判定する fallback (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等)
+- [DR-0014](./DR-0014-toml-section-scoped.md) — TOML section-scoped Replace の一般化 + `pyproject.toml` (`[project]` / `[tool.poetry]` try-fallback) と `mojoproject.toml` (`[workspace]`) 対応
 
 ## Archived
 

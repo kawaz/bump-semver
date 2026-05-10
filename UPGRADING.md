@@ -1,5 +1,31 @@
 # Upgrading guide
 
+## v0.7.0 → v0.7.1
+
+Pure additive patch release; no breaking changes.
+
+### Highlight: `--version --json`
+
+`bump-semver --version --json` now emits the same structured JSON schema
+as `--json` does for `get` / bump actions. Useful for CI scripts:
+
+```bash
+bump-semver --version --json | jq -r .semver   # 0.7.1
+```
+
+`bump-semver --version` without `--json` still prints the plain `vX.Y.Z`
+string as before.
+
+### Other fixes
+
+- Help text Examples cleaned up (positional VER for clarity, removed
+  unrealistic `Cargo.toml package.json` cross-compare example, fixed the
+  `vcs:origin/main` example to use `compare lt` for the typical
+  "stale-vs-remote" check).
+- Homebrew formula's `test do` block updated for v0.5.0+ CLI
+  (positional VER instead of removed `--value`). Latent bug fix that
+  only surfaced when running `brew test bump-semver` manually.
+
 ## v0.6.x → v0.7.0
 
 Pure additive release; no breaking changes. See

@@ -92,18 +92,20 @@ Exit codes:
 Examples:
   bump-semver patch Cargo.toml --write
   bump-semver minor package.json package-lock.json --write
-  bump-semver get .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
+  bump-semver get Cargo.toml
   bump-semver patch 1.2.3
   bump-semver patch v1.2.3                       # v1.2.4 (prefix preserved)
+  bump-semver minor version_1_2_3                # version_1_3_0 (prefix + body sep '_' preserved)
   bump-semver pre 1.2.3-rc.0                     # 1.2.3-rc.1
   bump-semver pre 1.2.3 --pre rc.0               # 1.2.3-rc.0
-  bump-semver patch Cargo.toml --pre rc.0        # 1.2.4-rc.0 (pre re-attached)
+  bump-semver patch 1.2.3-rc.0 --pre rc.0        # 1.2.4-rc.0 (pre re-attached)
   bump-semver compare lt 1.2.3-rc.1 1.2.3        # exit 0
-  bump-semver compare eq Cargo.toml package.json # cross-file equality
+  bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
   bump-semver get Cargo.toml --json              # structured output for jq
-  bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # bumped past last release?
-  bump-semver compare gt Cargo.toml vcs:origin/main      # ahead of remote main?
-  bump-semver compare eq Cargo.toml vcs:HEAD~1           # changed since prev commit?
+  bump-semver --version --json                   # decompose own version into the same JSON schema
+  bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # ready to release? (CI)
+  bump-semver compare lt Cargo.toml vcs:origin/main      # stale vs remote main? (pull needed)
+  bump-semver compare eq Cargo.toml vcs:HEAD~1           # unchanged since prev commit?
 `
 
 func main() {
@@ -184,7 +186,18 @@ func parseArgs(argv []string) (cliArgs, error) {
 	}
 	switch argv[0] {
 	case "--version", "-V":
-		return cliArgs{kind: "version"}, nil
+		out := cliArgs{kind: "version"}
+		// --version は他フラグを基本受け付けないが、--json だけは
+		// バイナリ自身のバージョンを構造化 JSON で出力する用に解釈する
+		// (CI で `bump-semver --version --json | jq -r .semver` のような使い方)
+		for _, a := range argv[1:] {
+			if a == "--json" {
+				out.json = true
+				continue
+			}
+			return cliArgs{}, fmt.Errorf("--version only accepts --json")
+		}
+		return out, nil
 	case "--help", "-h":
 		return cliArgs{kind: "help"}, nil
 	}
@@ -595,6 +608,18 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	switch args.kind {
 	case "version":
+		if args.json {
+			v, perr := ParseVersion(version)
+			if perr != nil {
+				return emitErr(stderr, args, fmt.Errorf("parse own version %q: %w", version, perr))
+			}
+			data, mErr := marshalJSONOutput(v.ToJSON(nil))
+			if mErr != nil {
+				return emitErr(stderr, args, fmt.Errorf("marshal json: %w", mErr))
+			}
+			_, _ = stdout.Write(data)
+			return nil
+		}
 		fmt.Fprintln(stdout, version)
 		return nil
 	case "help":

@@ -23,7 +23,7 @@ Pre-built binaries for Linux / macOS / Windows (amd64, arm64) are also published
 ```
 bump-semver <ACTION> <INPUT...> [flags]
 bump-semver compare <OP> <INPUT> <INPUT>
-bump-semver --version
+bump-semver --version [--json]
 bump-semver --help
 ```
 
@@ -194,14 +194,14 @@ bump-semver patch v1.2.3                          # v1.2.4 (prefix preserved)
 bump-semver minor version_1_2_3                   # version_1_3_0 (prefix + separator preserved)
 bump-semver pre 1.2.3-rc.0                        # 1.2.3-rc.1 (counter advance)
 bump-semver pre 1.2.3 --pre rc.0                  # 1.2.3-rc.0 (overwrite)
-bump-semver patch Cargo.toml --pre rc.0           # 1.2.4-rc.0 (bump + re-attach pre)
-bump-semver patch Cargo.toml --no-pre             # 1.2.4 (release-promotion equivalent)
+bump-semver patch 1.2.3-rc.0 --pre rc.0           # 1.2.4-rc.0 (bump + re-attach pre)
+bump-semver patch 1.2.3-rc.0 --no-pre             # 1.2.4 (drop and bump, release-promotion equivalent)
 bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < release)
-bump-semver compare eq Cargo.toml package.json    # cross-file equality
+bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json   # 3-file consistency check
 bump-semver get   Cargo.toml --json               # structured output for jq
 bump-semver patch Cargo.toml --json               # bumped version, fully decomposed
-bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # bumped past the last release?
-bump-semver compare gt Cargo.toml vcs:origin/main      # ahead of remote main?
+bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # ready to release? (CI: bumped past last tag)
+bump-semver compare lt Cargo.toml vcs:origin/main      # stale vs remote main? (pull needed)
 ```
 
 ### JSON output (`--json`)
@@ -237,8 +237,8 @@ Any positional INPUT that starts with `vcs:` is resolved through the version-con
 # Has the working-tree version been bumped past the last release tag?
 bump-semver compare gt Cargo.toml 'vcs:latest-tag()'
 
-# Are we ahead of remote main? (CI drift check)
-bump-semver compare gt Cargo.toml vcs:origin/main
+# Are we stale vs remote main? (pull needed before push)
+bump-semver compare lt Cargo.toml vcs:origin/main
 
 # Did Cargo.toml's version change since the previous commit?
 bump-semver compare eq Cargo.toml vcs:HEAD~1            # FILE borrowed from the sibling

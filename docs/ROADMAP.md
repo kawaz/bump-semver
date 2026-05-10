@@ -6,6 +6,10 @@
 
 過去ロードマップから移送。実装履歴の参考用に残す。
 
+### `--version --json` 対応 (v0.7.1)
+
+`bump-semver --version --json` で自バイナリのバージョンを `--json` と同じ構造化スキーマで出力 (`jq -r .semver` 等で取り回せる)。`--version` 単独は従来通り `vX.Y.Z` プレーン出力。`--version` に `--json` 以外のフラグ / 位置引数を渡すとエラー (silent ignore を排除)。
+
 ### `vcs:` 入力モード (v0.7.0 / DR-0008)
 
 `vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を入力として受け付ける。VCS は `--vcs` / `BUMP_SEMVER_VCS` / `.jj` / `.git` の優先順で自動判定 (`.jj` と `.git` 並存時は jj 優先)。fetch は自動実行しない (副作用回避)。`--write` と排他 (vcs: は read-only)。FILE 省略時は位置順で最初の sibling から借用。

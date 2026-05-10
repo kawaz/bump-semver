@@ -27,7 +27,7 @@ bump-semver --version
 bump-semver --help
 ```
 
-`<INPUT>` is either a **FILE path**, a **raw VER string**, or **`-` (read VER from stdin, single line)**. Multiple inputs of mixed kinds may be given.
+`<INPUT>` is either a **FILE path**, a **raw VER string**, **`-` (read VER from stdin, single line)**, or **`vcs:REV[:FILE]` / `vcs:<func>(...)`** (read from the VCS, see [vcs: input](#vcs-input)). Multiple inputs of mixed kinds may be given.
 
 ### Actions
 
@@ -73,6 +73,7 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--build-metadata META`| Set build metadata identifiers (e.g. `--build-metadata sha.abc`) |
 | `--no-build-metadata`  | Remove build metadata identifiers |
 | `--write`              | Write the bumped version back to each FILE input (`major` / `minor` / `patch` / `pre` only) |
+| `--vcs jj\|git`         | Force VCS detection for `vcs:` inputs (overrides `BUMP_SEMVER_VCS` env) |
 | `--no-hint`            | Suppress the "files not modified" hint (bump only) |
 | `-q`, `--quiet`        | Suppress stdout (and the hint) |
 | `-qq`, `--quiet-all`   | Suppress stdout, hint, and error output (use with caution when debugging) |
@@ -93,6 +94,8 @@ For bump actions (`major` / `minor` / `patch` / `pre`) **with at least one FILE 
 | FILE | Path to a supported file (auto-detected by basename) |
 | VER  | A raw semver string (e.g. `1.2.3`, `v1.2.3`, `1.2.3-rc.1+build.42`) |
 | `-`  | Read VER from stdin, one line (used at most once) |
+| `vcs:REV[:FILE]` | Read FILE at `<REV>` from jj or git (auto-detected, see [vcs: input](#vcs-input)) |
+| `vcs:latest-tag()` | Read the largest semver-compatible tag from jj or git |
 
 If a local file is literally named `1.2.3` and you mean the file, write `./1.2.3` (Unix convention).
 
@@ -197,6 +200,8 @@ bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < release)
 bump-semver compare eq Cargo.toml package.json    # cross-file equality
 bump-semver get   Cargo.toml --json               # structured output for jq
 bump-semver patch Cargo.toml --json               # bumped version, fully decomposed
+bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # bumped past the last release?
+bump-semver compare gt Cargo.toml vcs:origin/main      # ahead of remote main?
 ```
 
 ### JSON output (`--json`)
@@ -223,6 +228,43 @@ bump-semver patch v_1.2.3-rc.1+build.42 --json
 | `build_id` / `build_rest` | string \| null | Same first-`.` split rule as pre |
 
 The CLI provides **structural decomposition only**. It does not encode semantic judgements such as "is this counter advanceable" — for that kind of check, run `bump-semver pre VER` and look at the exit code.
+
+### vcs: input
+
+Any positional INPUT that starts with `vcs:` is resolved through the version-control system (jj or git). This lets you compare against another revision, the remote main branch, or the latest release tag without an extra `jj file show | bump-semver compare lt - ...` shell pipeline (DR-0008).
+
+```bash
+# Has the working-tree version been bumped past the last release tag?
+bump-semver compare gt Cargo.toml 'vcs:latest-tag()'
+
+# Are we ahead of remote main? (CI drift check)
+bump-semver compare gt Cargo.toml vcs:origin/main
+
+# Did Cargo.toml's version change since the previous commit?
+bump-semver compare eq Cargo.toml vcs:HEAD~1            # FILE borrowed from the sibling
+bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # explicit form
+```
+
+| Form | Meaning |
+|---|---|
+| `vcs:REV[:FILE]` | Read FILE at `<REV>` from the VCS. The first `:` is consumed by the `vcs:` prefix; the second `:` (if present) splits REV from FILE. Omitted FILE is borrowed from the first sibling input (FILE-origin or another `vcs:REV:FILE`) in argv order |
+| `vcs:latest-tag()` | All tags are listed; tags that don't parse as semver are silently ignored; the largest by SemVer 2.0.0 ordering wins. Errors with `no semver-compatible tags found` if the candidate set is empty |
+
+**VCS detection** (in priority order):
+
+1. `--vcs jj|git` flag (highest priority)
+2. `BUMP_SEMVER_VCS=jj|git` environment variable
+3. `.jj` directory exists in the working dir or any ancestor → jj
+4. `.git` directory exists → git
+5. Otherwise → error (`not a git or jj repository`)
+
+When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), **jj wins** — its revset language is a superset of git's.
+
+**`--write` is incompatible with `vcs:` inputs.** vcs: is read-only by design (writing back into the VCS would require commit/amend semantics, which is out of scope). Combining the two errors out with `--write cannot be used with vcs: inputs (vcs: is read-only)`.
+
+**`bump-semver` does not run `git fetch` / `jj git fetch` automatically.** If `vcs:origin/main` is stale, the underlying VCS error is surfaced verbatim. CI users should fetch explicitly before invoking `bump-semver`.
+
+For CI scripts that need to be VCS-agnostic, prefer revisions that work in both flavours: `origin/main` (auto-translated to `main@origin` for jj), commit hashes, and `latest-tag()`.
 
 ### Error message format
 
@@ -269,7 +311,7 @@ v0.5.0 ships three breaking changes. See [UPGRADING.md](./UPGRADING.md) for full
 
 ## Status
 
-v0.5.0 introduces pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+v0.7.0 adds the `vcs:` input mode (DR-0008) — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically, so CI drift checks and "did we bump past the last release?" comparisons fit on one line. Earlier highlights: v0.6.0 added `--json` output (DR-0007), v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

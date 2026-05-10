@@ -26,6 +26,8 @@
 │   ├── rules.go                  path-aware confidence ranked テーブル (DR-0005)
 │   ├── jsonpath.go               map[string]any ベースの単純 JSONPath
 │   ├── semver.go                 SemVer 2.0.0 parser + Bump + Compare
+│   ├── json.go                   --json 出力スキーマ (DR-0007)
+│   ├── vcs.go                    vcs: 入力 (jj/git 自動判定 + `latest-tag()`) (DR-0008)
 │   ├── spec_table_test.go        DR-0006 仕様駆動テーブルテスト
 │   └── *_test.go                 各ファイル対応の単体 + 統合テスト
 └── .github/

@@ -27,7 +27,7 @@ bump-semver --version
 bump-semver --help
 ```
 
-`<INPUT>` は **FILE パス** / **生の VER 文字列** / **`-` (stdin から VER 1 行読込)** のいずれかで、複数指定時は混在可能。
+`<INPUT>` は **FILE パス** / **生の VER 文字列** / **`-` (stdin から VER 1 行読込)** / **`vcs:REV[:FILE]` または `vcs:<関数>(...)`** (VCS 経由で取得、[vcs: 入力](#vcs-入力) 参照) のいずれかで、複数指定時は混在可能。
 
 ### アクション
 
@@ -73,6 +73,7 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--build-metadata META`| build metadata を設定 (例 `--build-metadata sha.abc`) |
 | `--no-build-metadata`  | build metadata を削除 |
 | `--write`              | bump 結果を各 FILE 入力に書き戻す (`major` / `minor` / `patch` / `pre` のみ) |
+| `--vcs jj\|git`         | `vcs:` 入力の VCS を強制指定 (`BUMP_SEMVER_VCS` 環境変数より優先) |
 | `--no-hint`            | 「files not modified」hint を抑制 (bump 系のみ) |
 | `-q`, `--quiet`        | stdout (および hint) を抑制 |
 | `-qq`, `--quiet-all`   | stdout / hint / エラー出力をすべて抑制 (debug 時注意) |
@@ -93,6 +94,8 @@ bump 系 (`major` / `minor` / `patch` / `pre`) で **FILE 入力があり `--wri
 | FILE | サポート形式のファイルパス (basename で自動判定) |
 | VER  | semver 文字列を直接 (`1.2.3` / `v1.2.3` / `1.2.3-rc.1+build.42` 等) |
 | `-`  | stdin から VER を 1 行読込 (1 回のみ使用可) |
+| `vcs:REV[:FILE]` | jj/git の `<REV>` 時点のファイル内容から取得 (自動判定、[vcs: 入力](#vcs-入力) 参照) |
+| `vcs:latest-tag()` | jj/git のタグ一覧から最大の semver-compat 値を取得 |
 
 `1.2.3` という名前のローカルファイルを明示したいときは `./1.2.3` で曖昧さを回避 (Unix 慣習)。
 
@@ -197,6 +200,8 @@ bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < 確定)
 bump-semver compare eq Cargo.toml package.json    # cross-file 等値判定
 bump-semver get   Cargo.toml --json               # jq 連携向け構造化出力
 bump-semver patch Cargo.toml --json               # bump 後のバージョンを完全分解
+bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # 直近 tag より上げてるか
+bump-semver compare gt Cargo.toml vcs:origin/main      # remote main より進んでるか
 ```
 
 ### JSON 出力 (`--json`)
@@ -223,6 +228,43 @@ bump-semver patch v_1.2.3-rc.1+build.42 --json
 | `build_id` / `build_rest` | string \| null | `pre` と同じ「最初の `.` で分割」ルール |
 
 CLI が提供するのは **構造分解のみ**。「counter advance 可能か」のような意味判定はしない (必要なら `bump-semver pre VER` を実行して exit code を見る運用)。
+
+### vcs: 入力
+
+`vcs:` で始まる位置引数は VCS (jj または git) 経由で解決される。リリース前のドリフトチェックや「最新 tag より上げているか」の比較を、`jj file show | bump-semver compare lt - ...` のような shell パイプを書かずに 1 行で実現できる (DR-0008)。
+
+```bash
+# 直近のリリースタグより上げてるか (CI で push 前にチェック)
+bump-semver compare gt Cargo.toml 'vcs:latest-tag()'
+
+# main からズレてないか
+bump-semver compare gt Cargo.toml vcs:origin/main
+
+# 前コミットからバージョン変わってる?
+bump-semver compare eq Cargo.toml vcs:HEAD~1            # FILE は相手から借用
+bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # 明示形式
+```
+
+| 形式 | 解釈 |
+|---|---|
+| `vcs:REV[:FILE]` | `<REV>` 時点の `<FILE>` を VCS から読み出す。最初の `:` は `vcs:` プレフィックス、2 つ目の `:` で REV と FILE を分割。FILE 省略時は位置順で最初の sibling (FILE 起源 or `vcs:REV:FILE` 形式) から借用 |
+| `vcs:latest-tag()` | 全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。0 件なら `no semver-compatible tags found` エラー |
+
+**VCS 自動判定** (優先順):
+
+1. `--vcs jj|git` フラグ (最優先)
+2. `BUMP_SEMVER_VCS=jj|git` 環境変数
+3. cwd または親に `.jj` ディレクトリ → jj
+4. `.git` ディレクトリ → git
+5. それ以外 → エラー (`not a git or jj repository`)
+
+`.jj` と `.git` が並存している場合 (jj colocate モード、kawaz の git-bare + jj-workspace 構成) は **jj が優先**。jj の revset 言語は git ref のスーパーセットなので。
+
+**`--write` と `vcs:` は排他**。VCS の中身に書き戻す機能は持たない (commit/amend が必要になりスコープ外)。混在させると `--write cannot be used with vcs: inputs (vcs: is read-only)` エラー。
+
+**`bump-semver` は `git fetch` / `jj git fetch` を自動実行しない**。`vcs:origin/main` が古い場合は VCS 側のエラーがそのまま伝わる。CI では明示的に fetch してから bump-semver を呼ぶ運用にする。
+
+CI スクリプトを VCS 中立にしたい場合は jj/git どちらでも通る形式 (`origin/main` (jj 側で `main@origin` に自動フォールバック) / commit hash / `latest-tag()`) を推奨。
 
 ### エラーメッセージの形式
 
@@ -269,7 +311,7 @@ v0.5.0 で 3 つの破壊変更が入っている。詳細とサンプルは [UP
 
 ## 開発状況
 
-v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合が入った (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
+v0.7.0 で `vcs:` 入力モードが入った (DR-0008)。`vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を自動判定で取得できるので、CI のドリフトチェックや「直近リリースより上げてるか」の比較が 1 行で書ける。直前: v0.6.0 で `--json` 出力 (DR-0007)、v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合 (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
 
 ## ライセンス
 

@@ -37,16 +37,27 @@ INPUT  = FILE | VER | -
 
 複数 INPUT は単一の単位として扱う (DR-0004)。検出された全 version は事前に一致している必要があり、name (取れた範囲) も整合性検証される。
 
-### 入力モード (FILE | VER | `-`)
+### 入力モード (FILE | VER | `-` | `vcs:`)
 
-各位置引数は以下の優先順で解決される (DR-0006 確定論点 B):
+各位置引数は以下の優先順で解決される (DR-0006 確定論点 B、DR-0008 で `vcs:` を追加):
 
 1. `-` → stdin から VER を 1 行読み込み (1 引数につき stdin 消費は 1 回まで)
-2. ファイルとして存在する → FILE 扱い
-3. semver としてパース可能 → VER 扱い
-4. それ以外 → エラー
+2. `vcs:` で始まる → VCS 経由で解決 (DR-0008、後述)
+3. ファイルとして存在する → FILE 扱い
+4. semver としてパース可能 → VER 扱い
+5. それ以外 → エラー
 
 `1.2.3` のようにファイル名と VER 文字列が衝突するケースは `./1.2.3` で明示する (Unix 慣習)。
+
+#### `vcs:` 入力 (DR-0008)
+
+`vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ → `BUMP_SEMVER_VCS` 環境変数 → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。
+
+`vcs:latest-tag()` は MVP 唯一の関数: 全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。
+
+FILE 省略時は **位置順で最初の FILE 提供 sibling** から借用 (実 FILE 起源 or 他の `vcs:REV:FILE`)。借用源がない場合はエラー。
+
+`bump-semver` は `git fetch` / `jj git fetch` を自動実行しない。古い remote の場合は VCS のエラーがそのまま伝わる。`vcs:` 入力が混ざる invocation での `--write` はエラー (vcs: は read-only)。
 
 ### 引数排他ルール
 
@@ -82,6 +93,8 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
     ├── rules.go             path-aware confidence ranked テーブル (DR-0005)
     ├── jsonpath.go          map[string]any ベースの単純 JSONPath
     ├── semver.go            semver 2.0.0 parser + Bump + Compare
+    ├── json.go              --json 出力スキーマ (DR-0007)
+    ├── vcs.go               vcs: 入力 (jj/git 自動判定 + `latest-tag()`) (DR-0008)
     └── *_test.go            単体 + 統合 + spec_table_test.go (DR-0006 仕様駆動テスト)
 ```
 

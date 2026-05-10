@@ -29,7 +29,8 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args.inputs) != 2 {
 		return emitErr(stderr, args, fmt.Errorf("compare requires exactly two inputs, got %d", len(args.inputs)))
 	}
-	resolved, err := resolveInputs(args.inputs, stdin, false)
+	vcsOverride, _ := parseVcsOverride(args.vcs) // already validated in parseArgs
+	resolved, err := resolveInputs(args.inputs, stdin, false, vcsOverride)
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}

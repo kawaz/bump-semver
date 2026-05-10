@@ -6,6 +6,10 @@
 
 過去ロードマップから移送。実装履歴の参考用に残す。
 
+### `vcs:` 入力モード (v0.7.0 / DR-0008)
+
+`vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を入力として受け付ける。VCS は `--vcs` / `BUMP_SEMVER_VCS` / `.jj` / `.git` の優先順で自動判定 (`.jj` と `.git` 並存時は jj 優先)。fetch は自動実行しない (副作用回避)。`--write` と排他 (vcs: は read-only)。FILE 省略時は位置順で最初の sibling から借用。
+
 ### `--json` 出力オプション (v0.6.0 / DR-0007)
 
 `get` / `major` / `minor` / `patch` / `pre` で `--json` を受け付け、`name` / `version` / `semver` / `major` / `minor` / `patch` / `pre` / `pre_id` / `pre_rest` / `build_metadata` / `build_id` / `build_rest` を 1 行 JSON で出力。`compare` は exit code 主役の設計のため対象外。`version` (フォーマット保持) と `semver` (strict) の二本立て、pre/build は最初の `.` で分割した構造分解のみ提供 (意味判定は CLI 側で背負わない)。

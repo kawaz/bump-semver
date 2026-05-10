@@ -37,16 +37,27 @@ INPUT  = FILE | VER | -
 
 Multiple INPUTs are operated on as a single unit (DR-0004). Their detected versions must agree; their detected names are also cross-checked when available.
 
-### Input modes (FILE | VER | `-`)
+### Input modes (FILE | VER | `-` | `vcs:`)
 
-Each positional argument is resolved in this priority order (DR-0006 確定論点 B):
+Each positional argument is resolved in this priority order (DR-0006 確定論点 B; DR-0008 added the `vcs:` rule):
 
 1. `-` → read VER from stdin, one line (stdin can be consumed at most once across all `-` arguments)
-2. Exists as a file → FILE
-3. Parses as semver → VER
-4. Otherwise → error
+2. Starts with `vcs:` → resolve through the VCS (DR-0008, see below)
+3. Exists as a file → FILE
+4. Parses as semver → VER
+5. Otherwise → error
 
 When a filename collides with a valid semver string (e.g. a local file literally named `1.2.3`), prefix with `./` to disambiguate, per Unix convention.
+
+#### `vcs:` input (DR-0008)
+
+`vcs:REV[:FILE]` reads `<FILE>` at `<REV>` from jj or git. The VCS is detected in this priority order: `--vcs jj|git` flag, `BUMP_SEMVER_VCS` env var, `.jj` directory probe, `.git` directory probe. When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), jj wins.
+
+`vcs:latest-tag()` is the only supported function in MVP: it lists every tag, drops the ones that don't parse as semver, and returns the largest by SemVer 2.0.0 ordering.
+
+When the FILE component is omitted, it is borrowed from the first FILE-providing sibling argument in **position order** (a real FILE-origin input, or another `vcs:REV:FILE`). Errors out when no sibling can supply a FILE.
+
+`bump-semver` does not run `git fetch` / `jj git fetch`; stale-remote errors surface verbatim from the underlying VCS. `--write` is rejected when any input starts with `vcs:` (vcs: is read-only by design).
 
 ### Mutual exclusivity rules
 
@@ -82,6 +93,8 @@ Go sources live under `src/`, leaving only metadata (README / docs / justfile / 
     ├── rules.go             path-aware confidence-ranked rule table (DR-0005)
     ├── jsonpath.go          map[string]any-based simple JSONPath
     ├── semver.go            SemVer 2.0.0 parser + Bump + Compare
+    ├── json.go              --json output schema (DR-0007)
+    ├── vcs.go               vcs: input (jj/git auto-detect + `latest-tag()`) (DR-0008)
     └── *_test.go            unit + integration + spec_table_test.go (DR-0006 spec-driven)
 ```
 

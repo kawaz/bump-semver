@@ -1,5 +1,42 @@
 # Upgrading guide
 
+## v0.6.x → v0.7.0
+
+Pure additive release; no breaking changes. See
+[`docs/decisions/DR-0008-vcs-input.md`](./docs/decisions/DR-0008-vcs-input.md).
+
+### New feature: `vcs:` input mode
+
+Any positional INPUT may now start with `vcs:`. The argument is then
+resolved through jj or git (auto-detected) instead of being read from
+disk. This lets CI checks like "ahead of remote main?" or "bumped past
+the last release tag?" be written on a single line.
+
+```bash
+# Replaces:  jj file show -r main@origin Cargo.toml | bump-semver compare lt Cargo.toml -
+bump-semver compare gt Cargo.toml vcs:main@origin
+
+# Take the largest semver-parseable tag and compare against it
+bump-semver compare gt Cargo.toml 'vcs:latest-tag()'
+
+# Read a previous revision; FILE is borrowed from the sibling FILE input
+bump-semver compare eq Cargo.toml vcs:HEAD~1
+```
+
+**VCS detection** (priority order): `--vcs jj|git` flag, then
+`BUMP_SEMVER_VCS` env, then probe `.jj` / `.git` in cwd or any
+ancestor. When both `.jj` and `.git` exist (jj colocate, or kawaz's
+git-bare + jj-workspace layout), jj wins.
+
+**`--write` is incompatible with `vcs:` inputs.** vcs: is read-only by
+design — combining the two errors out with a clear message rather than
+silently dropping one input.
+
+**`bump-semver` does not run `git fetch` / `jj git fetch` for you.** If
+`vcs:origin/main` is stale, the underlying VCS error is surfaced as-is.
+
+See README's "vcs: input" section for the full reference.
+
 ## v0.5.x → v0.6.0
 
 Pure additive release; no breaking changes. See

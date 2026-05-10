@@ -9,10 +9,11 @@
 //   - cmp:  compare {eq|lt|gt|le|ge}
 //
 // Inputs are positional: each argument may be a FILE path, a raw
-// semver VER (e.g. `1.2.3`), or `-` (read VER from stdin once). When
-// multiple inputs are given the values must agree; FILE-origin entries
-// can be written back with `--write`, VER/stdin-origin entries are
-// reference values only.
+// semver VER (e.g. `1.2.3`), `-` (read VER from stdin once), or
+// `vcs:REV[:FILE]` / `vcs:<func>(...)` (read version from the VCS;
+// DR-0008). When multiple inputs are given the values must agree;
+// FILE-origin entries can be written back with `--write`, VER /
+// stdin / vcs entries are reference values only.
 package main
 
 import (
@@ -50,9 +51,11 @@ Compare (nested subcommand):
   compare ge  INPUT INPUT     true if first >= second
 
 Inputs:
-  FILE     path to a supported file (auto-detected by basename)
-  VER      a raw semver string (e.g. 1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
-  -        read VER from stdin (single line, used at most once)
+  FILE                       path to a supported file (auto-detected by basename)
+  VER                        a raw semver string (e.g. 1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
+  -                          read VER from stdin (single line, used at most once)
+  vcs:REV[:FILE]             read FILE at <REV> from the VCS (jj or git, auto-detected)
+  vcs:latest-tag()           read the largest semver-compatible tag from the VCS
 
 Flags:
   --pre PRE              Set pre-release identifiers (e.g. --pre rc.0)
@@ -60,12 +63,16 @@ Flags:
   --build-metadata META  Set build metadata identifiers (e.g. --build-metadata sha.abc)
   --no-build-metadata    Remove build metadata identifiers
   --write                Write the new version back to each FILE input (bump only)
+  --vcs jj|git           Force VCS detection (overrides BUMP_SEMVER_VCS env)
   --no-hint              Suppress the "files not modified" hint (bump only)
   -q, --quiet            Suppress stdout (and the hint)
   -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
   --json                 Output structured JSON (get / bump only, not for compare)
   --version, -V          Print the binary version
   --help, -h             Show this help
+
+Environment:
+  BUMP_SEMVER_VCS=jj|git Force VCS detection (overridden by --vcs)
 
 Supported file formats (auto-detected by basename):
   Cargo.toml         TOML, [package].version (and [package].name for cross-input checks)
@@ -94,6 +101,9 @@ Examples:
   bump-semver compare lt 1.2.3-rc.1 1.2.3        # exit 0
   bump-semver compare eq Cargo.toml package.json # cross-file equality
   bump-semver get Cargo.toml --json              # structured output for jq
+  bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # bumped past last release?
+  bump-semver compare gt Cargo.toml vcs:origin/main      # ahead of remote main?
+  bump-semver compare eq Cargo.toml vcs:HEAD~1           # changed since prev commit?
 `
 
 func main() {
@@ -152,6 +162,12 @@ type cliArgs struct {
 	// single-line JSON rendering of the bumped/get version instead of
 	// the bare String(). Rejected for compare (predicate-only output).
 	json bool // --json
+
+	// VCS override (DR-0008). When non-empty, takes priority over the
+	// BUMP_SEMVER_VCS env var and the auto-probe (`.jj` / `.git`).
+	// Accepted values: "jj" / "git".
+	vcs    string // --vcs value (validated in parseArgs)
+	vcsSet bool   // whether --vcs was supplied at all
 }
 
 var bumpActions = map[string]bool{
@@ -259,6 +275,22 @@ func parseArgs(argv []string) (cliArgs, error) {
 			// --no-hint — boolean flags don't benefit from a strict
 			// double-set check (no value is being lost).
 			out.json = true
+		case a == "--vcs":
+			if out.vcsSet {
+				return cliArgs{}, fmt.Errorf("--vcs specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--vcs requires a value (jj or git)")
+			}
+			out.vcs = rest[i+1]
+			out.vcsSet = true
+			i++
+		case strings.HasPrefix(a, "--vcs="):
+			if out.vcsSet {
+				return cliArgs{}, fmt.Errorf("--vcs specified twice")
+			}
+			out.vcs = strings.TrimPrefix(a, "--vcs=")
+			out.vcsSet = true
 		case a == "--":
 			// Treat all remaining argv as inputs (lets paths starting with `-` through).
 			out.inputs = append(out.inputs, rest[i+1:]...)
@@ -283,6 +315,11 @@ func parseArgs(argv []string) (cliArgs, error) {
 	}
 	if out.buildMetadataSet && out.buildMetadata == "" {
 		return cliArgs{}, fmt.Errorf("--build-metadata value cannot be empty, use --no-build-metadata to remove")
+	}
+	if out.vcsSet {
+		if _, err := parseVcsOverride(out.vcs); err != nil {
+			return cliArgs{}, err
+		}
 	}
 
 	if out.kind == "compare" {
@@ -403,15 +440,21 @@ type stdinReadState struct {
 }
 
 // resolveInput interprets one positional argument according to the
-// precedence rules from 確定論点 B:
+// precedence rules from 確定論点 B (extended for DR-0008's `vcs:` input):
 //  1. `-`             → read VER from stdin (once)
-//  2. file exists     → FILE
-//  3. ParseVersion OK → VER
-//  4. otherwise       → error
+//  2. `vcs:...`       → resolve via VCS (DR-0008)
+//  3. file exists     → FILE
+//  4. ParseVersion OK → VER
+//  5. otherwise       → error
 //
 // argIdx is the 1-based positional index used to disambiguate VER
 // labels when there are multiple raw VERs ("<argv:2>" etc).
-func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *stdinReadState) (resolvedInput, error) {
+//
+// borrowedFile is the path used when a `vcs:REV` spec omits its FILE
+// component (it borrows from a sibling FILE-origin input). Empty
+// string means "no sibling to borrow from", which is an error for
+// vcs: rev-mode specs.
+func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *stdinReadState, vcs vcsKind, borrowedFile string) (resolvedInput, error) {
 	if arg == "-" {
 		if !st.consumed {
 			st.consumed = true
@@ -427,6 +470,10 @@ func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *
 		ri := resolvedInput{originFile: "<stdin>"}
 		ri.fields = []locatedField{{File: ri.originFile, Value: v.String()}}
 		return ri, nil
+	}
+
+	if strings.HasPrefix(arg, "vcs:") {
+		return resolveVcsInput(arg, borrowedFile, vcs)
 	}
 
 	// Try as file first if it exists. Use Stat so we don't masquerade
@@ -573,7 +620,22 @@ func emitErr(stderr io.Writer, args cliArgs, err error) error {
 }
 
 func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
-	resolved, err := resolveInputs(args.inputs, stdin, args.write)
+	// DR-0008: --write + any vcs: input is rejected up-front. vcs: is
+	// read-only by design (writing back into VCS would require us to
+	// implement commit/amend semantics, which is far out of scope), and
+	// silently dropping the vcs: portion of a multi-input --write would
+	// surprise users. The cleanest answer is to refuse the combination
+	// and let the caller split the invocation.
+	if args.write {
+		for _, in := range args.inputs {
+			if strings.HasPrefix(in, "vcs:") {
+				return emitErr(stderr, args, fmt.Errorf("--write cannot be used with vcs: inputs (vcs: is read-only)"))
+			}
+		}
+	}
+
+	vcsOverride, _ := parseVcsOverride(args.vcs) // already validated in parseArgs
+	resolved, err := resolveInputs(args.inputs, stdin, args.write, vcsOverride)
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}
@@ -729,20 +791,62 @@ func countFileInputs(resolved []resolvedInput) int {
 // handles the legacy "single FILE + stdin pipe" shortcut: if exactly
 // one input is present, that input is a FILE path (not `-`, not a VER
 // pattern), and stdin is a pipe, the FILE's content is read from stdin.
-func resolveInputs(inputs []string, stdin io.Reader, write bool) ([]resolvedInput, error) {
-	// Pre-classify each input as "looks like a file on disk" vs "raw"
-	// (VER or `-`). The classification is used both for the
-	// legacy-stdin-pipe shortcut and for VER label disambiguation
-	// (`<argv>` vs `<argv:N>`).
+//
+// vcsOverride is the parsed --vcs flag value (vcsAuto when absent). The
+// VCS itself is detected lazily — only when at least one input is
+// `vcs:` — so non-vcs invocations don't error out in environments
+// without a `.jj` / `.git` directory.
+//
+// File-borrowing for `vcs:REV` (no explicit FILE) takes the first
+// FILE-providing argument in **position order** (left-to-right). The
+// borrow source can be either:
+//
+//   - a real FILE-origin input (`Cargo.toml`)
+//   - another `vcs:REV:FILE` input that names its file explicitly
+//
+// "Position order" was chosen over "highest-confidence parse" because
+// it's predictable from the user's perspective: the file that comes
+// first in the argv wins. When every vcs: input omits FILE *and*
+// there's no real FILE-origin, we error out — there's nothing to
+// borrow from.
+func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcsKind) ([]resolvedInput, error) {
+	// Pre-classify each input. We need three buckets:
+	//   - "raw" (VER, `-`, or `vcs:`): contributes to <argv:N> indexing
+	//   - "file": exists on disk
+	//   - "vcs": needs lazy VCS detection
+	// "raw" subsumes vcs because vcs: is not a path on disk; a `vcs:`
+	// arg should not be counted as a writable FILE either.
+	//
+	// The borrow target (fileForBorrow) is "first file-providing arg
+	// in position order". A `vcs:REV:FILE` qualifies because its FILE
+	// is unambiguous; a `vcs:REV` (no file) does not.
 	isRaw := make([]bool, len(inputs))
 	rawCount := 0
+	hasVcs := false
+	var fileForBorrow string // first FILE-providing input, if any
 	for i, in := range inputs {
 		if in == "-" {
 			isRaw[i] = true
 			rawCount++
 			continue
 		}
+		if strings.HasPrefix(in, "vcs:") {
+			isRaw[i] = true
+			rawCount++
+			hasVcs = true
+			// `vcs:REV:FILE` (file-explicit) qualifies as a borrow
+			// source for downstream `vcs:REV` (file-omitted) args.
+			if _, file, isFunc, _ := vcsParseSpec(in); !isFunc && file != "" {
+				if fileForBorrow == "" {
+					fileForBorrow = file
+				}
+			}
+			continue
+		}
 		if fi, err := os.Stat(in); err == nil && !fi.IsDir() {
+			if fileForBorrow == "" {
+				fileForBorrow = in
+			}
 			continue // exists as a file
 		}
 		isRaw[i] = true
@@ -751,8 +855,9 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool) ([]resolvedInpu
 
 	// Legacy stdin pipe shortcut: one FILE input (not `-`, exists or
 	// at least matches a known rule), stdin is a pipe → read content
-	// from stdin and treat the path as a name hint.
-	if len(inputs) == 1 && inputs[0] != "-" && isStdinPipe(stdin) {
+	// from stdin and treat the path as a name hint. vcs: inputs are
+	// not eligible for this shortcut.
+	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && isStdinPipe(stdin) {
 		if write {
 			return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
 		}
@@ -765,6 +870,18 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool) ([]resolvedInpu
 		}
 	}
 
+	// Detect VCS lazily — only when at least one input is `vcs:`.
+	// Detecting up-front would error out in repos that don't use
+	// `vcs:` syntax, even though they're valid bump-semver targets.
+	vcs := vcsAuto
+	if hasVcs {
+		v, err := detectVcs(vcsOverride)
+		if err != nil {
+			return nil, err
+		}
+		vcs = v
+	}
+
 	st := stdinReadState{}
 	out := make([]resolvedInput, 0, len(inputs))
 	rawIdx := 0
@@ -774,7 +891,11 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool) ([]resolvedInpu
 			rawIdx++
 			argIdx = rawIdx
 		}
-		ri, err := resolveInput(in, argIdx, rawCount, stdin, &st)
+		// vcs: rev-mode specs without a FILE component borrow the
+		// path from the first FILE-origin sibling. We pass the
+		// borrow source unconditionally; resolveVcsInput uses it
+		// only when the spec actually omits the file part.
+		ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, vcs, fileForBorrow)
 		if err != nil {
 			return nil, err
 		}

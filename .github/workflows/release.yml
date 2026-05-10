@@ -17,6 +17,21 @@ jobs:
       changed: ${{ steps.version.outputs.changed }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # bump-semver の vcs:latest-tag() で全 tag が必要
+
+      # bump-semver 自身を install (dogfooding)
+      - name: Install bump-semver
+        run: |
+          BUMP_SEMVER_VERSION=$(cat VERSION | tr -d '[:space:]')
+          # 直前リリース版を使う (今 push してる VERSION ではなく、main にある最新 tag)
+          # 自己ドッグフーディングだが、新規 release の検証に旧 release を使う構図
+          LATEST=$(gh release list --repo kawaz/bump-semver --limit 1 --json tagName -q '.[0].tagName' | sed 's/^v//')
+          curl -fsSL "https://github.com/kawaz/bump-semver/releases/download/v${LATEST}/bump-semver-linux-amd64" -o /usr/local/bin/bump-semver
+          chmod +x /usr/local/bin/bump-semver
+          bump-semver --version
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Check version change
         id: version
@@ -34,13 +49,39 @@ jobs:
             exit 0
           fi
 
-          # semver 形式の検証
-          if ! echo "$CURRENT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          # semver 形式の検証 (bump-semver get -qq で exit code のみ検証)
+          if ! bump-semver get "$CURRENT_VERSION" -qq; then
             echo "::error::Invalid VERSION format: ${CURRENT_VERSION}"
             exit 1
           fi
 
-          # 既にリリース済みかチェック
+          # 既存 tag より大きいか検証 (二重リリース防止)
+          # vcs:latest-tag() は全 tag を semver で集計して最大を返す
+          set +e
+          bump-semver compare gt VERSION 'vcs:latest-tag()' --vcs git
+          CMP_EXIT=$?
+          set -e
+          case "$CMP_EXIT" in
+            0)
+              # VERSION > latest-tag(): release 続行
+              ;;
+            1)
+              # VERSION <= latest-tag(): 既にリリース済 or 巻き戻し
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "Version v${CURRENT_VERSION} is not greater than latest tag; skipping release."
+              exit 0
+              ;;
+            2)
+              # tag が 1 件もない (初回 release) or 不正
+              echo "compare gt exited 2 (no tags yet?); assuming first release"
+              ;;
+            *)
+              echo "::error::Unexpected exit code from bump-semver compare: ${CMP_EXIT}"
+              exit 1
+              ;;
+          esac
+
+          # gh release で既存確認 (compare で通っても念のため)
           if gh release view "v${CURRENT_VERSION}" --repo "$REPO" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Version unchanged: v${CURRENT_VERSION} already released"
@@ -189,12 +230,15 @@ jobs:
 
             test do
               assert_match "v#{version}", shell_output("#{bin}/bump-semver --version")
-              # Smoke test: pure --value path exercises argv parser + semver bump
+              # Smoke test: pure VER positional arg exercises argv parser + semver bump
               # without touching the filesystem, which is enough to catch most
               # build / linking regressions on the target platform.
-              assert_equal "1.2.4", shell_output("#{bin}/bump-semver patch --value 1.2.3").strip
-              assert_equal "2.0.0", shell_output("#{bin}/bump-semver major --value 1.2.3").strip
-              assert_equal "1.2.3", shell_output("#{bin}/bump-semver get --value 1.2.3").strip
+              assert_equal "1.2.4", shell_output("#{bin}/bump-semver patch 1.2.3").strip
+              assert_equal "2.0.0", shell_output("#{bin}/bump-semver major 1.2.3").strip
+              assert_equal "1.2.3", shell_output("#{bin}/bump-semver get 1.2.3").strip
+              # compare exit codes (0 true / 1 false / 2 error)
+              system "#{bin}/bump-semver", "compare", "eq", "1.2.3", "1.2.3"
+              assert_predicate $?, :success?
             end
           end
           FORMULA

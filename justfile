@@ -62,12 +62,33 @@ check-translations: ensure-clean
             || die "ERROR: $ja was updated after $en. Update the English translation before pushing."
     done < <(find . -name '*-ja.md' -not -path './.git/*' -not -path './.jj/*')
 
+# VERSION ファイルが origin/main から退化していないことを確認 (push 前 sanity check)
+# bump-semver 自身を使った dogfooding (./bin/bump-semver はビルド済を参照)
+# - VERSION > origin/main: OK (bump 含む新規変更)
+# - VERSION == origin/main: OK (VERSION 以外の変更で push する時)
+# - VERSION < origin/main: ERROR (退化、想定外)
+# git fetch は走らせない (利用者責任、現時点の手元の origin/main を見る)
+check-version-not-regressed: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set +e
+    ./bin/bump-semver compare lt VERSION vcs:origin/main --no-hint
+    cmp_exit=$?
+    set -e
+    if [ "$cmp_exit" = "0" ]; then
+        echo "ERROR: VERSION is regressed below origin/main; aborting push" >&2
+        ./bin/bump-semver get VERSION vcs:origin/main || true
+        exit 1
+    fi
+    # exit 1 (>=) または 2 (no origin/main yet) は許容
+
 # push (依存階層で lint/ensure-clean は重複排除されて1回ずつ実行)
-push: ensure-clean test check-translations
+push: ensure-clean test check-translations check-version-not-regressed
     jj bookmark set main -r @-
     jj git push --bookmark main
 
 # VERSION を bump して Release commit を push (CI が tag + GitHub Release を作成)
+# bump-semver 自身を使った dogfooding (./bin/bump-semver はビルド済を参照)
 bump-version bump="patch": ensure-clean test build
     #!/usr/bin/env bash
     set -euo pipefail
@@ -76,18 +97,10 @@ bump-version bump="patch": ensure-clean test build
     # tag (v$VERSION) と GitHub Releases (--generate-notes) を自動作成する。
 
     current=$(cat VERSION | tr -d '[:space:]')
-    IFS='.' read -r major minor patchv <<< "$current"
-    case "{{bump}}" in
-        major) major=$((major + 1)); minor=0; patchv=0 ;;
-        minor) minor=$((minor + 1)); patchv=0 ;;
-        patch) patchv=$((patchv + 1)) ;;
-        *) echo "Error: invalid bump '{{bump}}'" >&2; exit 1 ;;
-    esac
-    new_version="${major}.${minor}.${patchv}"
+    new_version=$(./bin/bump-semver {{bump}} VERSION --write --no-hint)
     echo "Version: ${current} -> ${new_version}"
 
     # @ は空 change (ensure-clean で確認済)。VERSION を書き換えて Release commit に
-    printf '%s\n' "${new_version}" > VERSION
     jj describe -m "Release v${new_version}"
     jj new
 

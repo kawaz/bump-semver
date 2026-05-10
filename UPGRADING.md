@@ -1,5 +1,93 @@
 # Upgrading guide
 
+## v0.10.x → v0.11.0
+
+Pure additive minor release; no breaking changes. See
+[`docs/decisions/DR-0014-toml-section-scoped.md`](./docs/decisions/DR-0014-toml-section-scoped.md).
+
+### New: `pyproject.toml` and `mojoproject.toml` as path-pinned rules (DR-0014)
+
+v0.11.0 generalises the TOML rewriter into a single section-scoped
+helper and uses it to register two new confidence-3 rules:
+
+| Path | Format | Version path | Name path |
+|---|---|---|---|
+| `pyproject.toml` | TOML | `[project].version` (try) → `[tool.poetry].version` | `[project].name` (try) → `[tool.poetry].name` |
+| `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
+
+```bash
+$ cat pyproject.toml
+[project]
+name = "my-pkg"
+version = "1.2.3"
+
+$ bump-semver get pyproject.toml
+1.2.3
+
+$ bump-semver patch pyproject.toml --write
+1.2.4
+
+$ cat pyproject.toml
+[project]
+name = "my-pkg"
+version = "1.2.4"
+```
+
+### `pyproject.toml`: PEP 621 first, Poetry-legacy second
+
+The TOML format now treats `VersionPaths` as **OR** (first match
+wins). For `pyproject.toml` the rule lists PEP 621's `[project]`
+section first and the Poetry-legacy `[tool.poetry]` section second,
+so a single rule covers both ecosystems. Files mid-migration that
+carry both sections have **only the first match (PEP 621)**
+rewritten — DR-0014 § 6 documents the trade-off.
+
+```bash
+$ cat pyproject.toml
+[tool.poetry]
+name = "my-pkg"
+version = "1.2.3"
+
+$ bump-semver patch pyproject.toml --write
+1.2.4
+# [tool.poetry].version is rewritten because [project] is absent
+```
+
+### TOML format: VersionPaths semantics changed to OR
+
+Previously the TOML format iterated `VersionPaths` and required every
+path to extract successfully (mirroring JSON / `package-lock.json`).
+v0.11.0 switches TOML to first-match-wins so the new try-fallback
+shape works. The change is invisible to existing rules — both
+`Cargo.toml` (`.package.version`) and the DR-0011 `*.toml` fallback
+(`.version`) carry a single VersionPath, so AND vs OR is identical
+for them. JSON's AND semantics is unchanged (still drives
+`package-lock.json` cross-field consistency).
+
+### Existing TOML rules preserved
+
+The DR-0011 `*.toml` confidence-1 fallback still reads / writes
+top-level `version = "..."` for any TOML file that doesn't match a
+higher-confidence rule. `Cargo.toml`'s `[package].version` still wins
+over `*.toml` for files named `Cargo.toml`. A `pyproject.toml`
+without `[project]` or `[tool.poetry]` (but with a top-level
+`version`) cleanly falls through to the `*.toml` fallback and emits
+the usual DR-0010 hint.
+
+### Quote / comment preservation
+
+The new section-scoped rewriter substitutes only the captured byte
+range, so the quote style (single, double) and any trailing inline
+`# comment` on the version line are preserved verbatim. Sections
+above and below the bumped one are untouched bit-for-bit, including
+nested sections like `[tool.poetry.dependencies]` whose own
+`version = "..."` lines stay frozen.
+
+### No new dependencies
+
+DR-0014 is implemented entirely in `src/format_toml.go` and
+`src/rules.go`. No module additions, no binary size increase.
+
 ## v0.9.x → v0.10.0
 
 Pure additive minor release; no breaking changes. See

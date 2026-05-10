@@ -152,6 +152,8 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **3** | `package.json` | JSON | `$.version` | `$.name` |
 | **3** | `package-lock.json` | JSON | `$.version`, `$.packages[""].version` | `$.name`, `$.packages[""].name` |
 | **3** | `Cargo.toml` | TOML | `[package].version` | `[package].name` |
+| **3** | `pyproject.toml` | TOML | `[project].version` (try) → `[tool.poetry].version` | `[project].name` (try) → `[tool.poetry].name` |
+| **3** | `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
 | **3** | `VERSION` | plain text | (file content) | — |
 | **2** (basename) | any `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | any `plugin.json` | JSON | `$.version` (try) | `$.name` |
@@ -170,7 +172,9 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 
 Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `unsupported file: <path>`. Adding a new format = adding one row to the rule table plus, if needed, one new format-specific function (no `--pattern` regex flag, by design).
 
-YAML / TOML fallbacks (DR-0011) only look at top-level keys: a `version` nested inside a section / mapping is intentionally not picked up. For `Cargo.toml` the explicit confidence-3 rule still wins (so the existing `[package].version` behaviour is unchanged). Multi-document YAML (`---` separators) reads only the first document. The same DR-0010 fallback hint fires for these new rules — with `--no-hint` to suppress.
+YAML / TOML fallbacks (DR-0011) only look at top-level keys: a `version` nested inside a section / mapping is intentionally not picked up. For `Cargo.toml` / `pyproject.toml` / `mojoproject.toml` the explicit confidence-3 rules still win (so their existing section-scoped behaviour is unchanged). Multi-document YAML (`---` separators) reads only the first document. The same DR-0010 fallback hint fires for these new rules — with `--no-hint` to suppress.
+
+The `pyproject.toml` rule (DR-0014) tries PEP 621's `[project].version` first and falls back to Poetry-legacy `[tool.poetry].version` so a single rule covers both ecosystems mid-migration. When a file carries both sections (theoretical mid-migration state), only the first match (PEP 621) is rewritten. The `mojoproject.toml` rule (DR-0014) reads / writes `[workspace].version` directly. Both rules use the same TOML section-scoped rewriter, so quote style and surrounding sections / comments stay intact.
 
 The DR-0012 `regex` format covers eight language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim. Files with multiple version-like lines that need synchronised updates (Xcode `*.pbxproj`, `Info.plist`, etc.) are intentionally out of scope.
 
@@ -353,7 +357,7 @@ v0.5.0 ships three breaking changes. See [UPGRADING.md](./UPGRADING.md) for full
 
 ## Status
 
-v0.9.0 introduces the `regex` format (DR-0012) — a generic line-anchored rewriter that adds eight new file types in one shot (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode (DR-0008) — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically. Earlier highlights: v0.6.0 added `--json` output (DR-0007), v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+v0.11.0 generalises the TOML rewriter into a reusable section-scoped helper and adds `pyproject.toml` (PEP 621 with Poetry-legacy fallback) and `mojoproject.toml` (`[workspace]`) as path-pinned confidence-3 rules (DR-0014). v0.10.0 added the suffix-stripped fallback for backup-style filenames (DR-0013). v0.9.0 introduced the `regex` format (DR-0012) — a generic line-anchored rewriter that adds eight new file types in one shot (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode (DR-0008) — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically. Earlier highlights: v0.6.0 added `--json` output (DR-0007), v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

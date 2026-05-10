@@ -6,6 +6,10 @@
 
 過去ロードマップから移送。実装履歴の参考用に残す。
 
+### TOML section-scoped Replace + `pyproject.toml` / `mojoproject.toml` (v0.11.0 / DR-0014)
+
+`format_toml.go` の Replace を section-scoped 一般化 (`tomlReplaceInSection`) し、`pyproject.toml` (`[project].version` (try) → `[tool.poetry].version` の OR fallback) と `mojoproject.toml` (`[workspace].version`) を path-pinned confidence 3 ルールとして追加した。TOML format 全体の VersionPaths semantics を「first-match-wins (OR)」に変更 (JSON は AND 維持)。両方のセクションを持つ pyproject.toml は最初の hit だけ書き換える MVP 仕様。詳細は [DR-0014](./decisions/DR-0014-toml-section-scoped.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+
 ### `--version --json` 対応 (v0.7.1)
 
 `bump-semver --version --json` で自バイナリのバージョンを `--json` と同じ構造化スキーマで出力 (`jq -r .semver` 等で取り回せる)。`--version` 単独は従来通り `vX.Y.Z` プレーン出力。`--version` に `--json` 以外のフラグ / 位置引数を渡すとエラー (silent ignore を排除)。
@@ -40,8 +44,6 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 | basename / パス | format | 抽出パス |
 |---|---|---|
-| `pyproject.toml` | TOML | `.project.version` または `.tool.poetry.version` (top-level fallback では section-scoped を拾えないので path-pinned 化が必要) |
-| `mojoproject.toml` | TOML | `[workspace].version` (TOML section-scoped、現状未対応。`pyproject.toml` と一緒に section-scoped 対応で吸収) |
 | `Chart.yaml` | YAML | `.version` (現状は `*.yaml` fallback で動く。Helm chart 専用 path-pinned 化は実需次第) |
 | `setup.py` / `setup.cfg` | Python | `version = ...` (cfg) / `version='...'` (py) |
 | `composer.json` | JSON | 既に `*.json` fallback で対応済 |
@@ -71,7 +73,7 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 - **plist** (Apple バイナリ/XML plist): `Info.plist` の `CFBundleShortVersionString` 等
 - **複数同期更新 format**: Xcode `*.pbxproj` の build settings 群を同期更新 (DR-0012 の regex format は 1 マッチ限定なのでスコープ外)
 
-v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。v0.10.0 (DR-0013) で backup 系 suffix (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等) を 1 段だけ剥がして既存ルールに通す suffix-stripped fallback を追加。section-scoped (`pyproject.toml` の `[project].version` / `mojoproject.toml` の `[workspace].version` 等) や nested YAML (`spec.version` 等) は今後の path-pinned ルール / TOML section-scoped Replace として実需に応じて追加する。
+v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。v0.10.0 (DR-0013) で backup 系 suffix (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等) を 1 段だけ剥がして既存ルールに通す suffix-stripped fallback を追加。v0.11.0 (DR-0014) で TOML section-scoped Replace を一般化し `pyproject.toml` (`[project].version` + `[tool.poetry].version` try-fallback) / `mojoproject.toml` (`[workspace].version`) を path-pinned 化。nested YAML (`spec.version` 等) や `pyproject.toml` の `dynamic = ["version"]` 等は実需に応じて追加する。
 
 ## 機能候補
 

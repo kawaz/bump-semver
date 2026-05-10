@@ -152,6 +152,8 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **3** | `package.json` | JSON | `$.version` | `$.name` |
 | **3** | `package-lock.json` | JSON | `$.version`, `$.packages[""].version` | `$.name`, `$.packages[""].name` |
 | **3** | `Cargo.toml` | TOML | `[package].version` | `[package].name` |
+| **3** | `pyproject.toml` | TOML | `[project].version` (try) → `[tool.poetry].version` | `[project].name` (try) → `[tool.poetry].name` |
+| **3** | `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
 | **3** | `VERSION` | plain text | (ファイル内容) | — |
 | **2** (basename) | 任意 dir の `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | 任意 dir の `plugin.json` | JSON | `$.version` (try) | `$.name` |
@@ -170,7 +172,9 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 
 未対応ファイル (例: `README.md`, `Cargo.lock`) は `unsupported file: <path>` で明示エラー。新フォーマット追加 = テーブル 1 行追加 (+ 必要なら新 format-specific 関数 1 つ) で済む構造 (`--pattern` regex フラグは設計上持たない)。
 
-YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section 配下 / nested mapping 配下の `version` は意図的に対象外。`Cargo.toml` は引き続き confidence-3 ルールが優先されるので `[package].version` の挙動は不変。multi-document YAML (`---` 区切り) は最初の document のみ。これらの新ルールでも DR-0010 の fallback hint が出る (`--no-hint` で抑制可能)。
+YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section 配下 / nested mapping 配下の `version` は意図的に対象外。`Cargo.toml` / `pyproject.toml` / `mojoproject.toml` は引き続き confidence-3 ルールが優先されるので、それぞれの section-scoped 挙動は不変。multi-document YAML (`---` 区切り) は最初の document のみ。これらの新ルールでも DR-0010 の fallback hint が出る (`--no-hint` で抑制可能)。
+
+`pyproject.toml` ルール (DR-0014) は PEP 621 の `[project].version` を優先し、無ければ Poetry 旧形式の `[tool.poetry].version` を試行する (TOML format の OR semantics)。両方を持つ pyproject.toml (PEP 621 移行中の理論的中間状態) では最初の hit (PEP 621) のみ書き換えられる。`mojoproject.toml` ルール (DR-0014) は `[workspace].version` を直接読み書きする。両ルールとも共通の TOML section-scoped Replace を経由するので quote style と前後セクション・コメントは保持される。
 
 DR-0012 の `regex` フォーマットは「version が 1 行のソースコード式で書かれる」8 つの言語マニフェスト (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt) をカバーする。**最初のマッチ 1 個** だけが読み書きされ、quote style と version 行末尾のコメントは保持される。同一ファイル内で複数の version を同期更新する必要があるケース (Xcode `*.pbxproj` / `Info.plist` 等) は意図的にスコープ外。
 
@@ -353,7 +357,7 @@ v0.5.0 で 3 つの破壊変更が入っている。詳細とサンプルは [UP
 
 ## 開発状況
 
-v0.9.0 で `regex` フォーマット (DR-0012) を導入。1 行 regex で書き換える汎用 format により 8 種類のファイル (`*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt`) を一括追加した。v0.8.0 で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (DR-0011)、v0.7.0 で `vcs:` 入力モード (DR-0008) — `vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を自動判定で取得。直前: v0.6.0 で `--json` 出力 (DR-0007)、v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合 (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
+v0.11.0 で TOML rewriter を section-scoped に一般化し、`pyproject.toml` (PEP 621 + Poetry 旧形式 fallback) と `mojoproject.toml` (`[workspace]`) を path-pinned confidence 3 ルールとして追加 (DR-0014)。v0.10.0 で backup 系 suffix のための suffix-stripped fallback (DR-0013) を追加。v0.9.0 で `regex` フォーマット (DR-0012) を導入。1 行 regex で書き換える汎用 format により 8 種類のファイル (`*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt`) を一括追加した。v0.8.0 で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (DR-0011)、v0.7.0 で `vcs:` 入力モード (DR-0008) — `vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を自動判定で取得。直前: v0.6.0 で `--json` 出力 (DR-0007)、v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合 (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
 
 ## ライセンス
 

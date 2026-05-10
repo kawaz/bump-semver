@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -305,7 +306,67 @@ func rulesByConfidenceDesc() []CandidateRule {
 // On a successful match, the chosen rule's Confidence and (for confidence
 // 1) Glob are stamped on the returned Inspection so the caller can render
 // a DR-0010 fallback hint without re-resolving the rule.
+//
+// DR-0013: when no rule matches the path *and* the basename ends in a
+// known backup-style suffix (`.bak` / `.20260510` / `~` / etc.), one
+// extra pass is made with the suffix stripped from the basename. The
+// extra pass:
+//
+//   - retries every rule against the stripped path (no recursion: at
+//     most one stripping per resolve)
+//   - downgrades the chosen rule's reported Confidence by one band,
+//     floored at 1, so callers can see the rule was reached via the
+//     suffix-stripped fallback
+//   - stamps the original suffix and stripped basename onto the
+//     Inspection so the suffix-stripping hint can be emitted
+//
+// Recursion is intentionally avoided (DR-0013 § 4): multi-stage
+// suffixes like `Cargo.toml.bak.20260510` strip to `Cargo.toml.bak`
+// once and stop. The 95% case is single-suffix files; multi-stage
+// chains are deferred to a future DR if the need surfaces.
 func resolveRule(path string, content []byte) (CandidateRule, Inspection, error) {
+	rule, insp, err := resolveRuleDirect(path, content)
+	if err == nil {
+		return rule, insp, nil
+	}
+
+	// Only try suffix stripping when *no* rule matched the original
+	// path. If a rule matched but extraction failed, that's a genuine
+	// content-shape mismatch and we should propagate the original
+	// error rather than masking it with a different rule's failure.
+	var ufe *unsupportedFileError
+	if !errors.As(err, &ufe) {
+		return rule, insp, err
+	}
+
+	stripped, suffix, ok := stripKnownSuffix(path)
+	if !ok {
+		return rule, insp, err // original unsupportedFileError
+	}
+
+	rule2, insp2, err2 := resolveRuleDirect(stripped, content)
+	if err2 != nil {
+		// Suffix stripping didn't help. Surface the *original*
+		// unsupported-file error keyed on the user-visible path
+		// (otherwise the user sees "unsupported file: Cargo.toml"
+		// when they typed Cargo.toml.bak).
+		return CandidateRule{}, Inspection{}, &unsupportedFileError{path: path}
+	}
+
+	// Downgrade the reported confidence one band, floored at 1.
+	if insp2.MatchedConfidence > 1 {
+		insp2.MatchedConfidence--
+	}
+	insp2.MatchedSuffixStripped = suffix
+	insp2.MatchedStrippedBasename = filepath.Base(stripped)
+	return rule2, insp2, nil
+}
+
+// resolveRuleDirect is the inner loop without DR-0013 suffix stripping.
+// It returns an *unsupportedFileError when no rule's path-pattern
+// matches, or a wrapped extraction error when at least one rule
+// matched but every match failed Inspect.
+func resolveRuleDirect(path string, content []byte) (CandidateRule, Inspection, error) {
 	var lastErr error
 	var lastRule CandidateRule
 	matched := false
@@ -368,10 +429,23 @@ func formatReplace(rule CandidateRule, content []byte, current, newVersion strin
 
 // pathHasAnyRule reports whether at least one rule's path-pattern matches.
 // Used by detectHandler to fail fast on unsupported file names.
+//
+// DR-0013: a path is also considered supported if a known backup-style
+// suffix can be stripped from its basename and the stripped form
+// matches some rule. This keeps `detectHandler("Cargo.toml.bak")` from
+// erroring early — the actual rule selection (and confidence
+// downgrade) still happens later in resolveRule.
 func pathHasAnyRule(path string) bool {
 	for _, r := range rules {
 		if r.pathMatches(path) {
 			return true
+		}
+	}
+	if stripped, _, ok := stripKnownSuffix(path); ok {
+		for _, r := range rules {
+			if r.pathMatches(stripped) {
+				return true
+			}
 		}
 	}
 	return false

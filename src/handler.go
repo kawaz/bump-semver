@@ -25,20 +25,37 @@ type Field struct {
 //     which know nothing about the rule selection). Used by main.go to
 //     surface a confidence-1 fallback hint (DR-0010) and not for any
 //     downstream processing.
+//   - MatchedSuffixStripped: the backup-style suffix that DR-0013
+//     stripped from the input basename to reach this rule. Empty when
+//     the rule matched directly. Used by main.go to surface a
+//     suffix-stripping hint alongside the DR-0010 fallback hint.
 type Inspection struct {
 	Versions []Field
 	Names    []Field
 
 	// MatchedConfidence is the Confidence of the rule that the
-	// dispatcher (DR-0005) finally selected: 3 = path-pinned,
-	// 2 = basename-only, 1 = glob fallback. Zero when not applicable
-	// (e.g. when an extraction error is returned without a rule
-	// being chosen).
+	// dispatcher (DR-0005) finally selected, post-DR-0013 downgrade
+	// when applicable: 3 = path-pinned, 2 = basename-only, 1 = glob
+	// fallback. Zero when not applicable (e.g. when an extraction
+	// error is returned without a rule being chosen). Suffix-stripped
+	// matches are downgraded one band (3→2, 2→1) and floored at 1.
 	MatchedConfidence int
 	// MatchedGlob is the Glob pattern of the matched rule when the
 	// rule won by glob (Confidence 1). Empty otherwise. Used to render
 	// the DR-0010 fallback hint (`matched as *.json fallback`).
 	MatchedGlob string
+	// MatchedSuffixStripped is the backup-style suffix that DR-0013
+	// stripped from the input basename to make the rule match. Empty
+	// when the rule matched without suffix stripping. Examples:
+	// ".bak", ".20260510", "~". Used by main.go to render the
+	// suffix-stripping hint (`hint: <orig> matched as <stripped>
+	// rule (suffix <s> stripped)`).
+	MatchedSuffixStripped string
+	// MatchedStrippedBasename is the basename used for rule lookup
+	// after suffix stripping (e.g. "Cargo.toml" when the input was
+	// "Cargo.toml.bak"). Empty when suffix stripping did not happen.
+	// Used by main.go for the suffix hint message.
+	MatchedStrippedBasename string
 }
 
 // Handler reads / writes the version string of a single file format.

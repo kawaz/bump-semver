@@ -84,6 +84,10 @@ Supported file formats (auto-detected by basename):
   *.xcconfig / *.podspec / *.nimble / *.gemspec      regex (fallback) [DR-0012]
   VERSION            plain text
 
+  Backup-style suffix fallback (DR-0013): Cargo.toml.bak / package.json.20260510 /
+  Chart.yaml~ etc. strip one trailing suffix and retry against the table above.
+  Suffixes: .bak / .backup / .orig / .tmp / .old / .YYYYMMDD / .YYYYMMDD_HHMMSS / ~
+
 Multiple inputs (FILE / VER / -) may be mixed. All extracted versions must
 agree; otherwise a "version mismatch:" error lists each origin and value.
 With --write, only FILE-origin inputs are written back.
@@ -658,16 +662,22 @@ func emitErr(stderr io.Writer, args cliArgs, err error) error {
 	return &exitErr{code: 2, msg: err.Error()}
 }
 
-// emitFallbackHints prints one DR-0010 fallback hint per FILE-origin
-// resolved input that won via the lowest-confidence (glob) rule. The
-// hints are suppressed by `--no-hint` / `-q` / `-qq` and printed
-// before any other stderr hint so they appear in event order
-// (rule-resolution → bump action).
+// emitFallbackHints prints the DR-0010 fallback hint and the DR-0013
+// suffix-stripping hint for FILE-origin resolved inputs. The hints are
+// suppressed by `--no-hint` / `-q` / `-qq` and printed before any
+// other stderr hint so they appear in event order (rule-resolution →
+// bump action).
 //
-// `compare` also goes through this helper because a confidence-1
-// match is equally informative regardless of the action — the user
-// passed an unrecognised filename and ended up on the `*.json`
-// fallback rail.
+// `compare` also goes through this helper because the hints reflect
+// the file detection, not the action — passing an unrecognised
+// filename to `compare` is just as informative as to `get` / bump.
+//
+// When both hints fire for the same input (e.g. `unknown.json.bak`:
+// suffix `.bak` stripped → `*.json` glob fallback), they are emitted
+// in **source order** (suffix stripping is the filename-level
+// observation; the *.json fallback is the content-level observation).
+// Both share the `hint:` prefix so a single grep / `--no-hint` flag
+// captures both.
 func emitFallbackHints(stderr io.Writer, args cliArgs, resolved []resolvedInput) {
 	if args.quiet || args.quietAll || args.noHint {
 		return
@@ -675,6 +685,17 @@ func emitFallbackHints(stderr io.Writer, args cliArgs, resolved []resolvedInput)
 	for _, ri := range resolved {
 		if ri.handler == nil || ri.file == "" {
 			continue
+		}
+		// DR-0013: suffix stripping happened first (filename-level),
+		// so emit it before the DR-0010 fallback hint.
+		if suffix := ri.insp.MatchedSuffixStripped; suffix != "" {
+			stripped := ri.insp.MatchedStrippedBasename
+			if stripped == "" {
+				stripped = "(unknown)"
+			}
+			fmt.Fprintf(stderr,
+				"hint: %s matched as %s rule (suffix %s stripped); use --no-hint to suppress\n",
+				ri.file, stripped, suffix)
 		}
 		if ri.insp.MatchedConfidence != 1 {
 			continue

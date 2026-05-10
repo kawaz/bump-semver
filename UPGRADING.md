@@ -1,5 +1,75 @@
 # Upgrading guide
 
+## v0.7.x → v0.8.0
+
+Pure additive minor release; no breaking changes. See
+[`docs/decisions/DR-0011-yaml-yml-toml-fallback.md`](./docs/decisions/DR-0011-yaml-yml-toml-fallback.md).
+
+### New: `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011)
+
+`bump-semver` now resolves arbitrary YAML and TOML files through
+confidence-1 fallback rules, in addition to the pre-existing
+`*.json` fallback. Files that previously errored with
+`unsupported file:` are now read / bumped if they expose a
+top-level `.version` (`version:` for YAML, `version = "..."` for
+TOML).
+
+```bash
+$ cat Chart.yaml
+apiVersion: v2
+name: my-chart
+version: 1.2.3
+
+$ bump-semver patch Chart.yaml --write
+hint: Chart.yaml matched as *.yaml fallback. Open issue if explicit support is needed.
+1.2.4
+
+$ cat manifest.toml
+name = "my-pkg"
+version = "1.2.3"
+
+$ bump-semver get manifest.toml
+hint: manifest.toml matched as *.toml fallback. Open issue if explicit support is needed.
+1.2.3
+```
+
+### Scope of the fallback
+
+The new rules are **deliberately conservative**:
+
+- They only look at **top-level** keys. A nested `version:` (under
+  another mapping) or a section-scoped `version = ...` (e.g.
+  `[project] version` inside `pyproject.toml`) is not picked up.
+- Multi-document YAML (`---`-separated) is read as the first
+  document only.
+- The path-pinned `Cargo.toml` rule (confidence 3) still wins for
+  files matching that name — the new `*.toml` fallback does not
+  affect existing `[package].version` behaviour.
+
+If you need section-scoped or nested coverage (`pyproject.toml`'s
+`[project].version`, Helm chart `spec.version`, etc.), open an issue
+so a path-pinned confidence-3 rule can be added — exactly as DR-0001
+recommends ("add a row only when concretely needed").
+
+### Quote / comment preservation
+
+Both writers preserve the source file's quoting style (double, single,
+or unquoted) and any inline `# comment` / `# bumped weekly` on the
+version line. We rewrite via line-anchored regex rather than
+round-tripping through `yaml.Marshal` / TOML re-serialisation, so
+key order and surrounding comments are guaranteed to stay intact.
+
+### Suppression
+
+The fallback hint shares the existing `hint:` prefix — `--no-hint` /
+`-q` / `-qq` suppress YAML/TOML hints exactly as they already do for
+`*.json`.
+
+### Dependency
+
+Adds `gopkg.in/yaml.v3 v3.0.1` to the build (no Go module path
+changes; `go install` and Homebrew users get this transparently).
+
 ## v0.7.1 → v0.7.2
 
 Pure additive patch release; no breaking changes. See

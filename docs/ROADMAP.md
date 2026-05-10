@@ -40,8 +40,8 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 | basename / パス | format | 抽出パス |
 |---|---|---|
-| `pyproject.toml` | TOML | `.project.version` または `.tool.poetry.version` (try → fallback) |
-| `Chart.yaml` | **yaml (新規)** | `.version` (Helm chart) |
+| `pyproject.toml` | TOML | `.project.version` または `.tool.poetry.version` (top-level fallback では section-scoped を拾えないので path-pinned 化が必要) |
+| `Chart.yaml` | YAML | `.version` (現状は `*.yaml` fallback で動く。Helm chart 専用 path-pinned 化は実需次第) |
 | `*.gemspec` | Ruby (regex) | `s.version = '...'` 行 |
 | `setup.py` / `setup.cfg` | Python | `version = ...` (cfg) / `version='...'` (py) |
 | `composer.json` | JSON | 既に `*.json` fallback で対応済 |
@@ -64,13 +64,12 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 ### 未対応フォーマット候補
 
-現状の `format=json/toml/plain` 3 つに加えて、実需順の追加候補:
+現状の `format=json/toml/yaml/plain` 4 つに加えて、実需順の追加候補:
 
-- **yaml** (`gopkg.in/yaml.v3`): Helm Chart.yaml / pnpm-lock.yaml / GitHub Actions workflows 等
 - **jsonc** (JSON with comments / trailing commas): Bun bun.lock / VS Code 系 settings.json 等
 - **xml** (標準 `encoding/xml`): Maven `pom.xml` / Android Gradle 系
 
-`jsonpath.go` の path 抽出は `map[string]interface{}` ベースなので yaml.v3 の Unmarshal 結果でもそのまま使える見込み。yaml 対応は format_yaml.go 1 ファイル + rules.go の switch 1 行追加で済む。
+v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加済。section-scoped (`pyproject.toml` の `[project].version` 等) や nested YAML (`spec.version` 等) は今後の path-pinned ルールとして実需に応じて追加する。
 
 ## 機能候補
 

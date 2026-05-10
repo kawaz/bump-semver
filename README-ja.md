@@ -89,7 +89,7 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 
 | Hint | 発火条件 | 対象 / 抑制 |
 |---|---|---|
-| `hint: <path> matched as *.json fallback. Open issue if explicit support is needed.` | FILE 入力が confidence 1 (`*.json` fallback) で解決された (DR-0010)。該当ファイルごとに 1 行 | FILE を resolve するすべての場面 (`get` / bump 系 / `compare`) |
+| `hint: <path> matched as *.<ext> fallback. Open issue if explicit support is needed.` | FILE 入力が confidence 1 fallback で解決された (`*.json` は DR-0010、`*.yaml` / `*.yml` / `*.toml` は DR-0011)。該当ファイルごとに 1 行 | FILE を resolve するすべての場面 (`get` / bump 系 / `compare`) |
 | `hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.` | FILE が `unsupported file:` でエラーになった時、その直後の hint 行 | 上に同じ |
 | `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` | bump 系 (`major` / `minor` / `patch` / `pre`) で FILE 入力があり `--write` 未指定 | bump 系のみ。VER のみの bump や `get` / `compare` では出ない |
 
@@ -156,8 +156,13 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **2** (basename) | 任意 dir の `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | 任意 dir の `plugin.json` | JSON | `$.version` (try) | `$.name` |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
+| **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
+| **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
+| **1** (fallback) | `*.toml` | TOML | `version` (top-level) | `name` |
 
 未対応ファイル (例: `README.md`, `Cargo.lock`) は `unsupported file: <path>` で明示エラー。新フォーマット追加 = テーブル 1 行追加 (+ 必要なら新 format-specific 関数 1 つ) で済む構造 (`--pattern` regex フラグは設計上持たない)。
+
+YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section 配下 / nested mapping 配下の `version` は意図的に対象外。`Cargo.toml` は引き続き confidence-3 ルールが優先されるので `[package].version` の挙動は不変。multi-document YAML (`---` 区切り) は最初の document のみ。これらの新ルールでも DR-0010 の fallback hint が出る (`--no-hint` で抑制可能)。
 
 npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupported lockfileVersion: 1, please regenerate with npm 7+` エラー。依存エントリ (`$.packages["node_modules/..."]`) は仮に値が同じでも書き換わらない。
 

@@ -89,7 +89,7 @@ Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the bu
 
 | Hint | Trigger | Action / `-q` |
 |---|---|---|
-| `hint: <path> matched as *.json fallback. Open issue if explicit support is needed.` | A FILE input matched the lowest-confidence (`*.json`) fallback rule (DR-0010). One line per such input. | Anywhere a FILE is resolved (`get` / bump / `compare`). |
+| `hint: <path> matched as *.<ext> fallback. Open issue if explicit support is needed.` | A FILE input matched a confidence-1 fallback rule (`*.json` from DR-0010, `*.yaml` / `*.yml` / `*.toml` from DR-0011). One line per such input. | Anywhere a FILE is resolved (`get` / bump / `compare`). |
 | `hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.` | A FILE path doesn't match any rule, so `unsupported file:` is reported. The hint follows the error line. | Same as above. |
 | `hint: <N> file(s) not modified; use --write to update or --no-hint to suppress` | A bump action (`major` / `minor` / `patch` / `pre`) had at least one FILE input but no `--write`. | Bump actions only. VER-only bumps and `get` / `compare` never emit it. |
 
@@ -156,8 +156,13 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **2** (basename) | any `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | any `plugin.json` | JSON | `$.version` (try) | `$.name` |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
+| **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
+| **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
+| **1** (fallback) | `*.toml` | TOML | `version` (top-level) | `name` |
 
 Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `unsupported file: <path>`. Adding a new format = adding one row to the rule table plus, if needed, one new format-specific function (no `--pattern` regex flag, by design).
+
+YAML / TOML fallbacks (DR-0011) only look at top-level keys: a `version` nested inside a section / mapping is intentionally not picked up. For `Cargo.toml` the explicit confidence-3 rule still wins (so the existing `[package].version` behaviour is unchanged). Multi-document YAML (`---` separators) reads only the first document. The same DR-0010 fallback hint fires for these new rules — with `--no-hint` to suppress.
 
 For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with `unsupported lockfileVersion: 1, please regenerate with npm 7+`. Dependency entries (`$.packages["node_modules/..."]`) are never rewritten even if their version happens to equal the project's own.
 

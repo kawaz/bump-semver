@@ -1,5 +1,150 @@
 # Upgrading guide
 
+## v0.11.x → v0.12.0
+
+Pure additive minor release; no breaking changes. See
+[`docs/decisions/DR-0015-pbxproj-and-info-plist.md`](./docs/decisions/DR-0015-pbxproj-and-info-plist.md).
+
+### New: `project.pbxproj` and `Info.plist` as path-pinned rules (DR-0015)
+
+v0.12.0 adds two Xcode-specific path-pinned (confidence 3) rules and
+two dedicated formats so iOS / macOS projects can bump every place
+the marketing version lives in one invocation. v0.9.0 already covered
+`*.xcconfig` (DR-0012); v0.12.0 closes the gap with `project.pbxproj`
+(multi-match `MARKETING_VERSION` synchronisation) and `Info.plist`
+(XML plist).
+
+| Path | Format | Version key | Notes |
+|---|---|---|---|
+| `project.pbxproj` | pbxproj | every `MARKETING_VERSION = ...;` (synced) | Xcode reject submission if values diverge across build configurations; the format reads / writes them as one |
+| `Info.plist` | xml | `<key>CFBundleShortVersionString</key><string>...</string>` | `<string>$(MARKETING_VERSION)</string>` (Xcode 11+ default) is treated as a placeholder and yields `unsupported file:` |
+
+```bash
+$ bump-semver get App.xcodeproj/project.pbxproj
+1.2.3
+
+$ bump-semver patch \
+    App.xcodeproj/project.pbxproj \
+    App/Info.plist \
+    Configs/Release.xcconfig \
+    --write
+1.2.4
+```
+
+### `project.pbxproj`: multi-match consistency check
+
+The new `pbxproj` format reads **every** `MARKETING_VERSION = ...;`
+line in the file. When all values agree, the bump rewrites all of
+them to the new version uniformly — preserving the "every build
+configuration shares one marketing version" invariant Xcode and
+App Store Connect require.
+
+When values disagree (a previous bump that wrote only some of the
+configurations, an unmerged branch, etc.), the same column-aligned
+`version mismatch:` block introduced in v0.5.0 surfaces, this time
+with `<file>:line:N` labels so the offending lines are obvious:
+
+```
+$ bump-semver get App.xcodeproj/project.pbxproj
+bump-semver: version mismatch:
+  App.xcodeproj/project.pbxproj:line:23 = 1.2.3
+  App.xcodeproj/project.pbxproj:line:31 = 1.2.4
+  App.xcodeproj/project.pbxproj:line:45 = 1.2.3
+```
+
+Both quote styles are accepted (`MARKETING_VERSION = 1.2.3;` and
+`MARKETING_VERSION = "1.2.3";`); the rewriter preserves whichever
+each match used.
+
+### `Info.plist`: byte-range rewriting (no XML round-trip)
+
+The new `xml` format walks the document with `encoding/xml.Decoder`
+to locate the byte range of the target `<string>` element's value,
+then splices the new value into the original content. The rewriter
+**does not** call `xml.Marshal`, so DOCTYPE, the XML declaration,
+attribute order, indentation (tabs vs spaces), and every sibling
+key / value survive byte-for-byte:
+
+```bash
+$ cat Info.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.3</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+
+$ bump-semver patch Info.plist --write
+1.2.4
+
+$ cat Info.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.4</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.example.app</string>
+</dict>
+</plist>
+```
+
+`CFBundleVersion` (build number) is intentionally not touched — build
+numbers are not SemVer (commit counts, build hashes, monotonic
+integers), and CI is the natural place to populate them.
+
+### Placeholder Info.plist: `unsupported file:` outcome
+
+Xcode 11+ projects default to letting `Info.plist` reference the
+build setting via a `$(MARKETING_VERSION)` placeholder, with the
+real value living in `project.pbxproj`. When `bump-semver` reads
+such a placeholder it extracts the literal text, which then fails
+the SemVer parser upstream and surfaces as the same
+`unsupported file:` outcome users see for any other unparseable
+input:
+
+```
+$ bump-semver get Info.plist
+bump-semver: Info.plist:CFBundleShortVersionString=$(MARKETING_VERSION):
+invalid version "$(MARKETING_VERSION)": expected [v|ver|version][_.-]?X[._]Y[._]Z[-PRE][+BUILD]
+```
+
+This is intentional. The fix is to add `project.pbxproj` to the
+invocation (where the actual `MARKETING_VERSION = 1.2.3;` lines
+live), not to teach `bump-semver` to walk `$(MARKETING_VERSION)`
+references — that would put a build-system resolver inside a
+version-bumper, well outside the tool's scope.
+
+### Multi-file synchronisation across the Xcode triple
+
+Combined with the v0.9.0 `*.xcconfig` rule (DR-0012), the typical
+Xcode bump now reads / writes all three places at once:
+
+```bash
+$ bump-semver patch \
+    App.xcodeproj/project.pbxproj \
+    App/Info.plist \
+    Configs/Release.xcconfig \
+    --write
+```
+
+The cross-file consistency check (DR-0004) requires every input to
+agree before any file is touched, so a half-bumped repository surfaces
+the mismatch up front rather than producing partially synced output.
+
+### No new dependencies
+
+DR-0015 ships entirely as `src/format_pbxproj.go`,
+`src/format_xml.go`, two `rules.go` rows, and two switch arms in
+`tryRule` / `formatReplace`. No module additions, no binary size
+increase. `encoding/xml` is part of the standard library; the
+existing `regexp` import covers the OpenStep plist line matcher.
+
 ## v0.10.x → v0.11.0
 
 Pure additive minor release; no breaking changes. See

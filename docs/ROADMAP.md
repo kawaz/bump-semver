@@ -71,7 +71,7 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 - **plist** (Apple バイナリ/XML plist): `Info.plist` の `CFBundleShortVersionString` 等
 - **複数同期更新 format**: Xcode `*.pbxproj` の build settings 群を同期更新 (DR-0012 の regex format は 1 マッチ限定なのでスコープ外)
 
-v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。section-scoped (`pyproject.toml` の `[project].version` / `mojoproject.toml` の `[workspace].version` 等) や nested YAML (`spec.version` 等) は今後の path-pinned ルール / TOML section-scoped Replace として実需に応じて追加する。
+v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。v0.10.0 (DR-0013) で backup 系 suffix (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等) を 1 段だけ剥がして既存ルールに通す suffix-stripped fallback を追加。section-scoped (`pyproject.toml` の `[project].version` / `mojoproject.toml` の `[workspace].version` 等) や nested YAML (`spec.version` 等) は今後の path-pinned ルール / TOML section-scoped Replace として実需に応じて追加する。
 
 ## 機能候補
 

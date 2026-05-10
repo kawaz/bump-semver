@@ -1,5 +1,97 @@
 # Upgrading guide
 
+## v0.9.x → v0.10.0
+
+Pure additive minor release; no breaking changes. See
+[`docs/decisions/DR-0013-suffix-stripped-format-detection.md`](./docs/decisions/DR-0013-suffix-stripped-format-detection.md).
+
+### New: suffix-stripped fallback for backup-style filenames (DR-0013)
+
+`bump-semver` now resolves files with a trailing **backup-style
+suffix** by stripping one segment from the basename and retrying the
+DR-0005 rule table. Previously these errored with `unsupported file:`;
+v0.10.0 reads them as if the suffix weren't there, and emits a
+`hint:` line to stderr so the resolution stays transparent.
+
+| Suffix | Example | Resolved as |
+|---|---|---|
+| `.bak` / `.backup` / `.orig` / `.tmp` / `.old` | `Cargo.toml.bak` | `Cargo.toml` rule (confidence 2) |
+| `.YYYYMMDD` (8 digits) | `package.json.20260510` | `package.json` rule (confidence 2) |
+| `.YYYYMMDD_HHMMSS` (8+`_`+6 digits) | `Chart.yaml.20260510_120000` | `*.yaml` fallback (confidence 1) |
+| trailing `~` (Emacs / vi) | `Cargo.toml~` | `Cargo.toml` rule (confidence 2) |
+
+```bash
+$ cp Cargo.toml Cargo.toml.bak
+$ bump-semver get Cargo.toml.bak
+hint: Cargo.toml.bak matched as Cargo.toml rule (suffix .bak stripped); use --no-hint to suppress
+1.2.3
+
+$ bump-semver compare gt Cargo.toml Cargo.toml.20260510
+hint: Cargo.toml.20260510 matched as Cargo.toml rule (suffix .20260510 stripped); use --no-hint to suppress
+# (exit 0 if the live file is newer than the dated backup)
+```
+
+### Confidence downgrade
+
+The chosen rule's reported confidence is downgraded one band so
+callers can see the rule was reached via the suffix-stripped
+fallback:
+
+- confidence 3 (path-pinned, e.g. `Cargo.toml`) → reported as 2
+- confidence 2 (basename-only, e.g. `mix.exs`) → reported as 1
+- confidence 1 (glob fallback, e.g. `*.json`) → still 1 (floor)
+
+When the suffix-stripped form lands on a confidence-1 glob rule
+(`unknown.json.bak` → strip `.bak` → `*.json`), **both** the suffix
+hint and the existing DR-0010 fallback hint fire. The suffix hint is
+emitted first (filename-level) and the fallback hint second
+(content-level):
+
+```
+hint: unknown.json.bak matched as unknown.json rule (suffix .bak stripped); use --no-hint to suppress
+hint: unknown.json.bak matched as *.json fallback. Open issue if explicit support is needed.
+1.2.3
+```
+
+### Single-level stripping (no recursion)
+
+Multi-stage suffixes (`Cargo.toml.bak.20260510`) strip **only the
+trailing segment**. The intermediate form (`Cargo.toml.bak`) is
+retried once; if it fails to resolve, the whole call fails with the
+original `unsupported file: Cargo.toml.bak.20260510` error.
+Recursive stripping is intentionally deferred — single-suffix files
+are the 95% case, and multi-stage chains can be opted in via a
+future DR if real-world need surfaces.
+
+### Template-style suffixes are NOT stripped
+
+`.template` / `.example` / `.sample` / `.dist` are intentionally left
+out of the known-suffix list. Their content is usually a placeholder
+(`__VERSION__`, `0.0.0`) and silently treating them as real
+manifests would be more dangerous than the current `unsupported
+file:` behaviour. To bump-read a template, copy it under a
+backup-style name (`cp Cargo.toml.template Cargo.toml.tmp`).
+
+### Suppression
+
+The suffix hint shares the existing `hint:` prefix — `--no-hint` /
+`-q` / `-qq` suppress it exactly as they already do for `*.json` /
+`*.yaml` / `*.yml` / `*.toml` / etc. CI invocations that don't want
+the noise can keep using `--no-hint`.
+
+### `--write` works for suffix-stripped files
+
+`bump-semver patch Cargo.toml.bak --write` rewrites the **backup
+file** itself, not the live `Cargo.toml`. This is intentional — the
+input path determines the output path, just like every other FILE
+input. Whether bumping a backup makes sense is left to the caller.
+
+### No new dependencies
+
+DR-0013 is a pure dispatcher change in `src/rules.go`,
+`src/handler.go`, `src/main.go` plus a new `src/suffix.go` helper.
+No module additions, no binary size increase.
+
 ## v0.8.x → v0.9.0
 
 Pure additive minor release; no breaking changes. See

@@ -174,6 +174,27 @@ YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section
 
 DR-0012 の `regex` フォーマットは「version が 1 行のソースコード式で書かれる」8 つの言語マニフェスト (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt) をカバーする。**最初のマッチ 1 個** だけが読み書きされ、quote style と version 行末尾のコメントは保持される。同一ファイル内で複数の version を同期更新する必要があるケース (Xcode `*.pbxproj` / `Info.plist` 等) は意図的にスコープ外。
 
+#### Suffix-stripped fallback (DR-0013)
+
+どのルールにも直接マッチしないパスは、basename 末尾の **backup 系 suffix を 1 段だけ剥がして** 既存ルール表で再試行される。採用されたルールの confidence は 1 段下げて報告 (3→2, 2→1, 1→1) され、`hint:` 行が stderr に出るので解決経路が透明に保たれる。多段 suffix (`Cargo.toml.bak.20260510`) は **末尾 1 段のみ** 剥がす (再帰しない)。
+
+| Suffix | 例 | 解決先 |
+|---|---|---|
+| `.bak` / `.backup` / `.orig` / `.tmp` / `.old` | `Cargo.toml.bak` | `Cargo.toml` ルール (confidence 2) |
+| `.YYYYMMDD` (8 桁数字) | `package.json.20260510` | `package.json` ルール (confidence 2) |
+| `.YYYYMMDD_HHMMSS` (8+`_`+6 桁数字) | `Chart.yaml.20260510_120000` | `*.yaml` fallback (confidence 1) |
+| 末尾 `~` (Emacs / vi 系) | `Cargo.toml~` | `Cargo.toml` ルール (confidence 2) |
+
+```bash
+$ bump-semver get Cargo.toml.bak
+hint: Cargo.toml.bak matched as Cargo.toml rule (suffix .bak stripped); use --no-hint to suppress
+1.2.3
+```
+
+Template 系 suffix (`.template` / `.example` / `.sample` / `.dist`) は **意図的に剥がさない**。中身が placeholder のことが多く、本物の manifest として静かに扱うのは現状の `unsupported file:` エラーよりも危険なため。template から抽出したい場合は backup 系 suffix にコピーすればよい (`cp Cargo.toml.template Cargo.toml.tmp`)。
+
+suffix hint は既存の `hint:` prefix を共有し、`--no-hint` / `-q` / `-qq` で DR-0010 fallback hint と同じように抑制できる。両方発火するケース (`unknown.json.bak` → `.bak` 剥がし → `*.json` glob) では suffix hint が先に出る。
+
 npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupported lockfileVersion: 1, please regenerate with npm 7+` エラー。依存エントリ (`$.packages["node_modules/..."]`) は仮に値が同じでも書き換わらない。
 
 ### 複数 INPUT: 整合性検証

@@ -174,6 +174,27 @@ YAML / TOML fallbacks (DR-0011) only look at top-level keys: a `version` nested 
 
 The DR-0012 `regex` format covers eight language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim. Files with multiple version-like lines that need synchronised updates (Xcode `*.pbxproj`, `Info.plist`, etc.) are intentionally out of scope.
 
+#### Suffix-stripped fallback (DR-0013)
+
+When a path doesn't match any rule directly, `bump-semver` strips one trailing **backup-style suffix** from the basename and retries the rule table. The chosen rule's reported confidence is downgraded one band (3→2, 2→1, 1→1) and a `hint:` line is emitted to stderr so the resolution stays transparent. Multi-stage suffixes (`Cargo.toml.bak.20260510`) strip **only the trailing segment**; recursion is intentionally not applied.
+
+| Suffix | Example | Resolved as |
+|---|---|---|
+| `.bak` / `.backup` / `.orig` / `.tmp` / `.old` | `Cargo.toml.bak` | `Cargo.toml` rule (confidence 2) |
+| `.YYYYMMDD` (8 digits) | `package.json.20260510` | `package.json` rule (confidence 2) |
+| `.YYYYMMDD_HHMMSS` (8+`_`+6 digits) | `Chart.yaml.20260510_120000` | `*.yaml` fallback (confidence 1) |
+| trailing `~` (Emacs / vi) | `Cargo.toml~` | `Cargo.toml` rule (confidence 2) |
+
+```bash
+$ bump-semver get Cargo.toml.bak
+hint: Cargo.toml.bak matched as Cargo.toml rule (suffix .bak stripped); use --no-hint to suppress
+1.2.3
+```
+
+Template-style suffixes (`.template` / `.example` / `.sample` / `.dist`) are **not** stripped — their content is usually a placeholder, so silently treating them as real manifests would be more dangerous than the existing `unsupported file:` error. If you need to read a template, copy it under a backup-style name (`cp Cargo.toml.template Cargo.toml.tmp`).
+
+The suffix hint shares the existing `hint:` prefix and is suppressed by `--no-hint` / `-q` / `-qq` exactly like the DR-0010 fallback hint. When both fire (e.g. `unknown.json.bak` → strip `.bak` → `*.json` glob), the suffix hint is emitted first.
+
 For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with `unsupported lockfileVersion: 1, please regenerate with npm 7+`. Dependency entries (`$.packages["node_modules/..."]`) are never rewritten even if their version happens to equal the project's own.
 
 ### Multiple INPUTs: cross-input consistency

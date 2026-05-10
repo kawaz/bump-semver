@@ -155,14 +155,24 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **3** | `VERSION` | plain text | (ファイル内容) | — |
 | **2** (basename) | 任意 dir の `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | 任意 dir の `plugin.json` | JSON | `$.version` (try) | `$.name` |
+| **2** | `v.mod` (V) | regex | `version: '...'` | `name: '...'` |
+| **2** | `build.zig.zon` (Zig) | regex | `.version = "..."` | — |
+| **2** | `mix.exs` (Elixir) | regex | `version: "..."` | — |
+| **2** | `build.sbt` (Scala) | regex | `version := "..."` | — |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 | **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.toml` | TOML | `version` (top-level) | `name` |
+| **1** (fallback) | `*.xcconfig` (Xcode) | regex | `MARKETING_VERSION = ...` | — |
+| **1** (fallback) | `*.podspec` (CocoaPods) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.nimble` (Nim) | regex | `version = "..."` | — |
+| **1** (fallback) | `*.gemspec` (Ruby) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
 
 未対応ファイル (例: `README.md`, `Cargo.lock`) は `unsupported file: <path>` で明示エラー。新フォーマット追加 = テーブル 1 行追加 (+ 必要なら新 format-specific 関数 1 つ) で済む構造 (`--pattern` regex フラグは設計上持たない)。
 
 YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section 配下 / nested mapping 配下の `version` は意図的に対象外。`Cargo.toml` は引き続き confidence-3 ルールが優先されるので `[package].version` の挙動は不変。multi-document YAML (`---` 区切り) は最初の document のみ。これらの新ルールでも DR-0010 の fallback hint が出る (`--no-hint` で抑制可能)。
+
+DR-0012 の `regex` フォーマットは「version が 1 行のソースコード式で書かれる」8 つの言語マニフェスト (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt) をカバーする。**最初のマッチ 1 個** だけが読み書きされ、quote style と version 行末尾のコメントは保持される。同一ファイル内で複数の version を同期更新する必要があるケース (Xcode `*.pbxproj` / `Info.plist` 等) は意図的にスコープ外。
 
 npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupported lockfileVersion: 1, please regenerate with npm 7+` エラー。依存エントリ (`$.packages["node_modules/..."]`) は仮に値が同じでも書き換わらない。
 
@@ -322,7 +332,7 @@ v0.5.0 で 3 つの破壊変更が入っている。詳細とサンプルは [UP
 
 ## 開発状況
 
-v0.7.0 で `vcs:` 入力モードが入った (DR-0008)。`vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を自動判定で取得できるので、CI のドリフトチェックや「直近リリースより上げてるか」の比較が 1 行で書ける。直前: v0.6.0 で `--json` 出力 (DR-0007)、v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合 (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
+v0.9.0 で `regex` フォーマット (DR-0012) を導入。1 行 regex で書き換える汎用 format により 8 種類のファイル (`*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt`) を一括追加した。v0.8.0 で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (DR-0011)、v0.7.0 で `vcs:` 入力モード (DR-0008) — `vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を自動判定で取得。直前: v0.6.0 で `--json` 出力 (DR-0007)、v0.5.0 で pre-release / build metadata 対応 + `compare` サブコマンド + `pre` アクション + FILE/VER 統合 (DR-0006)。今後も「必要が出たら handler を 1 つ追加」(DR-0001) 方針で拡張する。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
 
 ## ライセンス
 

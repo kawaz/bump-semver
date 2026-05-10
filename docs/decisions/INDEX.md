@@ -15,6 +15,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0009](./DR-0009-lockfile-support-scope.md) — lock files の対応対象判断 (npm 以外は対象外、bun/pnpm/yarn/Cargo)
 - [DR-0010](./DR-0010-fallback-match-hint.md) — confidence 1 fallback マッチ時の hint 出力 + unsupported file エラーの誘導文言
 - [DR-0011](./DR-0011-yaml-yml-toml-fallback.md) — `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback 追加
+- [DR-0012](./DR-0012-regex-format.md) — regex format 抽象 + xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt 対応
 
 ## Archived
 

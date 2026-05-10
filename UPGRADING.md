@@ -1,5 +1,76 @@
 # Upgrading guide
 
+## v0.8.x → v0.9.0
+
+Pure additive minor release; no breaking changes. See
+[`docs/decisions/DR-0012-regex-format.md`](./docs/decisions/DR-0012-regex-format.md).
+
+### New: `regex` format covering eight file types (DR-0012)
+
+v0.9.0 introduces a generic `regex` format that rewrites a single
+line of source code, and uses it to add eight new file types:
+
+| basename / glob | Confidence | Example version line |
+|---|---|---|
+| `v.mod` (V) | 2 | `version: '1.2.3'` |
+| `build.zig.zon` (Zig) | 2 | `.version = "1.2.3"` |
+| `mix.exs` (Elixir) | 2 | `version: "1.2.3"` |
+| `build.sbt` (Scala) | 2 | `version := "1.2.3"` |
+| `*.xcconfig` (Xcode) | 1 (fallback) | `MARKETING_VERSION = 1.2.3` |
+| `*.podspec` (CocoaPods) | 1 (fallback) | `s.version = '1.2.3'` |
+| `*.nimble` (Nim) | 1 (fallback) | `version = "1.2.3"` |
+| `*.gemspec` (Ruby) | 1 (fallback) | `s.version = "1.2.3"` |
+
+```bash
+$ cat Release.xcconfig
+MARKETING_VERSION = 1.2.3
+
+$ bump-semver patch Release.xcconfig --write
+hint: Release.xcconfig matched as *.xcconfig fallback. Open issue if explicit support is needed.
+1.2.4
+
+$ cat MyPod.podspec
+Pod::Spec.new do |s|
+  s.name    = 'MyPod'
+  s.version = '1.2.3'
+end
+
+$ bump-semver get MyPod.podspec
+hint: MyPod.podspec matched as *.podspec fallback. Open issue if explicit support is needed.
+1.2.3
+```
+
+### Single-match semantics
+
+The `regex` format reads / rewrites only the **first** matching line
+in the file. Files that need synchronised updates of multiple
+version-shaped lines (Xcode `*.pbxproj` build settings, `Info.plist`
+with `CFBundleShortVersionString` + `CFBundleVersion`) are
+intentionally **out of scope** for v0.9.0. Open an issue if you need
+this — a dedicated format (e.g. `format_pbxproj.go`) is the right
+answer, not regex extension.
+
+### Quote / comment preservation
+
+The rewriter substitutes only the captured byte range, so quote style
+(single, double, or unquoted) and trailing comments on the version
+line are preserved verbatim. The same DR-0010 fallback hint fires for
+the four glob-based confidence-1 rules (`*.xcconfig` / `*.podspec` /
+`*.nimble` / `*.gemspec`); the four basename-based confidence-2 rules
+(`v.mod` / `build.zig.zon` / `mix.exs` / `build.sbt`) match without a
+hint because they're explicit.
+
+### No new dependencies
+
+`regex` is implemented with the standard library `regexp` package —
+no module additions, no binary size increase.
+
+### Suppression
+
+The fallback hint shares the existing `hint:` prefix — `--no-hint` /
+`-q` / `-qq` suppress it exactly as they already do for `*.json` /
+`*.yaml` / `*.yml` / `*.toml`.
+
 ## v0.7.x → v0.8.0
 
 Pure additive minor release; no breaking changes. See

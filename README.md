@@ -155,14 +155,24 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **3** | `VERSION` | plain text | (file content) | — |
 | **2** (basename) | any `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | any `plugin.json` | JSON | `$.version` (try) | `$.name` |
+| **2** | `v.mod` (V) | regex | `version: '...'` | `name: '...'` |
+| **2** | `build.zig.zon` (Zig) | regex | `.version = "..."` | — |
+| **2** | `mix.exs` (Elixir) | regex | `version: "..."` | — |
+| **2** | `build.sbt` (Scala) | regex | `version := "..."` | — |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 | **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.toml` | TOML | `version` (top-level) | `name` |
+| **1** (fallback) | `*.xcconfig` (Xcode) | regex | `MARKETING_VERSION = ...` | — |
+| **1** (fallback) | `*.podspec` (CocoaPods) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.nimble` (Nim) | regex | `version = "..."` | — |
+| **1** (fallback) | `*.gemspec` (Ruby) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
 
 Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `unsupported file: <path>`. Adding a new format = adding one row to the rule table plus, if needed, one new format-specific function (no `--pattern` regex flag, by design).
 
 YAML / TOML fallbacks (DR-0011) only look at top-level keys: a `version` nested inside a section / mapping is intentionally not picked up. For `Cargo.toml` the explicit confidence-3 rule still wins (so the existing `[package].version` behaviour is unchanged). Multi-document YAML (`---` separators) reads only the first document. The same DR-0010 fallback hint fires for these new rules — with `--no-hint` to suppress.
+
+The DR-0012 `regex` format covers eight language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim. Files with multiple version-like lines that need synchronised updates (Xcode `*.pbxproj`, `Info.plist`, etc.) are intentionally out of scope.
 
 For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with `unsupported lockfileVersion: 1, please regenerate with npm 7+`. Dependency entries (`$.packages["node_modules/..."]`) are never rewritten even if their version happens to equal the project's own.
 
@@ -322,7 +332,7 @@ v0.5.0 ships three breaking changes. See [UPGRADING.md](./UPGRADING.md) for full
 
 ## Status
 
-v0.7.0 adds the `vcs:` input mode (DR-0008) — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically, so CI drift checks and "did we bump past the last release?" comparisons fit on one line. Earlier highlights: v0.6.0 added `--json` output (DR-0007), v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+v0.9.0 introduces the `regex` format (DR-0012) — a generic line-anchored rewriter that adds eight new file types in one shot (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode (DR-0008) — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically. Earlier highlights: v0.6.0 added `--json` output (DR-0007), v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

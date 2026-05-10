@@ -41,13 +41,13 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 | basename / パス | format | 抽出パス |
 |---|---|---|
 | `pyproject.toml` | TOML | `.project.version` または `.tool.poetry.version` (top-level fallback では section-scoped を拾えないので path-pinned 化が必要) |
+| `mojoproject.toml` | TOML | `[workspace].version` (TOML section-scoped、現状未対応。`pyproject.toml` と一緒に section-scoped 対応で吸収) |
 | `Chart.yaml` | YAML | `.version` (現状は `*.yaml` fallback で動く。Helm chart 専用 path-pinned 化は実需次第) |
-| `*.gemspec` | Ruby (regex) | `s.version = '...'` 行 |
 | `setup.py` / `setup.cfg` | Python | `version = ...` (cfg) / `version='...'` (py) |
 | `composer.json` | JSON | 既に `*.json` fallback で対応済 |
-| `mix.exs` | Elixir (regex) | `version: "..."` |
-| `build.sbt` | Scala (regex) | `version :=` |
 | `pom.xml` | **xml (新規、encoding/xml)** | `<version>` |
+| `*.pbxproj` (Xcode) | **複数同期更新 format (新規)** | 同一ファイル内の複数 `MARKETING_VERSION` を一括更新 |
+| `Info.plist` (iOS/macOS) | **xml/plist (新規)** | `CFBundleShortVersionString` + `CFBundleVersion` の二重管理 |
 
 これらは **すべて実需が出たら単独の DR で判断**。網羅は捨てる方針 (DR-0001)。
 
@@ -64,12 +64,14 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 ### 未対応フォーマット候補
 
-現状の `format=json/toml/yaml/plain` 4 つに加えて、実需順の追加候補:
+現状の `format=json/toml/yaml/plain/regex` 5 つに加えて、実需順の追加候補:
 
 - **jsonc** (JSON with comments / trailing commas): Bun bun.lock / VS Code 系 settings.json 等
 - **xml** (標準 `encoding/xml`): Maven `pom.xml` / Android Gradle 系
+- **plist** (Apple バイナリ/XML plist): `Info.plist` の `CFBundleShortVersionString` 等
+- **複数同期更新 format**: Xcode `*.pbxproj` の build settings 群を同期更新 (DR-0012 の regex format は 1 マッチ限定なのでスコープ外)
 
-v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加済。section-scoped (`pyproject.toml` の `[project].version` 等) や nested YAML (`spec.version` 等) は今後の path-pinned ルールとして実需に応じて追加する。
+v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。section-scoped (`pyproject.toml` の `[project].version` / `mojoproject.toml` の `[workspace].version` 等) や nested YAML (`spec.version` 等) は今後の path-pinned ルール / TOML section-scoped Replace として実需に応じて追加する。
 
 ## 機能候補
 

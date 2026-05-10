@@ -26,11 +26,11 @@ run *ARGS: build
 # CI で呼ぶ単一エントリ (lint→test→build を依存重複排除で1回ずつ)
 ci: lint test build
 
-# ワーキングコピーがクリーン (empty change) であることを確認
+# ワーキングコピーがクリーンであることを確認 (jj / git 両対応)
 # `lint` を依存に取ることで auto-fix で生じた変更を確実に検出する
-# (just は依存重複を排除するので lint は1回だけ走る)
 ensure-clean: lint
-    test "$(jj log -r @ --no-graph -T 'empty')" = "true"
+    [ ! -d .jj ] || test "$(jj log -r @ --no-graph -T 'empty')" = "true"
+    [   -d .jj ] || [ -z "$(git status --porcelain)" ]
 
 # 翻訳ペア (*-ja.md / *.md) の整合性チェック
 # テンプレ: ~/.claude/rules/docs-structure.md の「check-translations の実装」セクション
@@ -62,52 +62,18 @@ check-translations: ensure-clean
             || die "ERROR: $ja was updated after $en. Update the English translation before pushing."
     done < <(find . -name '*-ja.md' -not -path './.git/*' -not -path './.jj/*')
 
-# VERSION ファイルが origin/main から退化していないことを確認 (push 前 sanity check)
-# bump-semver 自身を使った dogfooding (./bin/bump-semver はビルド済を参照)
-# - VERSION > origin/main: OK (bump 含む新規変更)
-# - VERSION == origin/main: OK (VERSION 以外の変更で push する時)
-# - VERSION < origin/main: ERROR (退化、想定外)
-# git fetch は走らせない (利用者責任、現時点の手元の origin/main を見る)
+# VERSION が origin/main より退化していないこと (push 前 sanity check、dogfooding)
+# compare lt: exit 0 = 退化(NG)、exit 1 = OK (>=)、exit 2 = origin/main 不在 (許容)
+# fetch は走らせない (利用者責任)
 check-version-not-regressed: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    set +e
-    ./bin/bump-semver compare lt VERSION vcs:origin/main --no-hint
-    cmp_exit=$?
-    set -e
-    if [ "$cmp_exit" = "0" ]; then
-        echo "ERROR: VERSION is regressed below origin/main; aborting push" >&2
-        ./bin/bump-semver get VERSION vcs:origin/main || true
-        exit 1
-    fi
-    # exit 1 (>=) または 2 (no origin/main yet) は許容
+    ! ./bin/bump-semver compare lt VERSION vcs:origin/main --no-hint
 
 # push (依存階層で lint/ensure-clean は重複排除されて1回ずつ実行)
 push: ensure-clean test check-translations check-version-not-regressed
     jj bookmark set main -r @-
     jj git push --bookmark main
 
-# VERSION を bump して Release commit を push (CI が tag + GitHub Release を作成)
-# bump-semver 自身を使った dogfooding (./bin/bump-semver はビルド済を参照)
+# VERSION を bump して Release commit を作成 (bump-semver 自身を使う dogfooding)
+# push はレシピに含めない: 確認後に `just push` を別途実行する
 bump-version bump="patch": ensure-clean test build
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # VERSION ファイルの変更が main に push されると release.yml が検出して
-    # tag (v$VERSION) と GitHub Releases (--generate-notes) を自動作成する。
-
-    current=$(cat VERSION | tr -d '[:space:]')
-    new_version=$(./bin/bump-semver {{bump}} VERSION --write --no-hint)
-    echo "Version: ${current} -> ${new_version}"
-
-    # @ は空 change (ensure-clean で確認済)。VERSION を書き換えて Release commit に
-    jj describe -m "Release v${new_version}"
-    jj new
-
-    # push (release.yml がここから走る)
-    just push
-
-    # release.yml を watch
-    sleep 3
-    run_id=$(gh run list --repo kawaz/bump-semver --workflow=release.yml --limit 1 --json databaseId -q '.[0].databaseId')
-    gh run watch "$run_id" --repo kawaz/bump-semver
+    new_version=$(./bin/bump-semver {{bump}} VERSION --write --no-hint) && jj describe -m "Release v${new_version}" && jj new

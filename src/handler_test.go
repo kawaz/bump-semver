@@ -173,11 +173,86 @@ func TestDetectHandler_NewFallbackExtensions(t *testing.T) {
 			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
 		}
 	}
-	// Still unsupported: `xml`, `gemspec`, etc.
-	bad := []string{"pom.xml", "thing.gemspec"}
+	// Still unsupported: pom.xml etc.
+	bad := []string{"pom.xml", "Info.plist"}
 	for _, p := range bad {
 		if _, err := detectHandler(p); err == nil {
 			t.Errorf("detectHandler(%q) expected error, got nil", p)
+		}
+	}
+}
+
+// TestDetectHandler_RegexFormatPaths covers the DR-0012 additions:
+// regex format rules attached to either a fixed basename
+// (`v.mod` / `build.zig.zon` / `mix.exs` / `build.sbt`, confidence 2)
+// or a glob (`*.xcconfig` / `*.podspec` / `*.nimble` / `*.gemspec`,
+// confidence 1).
+func TestDetectHandler_RegexFormatPaths(t *testing.T) {
+	t.Parallel()
+	good := []string{
+		// basename rules (confidence 2)
+		"v.mod",
+		"sub/v.mod",
+		"build.zig.zon",
+		"app/build.zig.zon",
+		"mix.exs",
+		"deps/mix.exs",
+		"build.sbt",
+		"sub/build.sbt",
+		// glob rules (confidence 1)
+		"Release.xcconfig",
+		"configs/Debug.xcconfig",
+		"MyPod.podspec",
+		"Pods/MyPod.podspec",
+		"foo.nimble",
+		"sub/foo.nimble",
+		"mygem.gemspec",
+		"sub/mygem.gemspec",
+	}
+	for _, p := range good {
+		if _, err := detectHandler(p); err != nil {
+			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
+		}
+	}
+}
+
+// TestResolveRule_RegexFormatConfidence pins the confidence band of
+// every DR-0012 rule so the dispatcher's hint emission picks the
+// right glob name.
+func TestResolveRule_RegexFormatConfidence(t *testing.T) {
+	t.Parallel()
+	type tc struct {
+		path    string
+		content string
+		want    string // CandidateRule.Name
+		conf    int
+	}
+	cases := []tc{
+		{"v.mod", "Module {\n\tversion: '1.2.3'\n}\n", "v.mod", 2},
+		{"build.zig.zon", ".{\n    .version = \"1.2.3\",\n}\n", "build.zig.zon", 2},
+		{"mix.exs", "    version: \"1.2.3\",\n", "mix.exs", 2},
+		{"build.sbt", "version := \"1.2.3\"\n", "build.sbt", 2},
+		{"Release.xcconfig", "MARKETING_VERSION = 1.2.3\n", "*.xcconfig (fallback)", 1},
+		{"MyPod.podspec", "s.version = '1.2.3'\n", "*.podspec (fallback)", 1},
+		{"foo.nimble", "version = \"1.2.3\"\n", "*.nimble (fallback)", 1},
+		{"mygem.gemspec", "s.version = \"1.2.3\"\n", "*.gemspec (fallback)", 1},
+	}
+	for _, c := range cases {
+		rule, insp, err := resolveRule(c.path, []byte(c.content))
+		if err != nil {
+			t.Errorf("resolveRule(%q) error: %v", c.path, err)
+			continue
+		}
+		if rule.Name != c.want {
+			t.Errorf("resolveRule(%q) = %q, want %q", c.path, rule.Name, c.want)
+		}
+		if rule.Confidence != c.conf {
+			t.Errorf("resolveRule(%q).Confidence = %d, want %d", c.path, rule.Confidence, c.conf)
+		}
+		if c.conf == 1 {
+			if insp.MatchedConfidence != 1 || insp.MatchedGlob == "" {
+				t.Errorf("resolveRule(%q) confidence-1 metadata missing: %+v", c.path, insp)
+			}
 		}
 	}
 }

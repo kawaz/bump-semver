@@ -64,7 +64,7 @@ Flags:
   --no-build-metadata    Remove build metadata identifiers
   --write                Write the new version back to each FILE input (bump only)
   --vcs jj|git           Force VCS detection (overrides BUMP_SEMVER_VCS env)
-  --no-hint              Suppress the "files not modified" hint (bump only)
+  --no-hint              Suppress hints (fallback / unsupported / "files not modified")
   -q, --quiet            Suppress stdout (and the hint)
   -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
   --json                 Output structured JSON (get / bump only, not for compare)
@@ -637,11 +637,53 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 // carrying the same message so callers (especially tests) can still
 // inspect err.Error() for substrings. main does NOT re-print the
 // message because run() has already done so.
+//
+// DR-0010: when err is an *unsupportedFileError, we follow the
+// "bump-semver:" line with a one-line `hint:` pointing the user at
+// the issue tracker. The hint is suppressed by `--no-hint` / `-q` /
+// `-qq` to match every other DR-0010 hint (and every other v0.5.0
+// stderr-side hint).
 func emitErr(stderr io.Writer, args cliArgs, err error) error {
 	if !args.quietAll {
 		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+		var ufe *unsupportedFileError
+		if errors.As(err, &ufe) && !args.quiet && !args.noHint {
+			fmt.Fprintln(stderr, "hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.")
+		}
 	}
 	return &exitErr{code: 2, msg: err.Error()}
+}
+
+// emitFallbackHints prints one DR-0010 fallback hint per FILE-origin
+// resolved input that won via the lowest-confidence (glob) rule. The
+// hints are suppressed by `--no-hint` / `-q` / `-qq` and printed
+// before any other stderr hint so they appear in event order
+// (rule-resolution → bump action).
+//
+// `compare` also goes through this helper because a confidence-1
+// match is equally informative regardless of the action — the user
+// passed an unrecognised filename and ended up on the `*.json`
+// fallback rail.
+func emitFallbackHints(stderr io.Writer, args cliArgs, resolved []resolvedInput) {
+	if args.quiet || args.quietAll || args.noHint {
+		return
+	}
+	for _, ri := range resolved {
+		if ri.handler == nil || ri.file == "" {
+			continue
+		}
+		if ri.insp.MatchedConfidence != 1 {
+			continue
+		}
+		glob := ri.insp.MatchedGlob
+		if glob == "" {
+			// Defensive: if the rule had no Glob recorded for some
+			// reason, fall back to a generic phrasing rather than
+			// printing "matched as  fallback".
+			glob = "fallback"
+		}
+		fmt.Fprintf(stderr, "hint: %s matched as %s fallback. Open issue if explicit support is needed.\n", ri.file, glob)
+	}
 }
 
 func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -664,6 +706,12 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}
+
+	// DR-0010: warn the user about confidence-1 fallback matches before
+	// doing the actual bump, so the hint appears in event order
+	// (rule-resolution → bump). Suppression flags are honored inside the
+	// helper.
+	emitFallbackHints(stderr, args, resolved)
 
 	// Validate --write has at least one FILE-origin input early, before
 	// any side effects (printing the bumped version).

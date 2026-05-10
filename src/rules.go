@@ -155,6 +155,10 @@ func rulesByConfidenceDesc() []CandidateRule {
 // extraction with each, and returns the first hit (highest confidence).
 // If every matching rule fails extraction, the last error is wrapped and
 // returned to the caller.
+//
+// On a successful match, the chosen rule's Confidence and (for confidence
+// 1) Glob are stamped on the returned Inspection so the caller can render
+// a DR-0010 fallback hint without re-resolving the rule.
 func resolveRule(path string, content []byte) (CandidateRule, Inspection, error) {
 	var lastErr error
 	var lastRule CandidateRule
@@ -166,13 +170,17 @@ func resolveRule(path string, content []byte) (CandidateRule, Inspection, error)
 		matched = true
 		insp, err := tryRule(rule, content)
 		if err == nil {
+			insp.MatchedConfidence = rule.Confidence
+			if rule.Confidence == 1 {
+				insp.MatchedGlob = rule.Glob
+			}
 			return rule, insp, nil
 		}
 		lastErr = err
 		lastRule = rule
 	}
 	if !matched {
-		return CandidateRule{}, Inspection{}, fmt.Errorf("unsupported file: %s", path)
+		return CandidateRule{}, Inspection{}, &unsupportedFileError{path: path}
 	}
 	return CandidateRule{}, Inspection{}, fmt.Errorf("%s: %s: %w", path, lastRule.Name, lastErr)
 }

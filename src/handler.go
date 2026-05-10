@@ -20,9 +20,25 @@ type Field struct {
 //   - Names: 0 or more package-name-like strings detected in the file.
 //     Optional. Used solely for cross-file consistency validation; never
 //     written back.
+//   - MatchedConfidence / MatchedGlob: which DR-0005 rule won. Set by
+//     resolveRule on a successful match (zero in format_*Inspect helpers
+//     which know nothing about the rule selection). Used by main.go to
+//     surface a confidence-1 fallback hint (DR-0010) and not for any
+//     downstream processing.
 type Inspection struct {
 	Versions []Field
 	Names    []Field
+
+	// MatchedConfidence is the Confidence of the rule that the
+	// dispatcher (DR-0005) finally selected: 3 = path-pinned,
+	// 2 = basename-only, 1 = glob fallback. Zero when not applicable
+	// (e.g. when an extraction error is returned without a rule
+	// being chosen).
+	MatchedConfidence int
+	// MatchedGlob is the Glob pattern of the matched rule when the
+	// rule won by glob (Confidence 1). Empty otherwise. Used to render
+	// the DR-0010 fallback hint (`matched as *.json fallback`).
+	MatchedGlob string
 }
 
 // Handler reads / writes the version string of a single file format.
@@ -77,7 +93,19 @@ func (h *ruleHandler) Replace(content []byte, current, newVersion string) ([]byt
 // confidence levels.
 func detectHandler(path string) (Handler, error) {
 	if !pathHasAnyRule(path) {
-		return nil, fmt.Errorf("unsupported file: %s", path)
+		return nil, &unsupportedFileError{path: path}
 	}
 	return &ruleHandler{path: path}, nil
+}
+
+// unsupportedFileError signals "no DR-0005 rule matched this path" —
+// distinct from extraction failures, which surface as plain `error`s
+// returned from format-specific Inspect helpers. main.go uses
+// errors.As to detect this case and tack on a one-line hint pointing
+// at the issue tracker (DR-0010), suppressed by `--no-hint` /
+// `-q` / `-qq` exactly like every other DR-0010 hint.
+type unsupportedFileError struct{ path string }
+
+func (e *unsupportedFileError) Error() string {
+	return fmt.Sprintf("unsupported file: %s", e.path)
 }

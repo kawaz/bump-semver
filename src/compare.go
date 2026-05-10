@@ -18,12 +18,14 @@ import (
 //   - 1  predicate false
 //   - 2  any error (parse failure, mismatch, missing input, ...)
 //
-// Quiet flags (Phase 5):
-//   - -q / --quiet:   no-op for compare (it has no stdout to suppress)
+// Quiet flags (Phase 5 + DR-0010):
+//   - -q / --quiet:   suppresses the DR-0010 fallback / unsupported-file
+//     hints (compare has no other stdout to suppress).
 //   - -qq / --quiet-all: also suppresses the stderr "bump-semver: ..."
 //     diagnostic emitted on exit-2 errors. Predicate-false exit-1 has
 //     no diagnostic to begin with, so quiet flags do not affect it.
-//   - --no-hint:      no-op (compare never emits a hint)
+//   - --no-hint:      suppresses the DR-0010 fallback / unsupported-file
+//     hints. compare has no "files not modified" hint to suppress.
 func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	_ = stdout // compare prints nothing on success; consumers read the exit code.
 	if len(args.inputs) != 2 {
@@ -37,6 +39,11 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(resolved) != 2 {
 		return emitErr(stderr, args, fmt.Errorf("compare: internal: expected 2 resolved inputs, got %d", len(resolved)))
 	}
+
+	// DR-0010: surface confidence-1 fallback matches for compare too —
+	// the hint reflects "you used an unknown filename", not a property
+	// of the bump action. Suppression flags handled inside the helper.
+	emitFallbackHints(stderr, args, resolved)
 
 	left, err := collapseToOneVersion(resolved[0])
 	if err != nil {

@@ -1,8 +1,9 @@
 # DR-0008: `vcs:` 入力モード
 
-- Status: Active
+- Status: Active (partially superseded — VCS 自動判定 section)
 - Date: 2026-05-10
 - Extends: DR-0006 (compare サブコマンド + FILE|VER 統合), DR-0007 (--json 出力)
+- Superseded-by: DR-0016 (env var portion only — `BUMP_SEMVER_VCS` 環境変数廃止)
 
 ## Context
 

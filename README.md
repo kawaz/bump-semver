@@ -21,13 +21,20 @@ Pre-built binaries for Linux / macOS / Windows (amd64, arm64) are also published
 ## Usage
 
 ```
-bump-semver <ACTION> <INPUT...> [flags]
-bump-semver compare <OP> <INPUT> <INPUT>
+bump-semver get <INPUT...>
+bump-semver <major|minor|patch|pre> <INPUT...> [--write]
+bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
 bump-semver --version [--json]
-bump-semver --help
+bump-semver --help | --help-full
 ```
 
 `<INPUT>` is either a **FILE path**, a **raw VER string**, **`-` (read VER from stdin, single line)**, or **`vcs:REV[:FILE]` / `vcs:<func>(...)`** (read from the VCS, see [vcs: input](#vcs-input)). Multiple inputs of mixed kinds may be given.
+
+Help comes in three tiers (v0.13.0+):
+
+- `bump-semver --help` / `-h`: short overview (actions + main navigation) fitting in one screen
+- `bump-semver --help-full`: complete reference (supported file formats / full Examples / exit codes / etc.)
+- `bump-semver <action> --help`: action-specific reference. `bump-semver patch --help` shows the bump help (shared by major/minor/patch), `bump-semver pre --help` documents the three pre modes, `bump-semver compare --help` lists the full 20-operator grid including precision suffixes.
 
 ### Actions
 
@@ -82,7 +89,9 @@ bump-semver compare lt-minor Cargo.toml vcs:origin/main       # only minor-or-be
 | `-qq`, `--quiet-all`   | Suppress stdout, hints, and error output (use with caution when debugging) |
 | `--json`               | Output structured JSON for `get` / `major` / `minor` / `patch` / `pre` (rejected with `compare`) |
 | `--version`, `-V`      | Print the binary version |
-| `--help`, `-h`         | Show help |
+| `--help`, `-h`         | Short help (one screen) |
+| `--help-full`          | Full reference (Supported file formats / all Examples / Exit codes / etc.) |
+| `<action> --help`      | Action-specific reference (`bump-semver patch --help` / `compare --help` / etc.) |
 
 Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the build-metadata pair; `--write` cannot be combined with `get` or `compare`.
 
@@ -371,7 +380,7 @@ v0.5.0 ships three breaking changes. See [UPGRADING.md](./UPGRADING.md) for full
 
 ## Status
 
-v0.12.0 adds two Xcode-specific path-pinned (confidence 3) rules — `project.pbxproj` (multi-match `MARKETING_VERSION` synced across every build configuration, with column-aligned `version mismatch:` diagnostics on disagreement) and `Info.plist` (XML plist with byte-range value rewriting that preserves DOCTYPE / indentation / sibling keys) — together with two new dedicated formats (`pbxproj`, `xml`) (DR-0015). v0.11.0 generalises the TOML rewriter into a reusable section-scoped helper and adds `pyproject.toml` (PEP 621 with Poetry-legacy fallback) and `mojoproject.toml` (`[workspace]`) as path-pinned confidence-3 rules (DR-0014). v0.10.0 added the suffix-stripped fallback for backup-style filenames (DR-0013). v0.9.0 introduced the `regex` format (DR-0012) — a generic line-anchored rewriter that adds eight new file types in one shot (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode (DR-0008) — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically. Earlier highlights: v0.6.0 added `--json` output (DR-0007), v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+v0.14.0 adds JVM / .NET / Maven / Haskell / RPM support and a new `xml-element` format (DR-0018) — `pom.xml`, `*.csproj` / `*.fsproj` / `*.vbproj`, `build.gradle` / `build.gradle.kts`, `*.cabal`, `*.spec` all become recognised. `pom.xml` uses slash-rooted XML path lookup (`/project/version`) that correctly skips `<parent>/<version>`. v0.13.0 brings three changes: the help system is restructured into three tiers (`--help` short / `--help-full` complete reference / `bump-semver <action> --help` action-specific), the `BUMP_SEMVER_VCS` env var is removed in favour of `--vcs jj|git|auto` (DR-0016, BREAKING — see UPGRADING.md), and `compare` gains 15 precision-suffix operators (`eq-major` / `lt-minor` / `eq-patch` etc., DR-0017) for a 5×4 = 20 total. v0.12.0 added two Xcode-specific path-pinned rules — `project.pbxproj` (multi-match `MARKETING_VERSION` synced across build configurations) and `Info.plist` (XML plist with byte-range value rewriting) — together with `pbxproj` and `xml` formats (DR-0015). v0.11.0 generalised the TOML rewriter into a reusable section-scoped helper and added `pyproject.toml` (PEP 621 with Poetry-legacy fallback) and `mojoproject.toml` (DR-0014). v0.10.0 added the suffix-stripped fallback for backup-style filenames (DR-0013). v0.9.0 introduced the `regex` format with eight new file types (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`) (DR-0012). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically (DR-0008). Earlier: v0.6.0 added `--json` output (DR-0007); v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

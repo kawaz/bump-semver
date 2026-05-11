@@ -116,6 +116,8 @@ Confidence levels:
 
 This lets `marketplace.json` outside `.claude-plugin/` still get tried as a Claude-plugin marketplace first (confidence 2), and gracefully fall back to a plain `.version` JSON (confidence 1) if `.metadata.version` isn't present. Adding a new file format means **adding one row to the table** (and, if it's a brand new file format, one new format-specific Inspect/Replace pair). No `--pattern` flag is exposed at the CLI level.
 
+The currently supported formats are `json`, `toml`, `yaml`, `plain`, `regex` (DR-0012, line-anchored rewriter for single-line manifests like `*.cabal` / `*.spec` / `build.gradle` / `*.xcconfig`), `pbxproj` (DR-0015, Xcode multi-match), `xml` (DR-0015, Apple plist `<key>/<string>` pairs), and `xml-element` (DR-0018, slash-rooted XML path lookup used by `pom.xml` / `*.csproj`). The `xml` and `xml-element` formats are intentionally separate: plist's flat key-value shape and Maven/.NET's nested-element shape have different evaluation rules, so each gets its own dispatcher case (`rules.go::tryRule` / `formatReplace`).
+
 When stdin is a pipe and exactly one FILE INPUT is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin (legacy shortcut). With multiple INPUTs the stdin pipe is ignored (explicit INPUTs take precedence, cat / sed convention). Passing `-` as an INPUT explicitly invokes the new "read VER from stdin" path.
 
 ### Handler interface and consistency checks (DR-0004)

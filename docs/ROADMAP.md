@@ -6,6 +6,18 @@
 
 過去ロードマップから移送。実装履歴の参考用に残す。
 
+### JVM (Gradle) / .NET (csproj 系) / Maven (pom.xml) / Haskell (cabal) / RPM (spec) 対応 + 新 format `xml-element` (v0.14.0 / DR-0018)
+
+`pom.xml` (Maven) と `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) のために、`<key>/<string>` ペア専用の既存 `xml` format とは別系統の slash-rooted XML path format `xml-element` を新設。`/project/version` のような element path で値を取得 / 書き換え (XML 名前空間は local name で比較、byte range splice で DOCTYPE / 属性順序 / インデント完全保持)。同時に DR-0012 の regex format を拡張して `build.gradle` (Groovy DSL の 3 形 `version = '...'` / `version "..."` / `version = "..."` を 1 regex で吸収)、`build.gradle.kts` (Kotlin DSL)、`*.cabal` (Haskell、`cabal-version:` と line-anchored で区別)、`*.spec` (RPM、capital V で `Name:` / `Release:` と区別) を path-pinned / basename / glob 各レイヤで追加。詳細は [DR-0018](./decisions/DR-0018-jvm-dotnet-haskell-rpm-support.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+
+### `compare` の precision suffix (v0.13.0 / DR-0017)
+
+`compare` OP に `-major` / `-minor` / `-patch` suffix を許可し、比較対象の component を切り詰めて評価する 5 base × 4 precision = **20 OP** に拡張。`eq-major 1.2.3 1.9.7` → true (同じ major)、`eq-patch 1.2.3 1.2.3-rc.1` → true (pre-release 無視) など。CI で「メジャー upgrade を検知したい」「pre-release 違いは無視して同じ release version か知りたい」用途を 1 行で表現できる。`Version.CompareAt(other, precision)` で precision-aware 比較を提供し、既存 `Compare(other)` は `CompareAt(other, "")` への薄いラッパー化 (互換維持)。詳細は [DR-0017](./decisions/DR-0017-compare-precision-suffix.md)。
+
+### `BUMP_SEMVER_VCS` 環境変数廃止 + `--vcs auto` 明示値 + help 3 段化 (v0.13.0 / DR-0016 + help 改修)
+
+DR-0008 で導入した env による VCS 検出 override (`BUMP_SEMVER_VCS=jj|git`) を廃止し、`--vcs jj|git|auto` フラグ単独で制御する形に整理 (一度 env を export すると CLI から auto detect に戻せない罠の解消 + help セクション圧縮)。`auto` を default 明示値として許可。あわせて help を 3 段化: `--help` (短)、`--help-full` (完全リファレンス)、`bump-semver <action> --help` (action 固有: helpBump / helpPre / helpGet / helpCompare)。help 定数を `src/help.go` に分離。詳細は [DR-0016](./decisions/DR-0016-remove-bump-semver-vcs-env.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+
 ### Xcode `project.pbxproj` (multi-match 同期) + `Info.plist` (XML plist) (v0.12.0 / DR-0015)
 
 `format_pbxproj.go` を新設し、Xcode の `<project>.xcodeproj/project.pbxproj` の OpenStep plist 内に複数行ある `MARKETING_VERSION = ...;` を **同期更新** する形式を実装した。Inspect は全マッチを `line:N` Path 付きで返し、不一致時は main.go 既存の `formatMismatchError` で column-aligned に表示される。`format_xml.go` を新設し、`Info.plist` (XML plist) の `<key>CFBundleShortVersionString</key><string>...</string>` ペアを `encoding/xml` Decoder で位置特定 + byte range 書き換えで処理 (DOCTYPE / インデント / 兄弟 key 完全保持)。Xcode 11+ の `$(MARKETING_VERSION)` placeholder は ParseVersion 失敗 → `unsupported file:` で落ちるのが自然な振る舞い。`CFBundleVersion` (build number) はスコープ外。詳細は [DR-0015](./decisions/DR-0015-pbxproj-and-info-plist.md) と [UPGRADING.md](../UPGRADING.md) を参照。
@@ -51,7 +63,8 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 | `Chart.yaml` | YAML | `.version` (現状は `*.yaml` fallback で動く。Helm chart 専用 path-pinned 化は実需次第) |
 | `setup.py` / `setup.cfg` | Python | `version = ...` (cfg) / `version='...'` (py) |
 | `composer.json` | JSON | 既に `*.json` fallback で対応済 |
-| `pom.xml` | **xml (新規、encoding/xml)** | `<version>` (DR-0015 の `format_xml.go` を `format_xml_plist.go` にリネームし、`format_xml_pom.go` を別建てするのが筋) |
+| `pubspec.yaml` (Dart/Flutter) | YAML | `version: ...` (現状は `*.yaml` fallback で動く。path-pinned 化は実需次第) |
+| `*.csproj` の `<AssemblyVersion>` / `<FileVersion>` | xml-element 拡張 | 現状は `<Version>` のみ対応 (DR-0018)、複数 version field の同期は実需次第 |
 
 これらは **すべて実需が出たら単独の DR で判断**。網羅は捨てる方針 (DR-0001)。
 
@@ -68,13 +81,13 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 ### 未対応フォーマット候補
 
-現状の `format=json/toml/yaml/plain/regex/pbxproj/xml` 7 つに加えて、実需順の追加候補:
+現状の `format=json/toml/yaml/plain/regex/pbxproj/xml/xml-element` 8 つに加えて、実需順の追加候補:
 
 - **jsonc** (JSON with comments / trailing commas): Bun bun.lock / VS Code 系 settings.json 等
-- **xml 一般化** (Maven `pom.xml` / Android Gradle 系): DR-0015 の `format_xml.go` (現状 plist 専用) を `format_xml_plist.go` に rename + `format_xml_pom.go` を新規追加で扱うのが筋。汎用 XML format に統合しないのは XPath / namespace / mixed content / CDATA 等の複雑度が plist 専用より一桁上がるため
 - **`CFBundleVersion` (Xcode build number)**: SemVer ではなく整数 / build hash / commit count なので bump-semver スコープ外。CI で別途埋めるのが慣例
+- **mixed-content XML / CDATA**: `xml-element` は inner text を byte range で splice する単純な実装。複雑な XML (CDATA / mixed content) を扱うには別 format / オプション拡張が必要
 
-v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。v0.10.0 (DR-0013) で backup 系 suffix (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等) を 1 段だけ剥がして既存ルールに通す suffix-stripped fallback を追加。v0.11.0 (DR-0014) で TOML section-scoped Replace を一般化し `pyproject.toml` (`[project].version` + `[tool.poetry].version` try-fallback) / `mojoproject.toml` (`[workspace].version`) を path-pinned 化。v0.12.0 (DR-0015) で `project.pbxproj` (multi-match 同期 + 不一致 mismatch 出力) と `Info.plist` (XML plist の byte-range 書き換え) を path-pinned 化し `pbxproj` / `xml` の 2 format を新設。nested YAML (`spec.version` 等) や `pyproject.toml` の `dynamic = ["version"]` 等は実需に応じて追加する。
+v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (top-level `.version`) を追加。v0.9.0 (DR-0012) で `regex` format を導入し `*.xcconfig` / `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `*.gemspec` / `mix.exs` / `build.sbt` の 8 種類を一括追加。v0.10.0 (DR-0013) で backup 系 suffix (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等) を 1 段だけ剥がして既存ルールに通す suffix-stripped fallback を追加。v0.11.0 (DR-0014) で TOML section-scoped Replace を一般化し `pyproject.toml` (`[project].version` + `[tool.poetry].version` try-fallback) / `mojoproject.toml` (`[workspace].version`) を path-pinned 化。v0.12.0 (DR-0015) で `project.pbxproj` (multi-match 同期 + 不一致 mismatch 出力) と `Info.plist` (XML plist の byte-range 書き換え) を path-pinned 化し `pbxproj` / `xml` の 2 format を新設。v0.14.0 (DR-0018) で JVM (Gradle Groovy/Kotlin DSL) / .NET MSBuild (`*.csproj` / `*.fsproj` / `*.vbproj`) / Maven (`pom.xml`) / Haskell (`*.cabal`) / RPM (`*.spec`) を一括追加し、新 format `xml-element` (slash-rooted XML path lookup) を導入。nested YAML (`spec.version` 等) や `pyproject.toml` の `dynamic = ["version"]` 等は実需に応じて追加する。
 
 ## 機能候補
 

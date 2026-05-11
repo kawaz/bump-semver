@@ -198,7 +198,7 @@ var rules = []CandidateRule{
 		// etc.), the first child Version wins — typical layouts put the
 		// shared Version field in the first PropertyGroup at the top of
 		// the file.
-		Name:         "*.csproj / *.fsproj / *.vbproj (fallback)",
+		Name:         "*.csproj (fallback)",
 		Glob:         "*.csproj",
 		Confidence:   1,
 		Format:       "xml-element",

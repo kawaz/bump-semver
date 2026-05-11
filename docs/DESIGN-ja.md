@@ -51,7 +51,7 @@ INPUT  = FILE | VER | -
 
 #### `vcs:` 入力 (DR-0008)
 
-`vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ (`auto` / 未指定は次へ) → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。`BUMP_SEMVER_VCS` 環境変数がフラグと probe の間に挟まる優先順 2 位だった構造は DR-0016 で廃止されている。
+`vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ (`auto` / 未指定は次へ) → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。v0.13.0 までフラグと probe の間に環境変数による override が挟まる優先順 2 位があったが廃止されている (経緯は DR-0016)。
 
 `vcs:latest-tag()` は MVP 唯一の関数: 全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。
 
@@ -115,6 +115,8 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
 - **1 — glob fallback**: 上記以外の `*.json` を top-level `.version` で網羅
 
 これにより `.claude-plugin/` 外の `marketplace.json` も Claude plugin としてまず試行され (確度 2)、`.metadata.version` を持たなければ素直に top-level `.version` の汎用 JSON に降格する (確度 1)。新ファイル形式の追加 = **テーブル 1 行追加** (新 format なら新 format-specific Inspect/Replace ペアを 1 つ追加) で済む。CLI 表面には `--pattern` フラグは出さない。
+
+現在サポートしている format は `json`, `toml`, `yaml`, `plain`, `regex` (DR-0012、`*.cabal` / `*.spec` / `build.gradle` / `*.xcconfig` 等の 1 行 manifest 向け line-anchored 書き換え), `pbxproj` (DR-0015、Xcode の multi-match 同期), `xml` (DR-0015、Apple plist の `<key>/<string>` ペア専用), `xml-element` (DR-0018、slash-rooted XML path lookup。`pom.xml` / `*.csproj` 等で使用) の 8 つ。`xml` と `xml-element` は意図的に別 format として並列に dispatch (`rules.go::tryRule` / `formatReplace`) する: plist の flat key-value と Maven/.NET の入れ子 element では評価規則が違うため、責務を分離している。
 
 stdin がパイプ **かつ FILE INPUT が 1 個** のときは FILE を「名前ヒント」として上記判定にだけ使い、内容は stdin から読む (legacy ショートカット)。複数 INPUT のときは stdin pipe を無視してファイルから読む (cat / sed と同じく明示 INPUT が優先)。`-` を INPUT として明示すれば新方式の stdin VER 読込として処理される。
 

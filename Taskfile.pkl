@@ -25,8 +25,10 @@
 /// Taskfile.pkl 内には一切無い (lint で `just --fmt` を呼んだりしない)。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
 
+import
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.5#/docs/translations.pkl"
+  as docs
 import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.5#/vcs/auto.pkl" as vcs
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.5#/docs/translations.pkl" as docs
 
 // =============================================================================
 // Shared file sets
@@ -44,14 +46,16 @@ local goSources: Listing<String> = new {
 
 local lint: Task = new {
   name = "lint"
-  description = "gofmt -w / go vet"
+  description = "gofmt -w / go vet / pkl format -w"
   inputs {
     ...goSources
     "Taskfile.pkl"
   }
-  cmd = """
+  cmd =
+    """
     gofmt -w .
     go vet ./...
+    pkl format -w Taskfile.pkl
     """
 }
 
@@ -72,7 +76,8 @@ local build: Task = new {
   }
   outputs { "bin/bump-semver" }
   deps { lint }
-  cmd = #"""
+  cmd =
+    #"""
     go build -buildvcs=false -trimpath \
       -ldflags "-s -w -X main.version=v$(cat VERSION)" \
       -o bin/bump-semver ./src
@@ -117,7 +122,8 @@ local checkVersionBumped: Task = new {
   description = "VERSION bumped vs origin/main when src/ changed"
   cache = false
   deps { vcs.ensureClean }
-  cmd = """
+  cmd =
+    """
     if jj root >/dev/null 2>&1; then
       diff_out=$(jj diff -r 'main@origin..@' --summary -- src/) \\
         || { echo 'ERROR: jj diff failed (main@origin not tracked? run jj git fetch first)' >&2; exit 1; }
@@ -149,7 +155,8 @@ local bumpVersion: Task = new {
       description = "semver bump level"
     }
   }
-  cmd = #"""
+  cmd =
+    #"""
     new_version=$(bump-semver "$LEVEL" VERSION --write --no-hint) \
       && jj commit -m "Release v${new_version}"
     """#

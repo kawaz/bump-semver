@@ -20,8 +20,9 @@
 ///   - DAG 並列実行 (`pkf graph --format mermaid`)
 ///   - 副作用タスクは cache = false で常時実行
 ///
-/// justfile も並走中 (CI が依然 `just ci` を呼ぶため、pkfire 完全
-/// 移行は別フェーズ)。比較用に残してある。
+/// justfile は **比較用に残してあるだけ**。CI / ローカルの主運用は
+/// 本 Taskfile.pkl + pkf (kawaz/pkf-tasks 経由)。justfile への依存は
+/// Taskfile.pkl 内には一切無い (lint で `just --fmt` を呼んだりしない)。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
 
 import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.5#/vcs/auto.pkl" as vcs
@@ -43,16 +44,14 @@ local goSources: Listing<String> = new {
 
 local lint: Task = new {
   name = "lint"
-  description = "gofmt -w / go vet / just --fmt --check"
+  description = "gofmt -w / go vet"
   inputs {
     ...goSources
-    "justfile"
     "Taskfile.pkl"
   }
   cmd = """
     gofmt -w .
     go vet ./...
-    just --fmt --check --unstable
     """
 }
 

@@ -26,12 +26,15 @@
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
 
 import
-  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.6#/docs/translations.pkl"
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/docs/translations.pkl"
   as docs
 import
-  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.6#/lint/pkl.pkl"
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/lint/pkl.pkl"
   as lintPkl
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.6#/vcs/auto.pkl" as vcs
+import
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/semver/check-bumped.pkl"
+  as semverCheck
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/vcs/auto.pkl" as vcs
 
 // =============================================================================
 // Shared file sets
@@ -126,28 +129,29 @@ local run: Task = new {
 }
 
 // =============================================================================
-// Project-specific gate
+// Project-specific gates (semver:check-* は kawaz/pkf-tasks 0.0.7+ semver group)
 // =============================================================================
 
-local checkVersionBumped: Task = new {
-  name = "check-version-bumped"
-  description = "VERSION bumped vs origin/main when src/ changed"
-  cache = false
-  deps { vcs.ensureClean }
-  cmd =
-    """
-    if jj root >/dev/null 2>&1; then
-      diff_out=$(jj diff -r 'main@origin..@' --summary -- src/) \\
-        || { echo 'ERROR: jj diff failed (main@origin not tracked? run jj git fetch first)' >&2; exit 1; }
-      [ -z "$diff_out" ] && exit 0
-    elif git rev-parse --git-dir >/dev/null 2>&1; then
-      git diff --quiet origin/main -- src/ && exit 0
-    fi
-    bump-semver compare gt VERSION vcs:origin/main --no-hint && exit 0
-    echo 'ERROR: code changed but VERSION not bumped; run "pkf run bump-version --level=patch"' >&2
-    exit 1
-    """
-}
+// push 前ガード: main@origin と比較して src/ 変更があれば VERSION bump 必須。
+local checkVersionBumped: Task =
+  (semverCheck) {
+    compareRefCmd = "echo main@origin"
+    triggerPaths = List("src/")
+    versionFiles = List("VERSION")
+    taskName = "semver:check-version-bumped"
+  }.check
+
+// CI release 向け補助ガード: 最新 v* tag と比較して src/ 変更があれば
+// VERSION bump 必須。release tag を作る前に local で確認する用途。
+// release.yml 自体は tag push で trigger されるため CI に組み込んではいない
+// (tag 作成時点で既に bump 済が前提)。
+local checkAgainstLatestRelease: Task =
+  (semverCheck) {
+    compareRefCmd = "git tag -l 'v*' --sort=-v:refname | head -1"
+    triggerPaths = List("src/")
+    versionFiles = List("VERSION")
+    taskName = "semver:check-against-latest-release"
+  }.check
 
 // =============================================================================
 // Bump version (typed Param: level=patch|minor|major)
@@ -219,7 +223,9 @@ tasks {
   // gates (vcs.ensureClean / docs.checkTranslations は pkf-tasks 由来)
   ...vcs.allTasks
   ...docs.allTasks
+  // semver gates (pkf-tasks/semver/check-bumped を 2 instance 化)
   checkVersionBumped
+  checkAgainstLatestRelease
   // release flow
   bumpVersion
   push

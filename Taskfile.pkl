@@ -26,15 +26,18 @@
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
 
 import
-  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/docs/translations.pkl"
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.9#/docs/translations.pkl"
   as docs
 import
-  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/lint/pkl.pkl"
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.9#/lint/pkl.pkl"
   as lintPkl
 import
-  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/semver/check-bumped.pkl"
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.9#/semver/check-bumped.pkl"
   as semverCheck
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.7#/vcs/auto.pkl" as vcs
+import
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.9#/semver/compare.pkl"
+  as semverCompare
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.9#/vcs/auto.pkl" as vcs
 
 // =============================================================================
 // Shared file sets
@@ -145,12 +148,17 @@ local checkVersionBumped: Task =
 // VERSION bump 必須。release tag を作る前に local で確認する用途。
 // release.yml 自体は tag push で trigger されるため CI に組み込んではいない
 // (tag 作成時点で既に bump 済が前提)。
+//
+// needsFetchTags = true: tag 系の compareRef を使うので vcs:fetch-tags を
+// deps に挟む (pkf-tasks 0.0.9+、DR-0006)。これにより jj 環境で `git fetch
+// --tags origin` 後に `jj git import` が必要になる症状を吸収する。
 local checkAgainstLatestRelease: Task =
   (semverCheck) {
     compareRefCmd = "git tag -l 'v*' --sort=-v:refname | head -1"
     triggerPaths = List("src/")
     versionFiles = List("VERSION")
     taskName = "semver:check-against-latest-release"
+    needsFetchTags = true
   }.check
 
 // =============================================================================
@@ -226,6 +234,8 @@ tasks {
   // semver gates (pkf-tasks/semver/check-bumped を 2 instance 化)
   checkVersionBumped
   checkAgainstLatestRelease
+  // semver:compare 汎用 task (pkf-tasks 0.0.8 実験的、ad-hoc CLI 用)
+  semverCompare.compare
   // release flow
   bumpVersion
   push

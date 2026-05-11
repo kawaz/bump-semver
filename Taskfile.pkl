@@ -26,9 +26,12 @@
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
 
 import
-  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.5#/docs/translations.pkl"
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.6#/docs/translations.pkl"
   as docs
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.5#/vcs/auto.pkl" as vcs
+import
+  "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.6#/lint/pkl.pkl"
+  as lintPkl
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.6#/vcs/auto.pkl" as vcs
 
 // =============================================================================
 // Shared file sets
@@ -44,19 +47,28 @@ local goSources: Listing<String> = new {
 // Atomic tasks
 // =============================================================================
 
-local lint: Task = new {
-  name = "lint"
-  description = "gofmt -w / go vet / pkl format -w"
-  inputs {
-    ...goSources
-    "Taskfile.pkl"
-  }
+// lint:go — Go 系の lint。本リポ固有 (将来 kawaz/* に Go リポが増えれば
+// pkf-tasks/lint/go.pkl に外出しする候補)。
+local lintGo: Task = new {
+  name = "lint:go"
+  description = "gofmt -w / go vet"
+  inputs = goSources
   cmd =
     """
     gofmt -w .
     go vet ./...
-    pkl format -w Taskfile.pkl
     """
+}
+
+// lint — umbrella。言語横断の lint:pkl (pkf-tasks 由来) と本リポの
+// lint:go をまとめる。`pkf list` でソートしたとき lint / lint:go /
+// lint:pkl が隣接して読みやすい。
+local lint: Task = new {
+  name = "lint"
+  description = "all lints (lint:go + lint:pkl)"
+  cache = false
+  deps { lintGo; lintPkl.format }
+  cmd = "echo lint ok"
 }
 
 local test: Task = new {
@@ -194,12 +206,15 @@ local default: Task = new {
 
 tasks {
   default
-  // atomic
+  // lint umbrella + children (lint:go ローカル / lint:pkl は pkf-tasks 由来)
   lint
+  lintGo
+  ...lintPkl.allTasks
+  // atomic (test / build は lint umbrella を依存)
   test
   build
   run
-  // umbrella
+  // ci umbrella
   ci
   // gates (vcs.ensureClean / docs.checkTranslations は pkf-tasks 由来)
   ...vcs.allTasks

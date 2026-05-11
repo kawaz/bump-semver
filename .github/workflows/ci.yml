@@ -17,6 +17,8 @@ jobs:
           cache: true
       - uses: extractions/setup-just@v4
         with:
-          # ローカル開発と CI で `just --fmt --check --unstable` の判定を揃えるため version pin
-          just-version: 1.49.0
+          # ローカル開発と CI で `just --fmt --check --unstable` の判定を揃えるため version pin。
+          # 1.50.0 で bool フラグ系の set 構文が変わった (set unstable := true → set unstable)
+          # ので、ローカルの justfile を新形式で運用するなら CI も 1.50+ に揃える必要がある。
+          just-version: 1.51.0
       - run: just ci

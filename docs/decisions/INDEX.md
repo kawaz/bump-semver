@@ -21,6 +21,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0015](./DR-0015-pbxproj-and-info-plist.md) — Xcode `project.pbxproj` (multi-match 同期更新) と `Info.plist` (XML plist) 対応
 - [DR-0016](./DR-0016-remove-bump-semver-vcs-env.md) — `BUMP_SEMVER_VCS` 環境変数廃止 + `--vcs auto` 一本化 (DR-0008 の env 部分を supersede)
 - [DR-0017](./DR-0017-compare-precision-suffix.md) — `compare` の precision suffix 拡張 (`eq-major` / `lt-minor` 等、5 base × 4 precision = 20 OP)
+- [DR-0018](./DR-0018-jvm-dotnet-haskell-rpm-support.md) — JVM (Gradle Groovy / Kotlin DSL) + .NET (`*.csproj` / `*.fsproj` / `*.vbproj`) + Maven (`pom.xml`) + Haskell (`*.cabal`) + RPM (`*.spec`) 対応。新 format `xml-element` 導入
 
 ## Archived
 

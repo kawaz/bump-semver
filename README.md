@@ -159,6 +159,7 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **3** | `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
 | **3** | `project.pbxproj` (Xcode) | pbxproj | every `MARKETING_VERSION = ...;` (synced) | — |
 | **3** | `Info.plist` (Apple plist) | xml | `<key>CFBundleShortVersionString</key>` | — |
+| **3** | `pom.xml` (Maven) [DR-0018] | xml-element | `/project/version` | `/project/artifactId` |
 | **3** | `VERSION` | plain text | (file content) | — |
 | **2** (basename) | any `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | any `plugin.json` | JSON | `$.version` (try) | `$.name` |
@@ -166,6 +167,8 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **2** | `build.zig.zon` (Zig) | regex | `.version = "..."` | — |
 | **2** | `mix.exs` (Elixir) | regex | `version: "..."` | — |
 | **2** | `build.sbt` (Scala) | regex | `version := "..."` | — |
+| **2** | `build.gradle` (Gradle Groovy) [DR-0018] | regex | `version = '...'` / `version "..."` | — |
+| **2** | `build.gradle.kts` (Gradle Kotlin DSL) [DR-0018] | regex | `version = "..."` | — |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 | **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
@@ -174,6 +177,9 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **1** (fallback) | `*.podspec` (CocoaPods) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
 | **1** (fallback) | `*.nimble` (Nim) | regex | `version = "..."` | — |
 | **1** (fallback) | `*.gemspec` (Ruby) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.cabal` (Haskell) [DR-0018] | regex | `version: ...` (line-anchored) | `name: ...` |
+| **1** (fallback) | `*.spec` (RPM) [DR-0018] | regex | `Version: ...` (capital V) | `Name: ...` |
+| **1** (fallback) | `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) [DR-0018] | xml-element | `/Project/PropertyGroup/Version` | — |
 
 Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `unsupported file: <path>`. Adding a new format = adding one row to the rule table plus, if needed, one new format-specific function (no `--pattern` regex flag, by design).
 

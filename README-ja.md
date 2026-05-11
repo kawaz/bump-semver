@@ -159,6 +159,7 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **3** | `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
 | **3** | `project.pbxproj` (Xcode) | pbxproj | 全 `MARKETING_VERSION = ...;` (同期更新) | — |
 | **3** | `Info.plist` (Apple plist) | xml | `<key>CFBundleShortVersionString</key>` | — |
+| **3** | `pom.xml` (Maven) [DR-0018] | xml-element | `/project/version` | `/project/artifactId` |
 | **3** | `VERSION` | plain text | (ファイル内容) | — |
 | **2** (basename) | 任意 dir の `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | 任意 dir の `plugin.json` | JSON | `$.version` (try) | `$.name` |
@@ -166,6 +167,8 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **2** | `build.zig.zon` (Zig) | regex | `.version = "..."` | — |
 | **2** | `mix.exs` (Elixir) | regex | `version: "..."` | — |
 | **2** | `build.sbt` (Scala) | regex | `version := "..."` | — |
+| **2** | `build.gradle` (Gradle Groovy) [DR-0018] | regex | `version = '...'` / `version "..."` | — |
+| **2** | `build.gradle.kts` (Gradle Kotlin DSL) [DR-0018] | regex | `version = "..."` | — |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 | **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
@@ -174,6 +177,9 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **1** (fallback) | `*.podspec` (CocoaPods) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
 | **1** (fallback) | `*.nimble` (Nim) | regex | `version = "..."` | — |
 | **1** (fallback) | `*.gemspec` (Ruby) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.cabal` (Haskell) [DR-0018] | regex | `version: ...` (line-anchored) | `name: ...` |
+| **1** (fallback) | `*.spec` (RPM) [DR-0018] | regex | `Version: ...` (capital V) | `Name: ...` |
+| **1** (fallback) | `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) [DR-0018] | xml-element | `/Project/PropertyGroup/Version` | — |
 
 未対応ファイル (例: `README.md`, `Cargo.lock`) は `unsupported file: <path>` で明示エラー。新フォーマット追加 = テーブル 1 行追加 (+ 必要なら新 format-specific 関数 1 つ) で済む構造 (`--pattern` regex フラグは設計上持たない)。
 

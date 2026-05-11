@@ -142,10 +142,17 @@ local checkVersionBumped: Task = new {
     """
 }
 
+/// pkfire は ambient env を継承しない (hermetic build 思想) ため、`env { }`
+/// で明示宣言した変数しか cmd に届かない。`read("env:KEY")` で Pkl 評価時の
+/// 環境変数を渡せる (= pkf 起動時の SSH_AUTH_SOCK が cmd で見える)。
+/// これがないと jj git push の SSH 署名が agent に到達できず失敗する。
 local push: Task = new {
   name = "push"
   description = "jj bookmark main → push (release.yml が VERSION 変更を検出して tag + Release)"
   cache = false
+  env {
+    ["SSH_AUTH_SOCK"] = read("env:SSH_AUTH_SOCK")
+  }
   cmd = """
     jj bookmark set main -r @-
     jj git push --bookmark main

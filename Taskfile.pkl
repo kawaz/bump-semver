@@ -1,199 +1,205 @@
-/// bump-semver Taskfile (pkfire PoC).
+/// bump-semver Taskfile (pkfire).
 ///
-/// justfile と並走 (pkf を主、just はロールバック先)。
-/// レシピ構造は justfile と等価。pkfire の旨味:
-///   - lint/test/build は `inputs` で incremental cache
-///   - push の deps が DAG で並列実行
-///   - typed Task 参照で deps タイポは Pkl 評価時に検出
-amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.3.0#/Taskfile.pkl"
+/// 設計方針: ゴール起点の DAG。VCS 抽象と翻訳ペア検証は
+/// [kawaz/pkf-tasks](https://github.com/kawaz/pkf-tasks) に集約し、
+/// 本ファイルは Go 系の lint/test/build と bump-semver 固有の
+/// release flow だけ持つ。
+///
+///   User-facing goals    | 内部 gate
+///   ---------------------|----------------
+///   default (= list)     | lint
+///   lint / test / build  | vcs.ensureClean (kawaz/pkf-tasks)
+///   ci                   | docs.checkTranslations (kawaz/pkf-tasks)
+///   bump-version         | checkVersionBumped (本リポ固有)
+///   run                  |
+///   push                 |
+///
+/// pkfire の旨味:
+///   - inputs ベースで lint/test/build は incremental cache
+///   - typed Task 参照 + Param で deps / 引数のタイポは Pkl 評価時に検出
+///   - DAG 並列実行 (`pkf graph --format mermaid`)
+///   - 副作用タスクは cache = false で常時実行
+///
+/// justfile も並走中 (CI が依然 `just ci` を呼ぶため、pkfire 完全
+/// 移行は別フェーズ)。比較用に残してある。
+amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
 
-local sources: Listing<String> = new {
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.3#/vcs/auto.pkl" as vcs
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.3#/docs/translations.pkl" as docs
+
+// =============================================================================
+// Shared file sets
+// =============================================================================
+
+local goSources: Listing<String> = new {
   "src/**/*.go"
   "go.mod"
   "go.sum"
 }
 
+// =============================================================================
+// Atomic tasks
+// =============================================================================
+
 local lint: Task = new {
   name = "lint"
-  description = "gofmt + go vet + just --fmt --check"
+  description = "gofmt -w / go vet / just --fmt --check"
+  inputs {
+    ...goSources
+    "justfile"
+    "Taskfile.pkl"
+  }
   cmd = """
     gofmt -w .
     go vet ./...
     just --fmt --check --unstable
     """
-  inputs {
-    ...sources
-    "justfile"
-  }
 }
 
 local test: Task = new {
   name = "test"
-  description = "go test"
-  cmd = "go test ./..."
-  inputs = sources
+  description = "go test ./..."
+  inputs = goSources
   deps { lint }
+  cmd = "go test ./..."
 }
 
 local build: Task = new {
   name = "build"
-  description = "release build (host target)"
+  description = "release binary (host target) -> bin/bump-semver"
+  inputs {
+    ...goSources
+    "VERSION"
+  }
+  outputs { "bin/bump-semver" }
+  deps { lint }
   cmd = #"""
     go build -buildvcs=false -trimpath \
       -ldflags "-s -w -X main.version=v$(cat VERSION)" \
       -o bin/bump-semver ./src
     """#
-  inputs {
-    ...sources
-    "VERSION"
-  }
-  outputs { "bin/bump-semver" }
-  deps { lint }
 }
+
+// =============================================================================
+// Umbrella
+// =============================================================================
 
 local ci: Task = new {
   name = "ci"
-  description = "lint + test + build"
-  cmd = "echo ci ok"
+  description = "lint + test + build (DAG 並列)"
   cache = false
   deps { lint; test; build }
+  cmd = "echo ci ok"
 }
 
-local ensureClean: Task = new {
-  name = "ensure-clean"
-  description = "working copy is clean (jj or git)"
+// =============================================================================
+// Run (variadic args passthrough; `just run *ARGS` の代替)
+//
+// pkfire 0.4.0+ の acceptsArgs = true で `--` 後の任意引数を $@ で受ける。
+//   pkf run run -- patch Cargo.toml --write
+//   pkf run run -- compare gt VERSION 1.0.0
+// =============================================================================
+
+local run: Task = new {
+  name = "run"
+  description = "Run built bin/bump-semver with forwarded args"
   cache = false
-  cmd = """
-    if jj root >/dev/null 2>&1; then
-      [ "$(jj log -r @ --no-graph -T 'empty')" = "true" ]
-    elif git rev-parse --git-dir >/dev/null 2>&1; then
-      [ -z "$(git status --porcelain)" ]
-    fi
-    """
-  deps { lint }
+  deps { build }
+  acceptsArgs = true
+  cmd = #"./bin/bump-semver "$@""#
 }
 
-/// 翻訳ペア。`path` は実ファイルパス (`docs/DESIGN` → `docs/DESIGN.md`)、
-/// `key` はタスク名の一部 (pkfire は `/` を許容しないので `-` 区切り)。
-local class TranslationPair {
-  path: String
-  fixed key: String = path.replaceAll("/", "-")
-}
-
-/// 翻訳ペア NAME-ja.md / NAME.md の存在 + 相互リンク + timestamp 順序確認。
-/// -ja.md 不在ならスキップ (justfile の `?` sigil と等価)。
-local function checkTranslation(p: TranslationPair): Task = new {
-  name = "check-translation:\(p.key)"
-  description = "verify translation pair \(p.path).md / \(p.path)-ja.md"
-  cache = false
-  cmd = """
-    if [ ! -f \(p.path)-ja.md ]; then exit 0; fi
-    test -f \(p.path).md
-    base=$(basename \(p.path))
-    head -5 \(p.path)-ja.md | grep -qF "> [English](./${base}.md) | 日本語"
-    head -5 \(p.path).md    | grep -qF "> English | [日本語](./${base}-ja.md)"
-    file_ts() {
-      if jj root >/dev/null 2>&1; then
-        jj log --no-graph -T 'committer.timestamp().format("%s")' -r "latest(::@ & files('$1'))" 2>/dev/null || echo 0
-      elif git rev-parse --git-dir >/dev/null 2>&1; then
-        git log -1 --format=%ct -- "$1" 2>/dev/null || echo 0
-      else
-        echo 0
-      fi
-    }
-    test "$(file_ts \(p.path)-ja.md)" -le "$(file_ts \(p.path).md)"
-    """
-}
-
-local translationPairs: Listing<TranslationPair> = new {
-  new { path = "README" }
-  new { path = "docs/DESIGN" }
-  new { path = "docs/MANUAL" }
-}
-
-local checkTranslationTasks: Listing<Task> = new {
-  for (p in translationPairs) {
-    checkTranslation(p)
-  }
-}
-
-local checkTranslations: Task = new {
-  name = "check-translations"
-  description = "verify README / docs/DESIGN / docs/MANUAL translation pairs"
-  cmd = "echo check-translations ok"
-  cache = false
-  deps = checkTranslationTasks
-}
+// =============================================================================
+// Project-specific gate
+// =============================================================================
 
 local checkVersionBumped: Task = new {
   name = "check-version-bumped"
-  description = "VERSION bumped from origin/main when src/ changed"
+  description = "VERSION bumped vs origin/main when src/ changed"
   cache = false
+  deps { vcs.ensureClean }
   cmd = """
     if jj root >/dev/null 2>&1; then
-      diff_out=$(jj diff -r 'main@origin..@' --summary -- src/) || { echo 'ERROR: jj diff failed (main@origin not tracked? run jj git fetch first)' >&2; exit 1; }
+      diff_out=$(jj diff -r 'main@origin..@' --summary -- src/) \\
+        || { echo 'ERROR: jj diff failed (main@origin not tracked? run jj git fetch first)' >&2; exit 1; }
       [ -z "$diff_out" ] && exit 0
     elif git rev-parse --git-dir >/dev/null 2>&1; then
       git diff --quiet origin/main -- src/ && exit 0
     fi
     bump-semver compare gt VERSION vcs:origin/main --no-hint && exit 0
-    echo 'ERROR: code changed but VERSION not bumped; run "pkf run bump-version:patch"' >&2
+    echo 'ERROR: code changed but VERSION not bumped; run "pkf run bump-version --level=patch"' >&2
     exit 1
     """
 }
 
-/// pkfire は ambient env を継承しない (hermetic build 思想) ため、`env { }`
-/// で明示宣言した変数しか cmd に届かない。`read("env:KEY")` で Pkl 評価時の
-/// 環境変数を渡せる (= pkf 起動時の SSH_AUTH_SOCK が cmd で見える)。
-/// これがないと jj git push の SSH 署名が agent に到達できず失敗する。
-local push: Task = new {
-  name = "push"
-  description = "jj bookmark main → push (release.yml が VERSION 変更を検出して tag + Release)"
-  cache = false
-  env {
-    ["SSH_AUTH_SOCK"] = read("env:SSH_AUTH_SOCK")
-  }
-  cmd = """
-    jj bookmark set main -r @-
-    jj git push --bookmark main
-    """
-  deps { ensureClean; test; checkTranslations; checkVersionBumped }
-}
+// =============================================================================
+// Bump version (typed Param: level=patch|minor|major)
+// =============================================================================
 
-/// VERSION bump + Release commit。just の `bump-version bump="patch"` 引数を
-/// pkfire の name-suffix で表現 (bump-version:patch / :minor / :major)。
-local function bumpVersionTask(level: String): Task = new {
-  name = "bump-version:\(level)"
-  description = "VERSION \(level) bump + Release commit"
+local bumpVersion: Task = new {
+  name = "bump-version"
+  description = "VERSION bump + jj commit (level=patch|minor|major)"
   cache = false
+  deps { vcs.ensureClean }
+  params {
+    new Param {
+      name = "level"
+      type = "enum"
+      choices { "patch"; "minor"; "major" }
+      default = "patch"
+      description = "semver bump level"
+    }
+  }
   cmd = #"""
-    new_version=$(bump-semver \#(level) VERSION --write --no-hint) \
+    new_version=$(bump-semver "$LEVEL" VERSION --write --no-hint) \
       && jj commit -m "Release v${new_version}"
     """#
-  deps { ensureClean }
 }
 
-local bumpLevels: Listing<String> = new {
-  "patch"
-  "minor"
-  "major"
+// =============================================================================
+// Push (top-level goal)
+//
+// vcs.push を base にして deps だけ拡張 (cmd / env は継承)。
+// 全 gate (ci + docs.checkTranslations + checkVersionBumped) 通過後に
+// main を進めて push。release.yml が VERSION 変更を検出した時のみ
+// tag + GitHub Release を作る。
+// =============================================================================
+
+local push: Task = (vcs.push) {
+  name = "push"
+  description = "all gates → jj bookmark main → jj git push (extends vcs.push)"
+  deps { ci; docs.checkTranslations; checkVersionBumped }
 }
 
-local bumpVersionTasks: Listing<Task> = new {
-  for (level in bumpLevels) {
-    bumpVersionTask(level)
-  }
+// =============================================================================
+// Default
+// =============================================================================
+
+local default: Task = new {
+  name = "default"
+  description = "list available tasks"
+  cache = false
+  cmd = "pkf list"
 }
+
+// =============================================================================
+// Task registry
+// =============================================================================
 
 tasks {
+  default
+  // atomic
   lint
   test
   build
+  run
+  // umbrella
   ci
-  ensureClean
-  ...checkTranslationTasks
-  checkTranslations
+  // gates (vcs.ensureClean / docs.checkTranslations は pkf-tasks 由来)
+  ...vcs.allTasks
+  ...docs.allTasks
   checkVersionBumped
+  // release flow
+  bumpVersion
   push
-  ...bumpVersionTasks
 }

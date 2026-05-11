@@ -73,7 +73,7 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--build-metadata META`| Set build metadata identifiers (e.g. `--build-metadata sha.abc`) |
 | `--no-build-metadata`  | Remove build metadata identifiers |
 | `--write`              | Write the bumped version back to each FILE input (`major` / `minor` / `patch` / `pre` only) |
-| `--vcs jj\|git`         | Force VCS detection for `vcs:` inputs (overrides `BUMP_SEMVER_VCS` env) |
+| `--vcs jj\|git\|auto`    | Force VCS detection for `vcs:` inputs (default: `auto`) |
 | `--no-hint`            | Suppress all `hint:` lines (fallback match / unsupported file / "files not modified") |
 | `-q`, `--quiet`        | Suppress stdout (and all `hint:` lines) |
 | `-qq`, `--quiet-all`   | Suppress stdout, hints, and error output (use with caution when debugging) |
@@ -302,13 +302,14 @@ bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # explicit form
 
 **VCS detection** (in priority order):
 
-1. `--vcs jj|git` flag (highest priority)
-2. `BUMP_SEMVER_VCS=jj|git` environment variable
-3. `.jj` directory exists in the working dir or any ancestor → jj
-4. `.git` directory exists → git
-5. Otherwise → error (`not a git or jj repository`)
+1. `--vcs jj|git` flag (`auto` and the unset case fall through)
+2. `.jj` directory exists in the working dir or any ancestor → jj
+3. `.git` directory exists → git
+4. Otherwise → error (`not a git or jj repository`)
 
 When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), **jj wins** — its revset language is a superset of git's.
+
+> Earlier versions (≤ v0.12) inserted a `BUMP_SEMVER_VCS=jj|git` environment variable between the flag and the probes; that knob was removed in v0.13 ([DR-0016](./docs/decisions/DR-0016-remove-bump-semver-vcs-env.md)). If a CI / dev environment previously relied on the env var, replace it with the `--vcs jj|git` flag.
 
 **`--write` is incompatible with `vcs:` inputs.** vcs: is read-only by design (writing back into the VCS would require commit/amend semantics, which is out of scope). Combining the two errors out with `--write cannot be used with vcs: inputs (vcs: is read-only)`.
 

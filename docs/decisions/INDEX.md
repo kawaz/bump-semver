@@ -19,6 +19,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0013](./DR-0013-suffix-stripped-format-detection.md) — 既知 suffix を剥がして既存ルールで再判定する fallback (`Cargo.toml.bak` / `package.json.20260510` / `Chart.yaml~` 等)
 - [DR-0014](./DR-0014-toml-section-scoped.md) — TOML section-scoped Replace の一般化 + `pyproject.toml` (`[project]` / `[tool.poetry]` try-fallback) と `mojoproject.toml` (`[workspace]`) 対応
 - [DR-0015](./DR-0015-pbxproj-and-info-plist.md) — Xcode `project.pbxproj` (multi-match 同期更新) と `Info.plist` (XML plist) 対応
+- [DR-0016](./DR-0016-remove-bump-semver-vcs-env.md) — `BUMP_SEMVER_VCS` 環境変数廃止 + `--vcs auto` 一本化 (DR-0008 の env 部分を supersede)
 
 ## Archived
 

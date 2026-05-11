@@ -51,7 +51,7 @@ When a filename collides with a valid semver string (e.g. a local file literally
 
 #### `vcs:` input (DR-0008)
 
-`vcs:REV[:FILE]` reads `<FILE>` at `<REV>` from jj or git. The VCS is detected in this priority order: `--vcs jj|git` flag, `BUMP_SEMVER_VCS` env var, `.jj` directory probe, `.git` directory probe. When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), jj wins.
+`vcs:REV[:FILE]` reads `<FILE>` at `<REV>` from jj or git. The VCS is detected in this priority order: `--vcs jj|git` flag (`auto` and the unset case fall through), `.jj` directory probe, `.git` directory probe. When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), jj wins. See DR-0016 for the rationale behind removing the `BUMP_SEMVER_VCS` env var that used to sit between the flag and the probes.
 
 `vcs:latest-tag()` is the only supported function in MVP: it lists every tag, drops the ones that don't parse as semver, and returns the largest by SemVer 2.0.0 ordering.
 

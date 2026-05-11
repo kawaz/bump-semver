@@ -93,13 +93,14 @@ bump-semver get Cargo.toml vcs:main vcs:staging vcs:production
 
 優先順:
 
-1. `--vcs git|jj` フラグ (1 回上書き)
-2. `BUMP_SEMVER_VCS=git|jj` 環境変数
-3. `.jj` 存在 → jj
-4. `.git` 存在 → git
-5. どちらもなし → `error: not a git or jj repository`
+1. `--vcs git|jj` フラグ (1 回上書き、`auto` / 未指定は次へ)
+2. `.jj` 存在 → jj
+3. `.git` 存在 → git
+4. どちらもなし → `error: not a git or jj repository`
 
-`.git` が bare で `.jj` も並存している (kawaz の git-bare + jj-workspace 構成) 場合、3 で jj が選ばれる。colocate も `.jj` 優先。
+`.git` が bare で `.jj` も並存している (kawaz の git-bare + jj-workspace 構成) 場合、2 で jj が選ばれる。colocate も `.jj` 優先。
+
+> **DR-0016 で更新**: もともと存在した `BUMP_SEMVER_VCS=git|jj` 環境変数 (旧優先順 2 位) は廃止された。経緯は [DR-0016](./DR-0016-remove-bump-semver-vcs-env.md) を参照。フラグ側には新しく `auto` 値が許可されている (`--vcs auto` = `vcsAuto` 解決、default 表記用)。
 
 ### `--write` との関係
 

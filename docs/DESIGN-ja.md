@@ -51,7 +51,7 @@ INPUT  = FILE | VER | -
 
 #### `vcs:` 入力 (DR-0008)
 
-`vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ → `BUMP_SEMVER_VCS` 環境変数 → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。
+`vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ (`auto` / 未指定は次へ) → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。`BUMP_SEMVER_VCS` 環境変数がフラグと probe の間に挟まる優先順 2 位だった構造は DR-0016 で廃止されている。
 
 `vcs:latest-tag()` は MVP 唯一の関数: 全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。
 

@@ -3,7 +3,7 @@
 ## 仕様確定 (DR-0008)
 
 - `vcs:REV[:FILE]` / `vcs:latest-tag()` を新規入力形式として追加
-- VCS 自動判定: `--vcs` flag → `BUMP_SEMVER_VCS` env → `.jj` → `.git`
+- VCS 自動判定: `--vcs` flag → `.jj` → `.git` (v0.7.0 当時は `--vcs` と `.jj` の間に `BUMP_SEMVER_VCS` env もあったが、DR-0016 で廃止)
 - jj/git 並存時は jj 優先 (kawaz の git-bare + jj-workspace 構成想定)
 - jj の `origin/main` ↔ `main@origin` 自動フォールバック
 - `--write` と `vcs:` は排他 (vcs: は read-only)

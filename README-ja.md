@@ -73,7 +73,7 @@ bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
 | `--build-metadata META`| build metadata を設定 (例 `--build-metadata sha.abc`) |
 | `--no-build-metadata`  | build metadata を削除 |
 | `--write`              | bump 結果を各 FILE 入力に書き戻す (`major` / `minor` / `patch` / `pre` のみ) |
-| `--vcs jj\|git`         | `vcs:` 入力の VCS を強制指定 (`BUMP_SEMVER_VCS` 環境変数より優先) |
+| `--vcs jj\|git\|auto`    | `vcs:` 入力の VCS を強制指定 (default: `auto`) |
 | `--no-hint`            | 全 `hint:` 行を抑制 (fallback match / unsupported file / 「files not modified」) |
 | `-q`, `--quiet`        | stdout と全 `hint:` 行を抑制 |
 | `-qq`, `--quiet-all`   | stdout / hint / エラー出力をすべて抑制 (debug 時注意) |
@@ -302,13 +302,14 @@ bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # 明示形式
 
 **VCS 自動判定** (優先順):
 
-1. `--vcs jj|git` フラグ (最優先)
-2. `BUMP_SEMVER_VCS=jj|git` 環境変数
-3. cwd または親に `.jj` ディレクトリ → jj
-4. `.git` ディレクトリ → git
-5. それ以外 → エラー (`not a git or jj repository`)
+1. `--vcs jj|git` フラグ (`auto` / 未指定は次へ)
+2. cwd または親に `.jj` ディレクトリ → jj
+3. `.git` ディレクトリ → git
+4. それ以外 → エラー (`not a git or jj repository`)
 
 `.jj` と `.git` が並存している場合 (jj colocate モード、kawaz の git-bare + jj-workspace 構成) は **jj が優先**。jj の revset 言語は git ref のスーパーセットなので。
+
+> 旧バージョン (v0.12 以前) では `BUMP_SEMVER_VCS=jj|git` 環境変数がフラグの次の優先位にあったが、v0.13 で廃止された ([DR-0016](./docs/decisions/DR-0016-remove-bump-semver-vcs-env.md))。CI / 開発環境で env を設定していた場合は `--vcs jj|git` フラグへ置き換える。
 
 **`--write` と `vcs:` は排他**。VCS の中身に書き戻す機能は持たない (commit/amend が必要になりスコープ外)。混在させると `--write cannot be used with vcs: inputs (vcs: is read-only)` エラー。
 

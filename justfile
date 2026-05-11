@@ -13,12 +13,14 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set script-interpreter := ["bash", "-eu", "-o", "pipefail"]
 
 # ---------- variables ----------
-# jj/git 判定 (path_exists は "true"/"false" 文字列を返すので、bash の `if {{ is-jj }}; then` で
-# bash builtin true/false コマンドとして評価できる)。jj/git 両方が並存するときは jj 優先で
-# git は false に倒す (kawaz の git bare + .jj 構成と整合)。
+# jj/git 判定。`jj root` / `git rev-parse` を使って repository を**親方向に探索**して
+# 判定する (path_exists は cwd 直下しか見ないので jj workspace 内では false になる罠)。
+# shell() で「true"/"false" の文字列を生成し、bash の `if {{ is-jj }}; then` で
+# bash builtin true/false コマンドとして評価できる形に揃える。
+# jj/git 両方が並存するときは jj 優先で git は false に倒す (git bare + .jj 構成と整合)。
 
-is-jj := path_exists('.jj')
-is-git := if is-jj == "true" { "false" } else { path_exists('.git') }
+is-jj := shell('jj root >/dev/null 2>&1 && echo true || echo false')
+is-git := if is-jj == "true" { "false" } else { shell('git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false') }
 
 # bump-version トリガとなる product code パス (テンプレ流用時に各リポで上書き)。
 # docs/ や *.md だけの変更なら VERSION bump 不要。

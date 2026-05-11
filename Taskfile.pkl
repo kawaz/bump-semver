@@ -64,9 +64,9 @@ local ensureClean: Task = new {
   description = "working copy is clean (jj or git)"
   cache = false
   cmd = """
-    if [ -d .jj ]; then
+    if jj root >/dev/null 2>&1; then
       [ "$(jj log -r @ --no-graph -T 'empty')" = "true" ]
-    elif [ -d .git ]; then
+    elif git rev-parse --git-dir >/dev/null 2>&1; then
       [ -z "$(git status --porcelain)" ]
     fi
     """
@@ -93,9 +93,9 @@ local function checkTranslation(p: TranslationPair): Task = new {
     head -5 \(p.path)-ja.md | grep -qF "> [English](./${base}.md) | 日本語"
     head -5 \(p.path).md    | grep -qF "> English | [日本語](./${base}-ja.md)"
     file_ts() {
-      if [ -d .jj ]; then
+      if jj root >/dev/null 2>&1; then
         jj log --no-graph -T 'committer.timestamp().format("%s")' -r "latest(::@ & files('$1'))" 2>/dev/null || echo 0
-      elif [ -d .git ]; then
+      elif git rev-parse --git-dir >/dev/null 2>&1; then
         git log -1 --format=%ct -- "$1" 2>/dev/null || echo 0
       else
         echo 0
@@ -130,10 +130,10 @@ local checkVersionBumped: Task = new {
   description = "VERSION bumped from origin/main when src/ changed"
   cache = false
   cmd = """
-    if [ -d .jj ]; then
+    if jj root >/dev/null 2>&1; then
       diff_out=$(jj diff -r 'main@origin..@' --summary -- src/) || { echo 'ERROR: jj diff failed (main@origin not tracked? run jj git fetch first)' >&2; exit 1; }
       [ -z "$diff_out" ] && exit 0
-    elif [ -d .git ]; then
+    elif git rev-parse --git-dir >/dev/null 2>&1; then
       git diff --quiet origin/main -- src/ && exit 0
     fi
     bump-semver compare gt VERSION vcs:origin/main --no-hint && exit 0

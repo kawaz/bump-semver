@@ -6,9 +6,9 @@
 # git only リポへ流用する場合は push / bump-version の jj 呼び出しを書き換える必要あり。
 # ---------- settings ----------
 
-set unstable := true
-set guards := true
-set lazy := true
+set unstable
+set guards
+set lazy
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 set script-interpreter := ["bash", "-eu", "-o", "pipefail"]
 

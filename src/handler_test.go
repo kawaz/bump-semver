@@ -173,8 +173,10 @@ func TestDetectHandler_NewFallbackExtensions(t *testing.T) {
 			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
 		}
 	}
-	// Still unsupported: pom.xml etc.
-	bad := []string{"pom.xml"}
+	// Note: pom.xml was unsupported until v0.14.0 (DR-0018 added the
+	// xml-element format). The bad-list is now empty; should a future
+	// addition reduce the unsupported set further, list it here.
+	bad := []string{}
 	for _, p := range bad {
 		if _, err := detectHandler(p); err == nil {
 			t.Errorf("detectHandler(%q) expected error, got nil", p)

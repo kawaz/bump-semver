@@ -341,6 +341,155 @@ func TestRegexReplace_BuildSbt(t *testing.T) {
 	}
 }
 
+// --- build.gradle / build.gradle.kts (Gradle Groovy + Kotlin DSL) -------
+
+func TestRegexInspect_BuildGradle_GroovyAssign(t *testing.T) {
+	t.Parallel()
+	in := []byte(`plugins {
+    id 'java'
+}
+version = '1.2.3'
+group = 'com.example'
+`)
+	insp, err := inspectVia("build.gradle", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "1.2.3" {
+		t.Errorf("Versions = %+v", insp.Versions)
+	}
+}
+
+// Groovy method-call shorthand: `version "1.2.3"` (no `=`).
+func TestRegexInspect_BuildGradle_GroovyMethodCall(t *testing.T) {
+	t.Parallel()
+	in := []byte(`version "1.2.3"
+group "com.example"
+`)
+	insp, err := inspectVia("build.gradle", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "1.2.3" {
+		t.Errorf("Versions = %+v", insp.Versions)
+	}
+}
+
+func TestRegexReplace_BuildGradle(t *testing.T) {
+	t.Parallel()
+	in := []byte("version = '1.2.3'\n")
+	out, err := replaceVia("build.gradle", in, "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `version = '1.2.4'`) {
+		t.Errorf("Replace did not preserve single quotes:\n%s", string(out))
+	}
+}
+
+func TestRegexInspect_BuildGradleKts(t *testing.T) {
+	t.Parallel()
+	in := []byte(`plugins {
+    kotlin("jvm") version "1.9.0"
+}
+version = "1.2.3"
+group = "com.example"
+`)
+	insp, err := inspectVia("build.gradle.kts", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "1.2.3" {
+		t.Errorf("Versions = %+v", insp.Versions)
+	}
+}
+
+func TestRegexReplace_BuildGradleKts(t *testing.T) {
+	t.Parallel()
+	in := []byte(`version = "1.2.3"` + "\n")
+	out, err := replaceVia("build.gradle.kts", in, "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `version = "1.2.4"`) {
+		t.Errorf("Replace did not write 1.2.4:\n%s", string(out))
+	}
+}
+
+// --- *.cabal (Haskell Cabal package manifest) ---------------------------
+
+func TestRegexInspect_Cabal(t *testing.T) {
+	t.Parallel()
+	in := []byte(`cabal-version:  2.4
+name:           my-package
+version:        1.2.3
+synopsis:       Example
+`)
+	insp, err := inspectVia("my-package.cabal", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "1.2.3" {
+		t.Errorf("Versions = %+v, want 1.2.3", insp.Versions)
+	}
+	if len(insp.Names) == 0 || insp.Names[0].Value != "my-package" {
+		t.Errorf("Names = %+v, want my-package", insp.Names)
+	}
+}
+
+func TestRegexReplace_Cabal(t *testing.T) {
+	t.Parallel()
+	in := []byte("cabal-version:  2.4\nname:           pkg\nversion:        1.2.3\n")
+	out, err := replaceVia("pkg.cabal", in, "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), "version:        1.2.4") {
+		t.Errorf("Replace did not preserve column alignment:\n%s", string(out))
+	}
+	// cabal-version should NOT have changed.
+	if !strings.Contains(string(out), "cabal-version:  2.4") {
+		t.Errorf("cabal-version was accidentally rewritten:\n%s", string(out))
+	}
+}
+
+// --- *.spec (RPM spec file) ---------------------------------------------
+
+func TestRegexInspect_RpmSpec(t *testing.T) {
+	t.Parallel()
+	in := []byte(`Name:    foo
+Version: 1.2.3
+Release: 1%{?dist}
+Summary: Example
+`)
+	insp, err := inspectVia("foo.spec", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "1.2.3" {
+		t.Errorf("Versions = %+v, want 1.2.3", insp.Versions)
+	}
+	if len(insp.Names) == 0 || insp.Names[0].Value != "foo" {
+		t.Errorf("Names = %+v, want foo", insp.Names)
+	}
+}
+
+func TestRegexReplace_RpmSpec(t *testing.T) {
+	t.Parallel()
+	in := []byte("Name:    foo\nVersion: 1.2.3\nRelease: 1%{?dist}\n")
+	out, err := replaceVia("foo.spec", in, "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), "Version: 1.2.4") {
+		t.Errorf("Replace did not write 1.2.4:\n%s", string(out))
+	}
+	// Release line preserved verbatim.
+	if !strings.Contains(string(out), "Release: 1%{?dist}") {
+		t.Errorf("Release line was unexpectedly modified:\n%s", string(out))
+	}
+}
+
 // --- shared edge cases ---------------------------------------------------
 
 // TestRegexInspect_FirstMatchOnly documents the DR-0012 design: when

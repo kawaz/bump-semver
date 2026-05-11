@@ -1,5 +1,54 @@
 # Upgrading guide
 
+## v0.13.x → v0.14.0
+
+Pure additive minor release adding several new package-manifest
+formats. No breaking changes. See [`docs/decisions/DR-0018-jvm-dotnet-haskell-rpm-support.md`](./docs/decisions/DR-0018-jvm-dotnet-haskell-rpm-support.md).
+
+### New: JVM / .NET / Haskell / RPM support (DR-0018)
+
+v0.14.0 extends the rule table to cover five new ecosystems:
+
+| New file type | Confidence | Format | Notes |
+|---|---|---|---|
+| `pom.xml` (Maven) | 3 (basename) | xml-element | `/project/version` + `/project/artifactId`. `<parent>/<version>` is correctly skipped via the path-based query |
+| `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) | 1 (glob) | xml-element | `/Project/PropertyGroup/Version` (first match wins on multi-PropertyGroup files) |
+| `build.gradle` (Gradle Groovy DSL) | 2 (basename) | regex | accepts `version = '...'` / `version "..."` (method-call shorthand) / `version = "..."` |
+| `build.gradle.kts` (Gradle Kotlin DSL) | 2 (basename) | regex | accepts `version = "..."` |
+| `*.cabal` (Haskell) | 1 (glob) | regex | `^version: ...` (line-anchored, distinct from `cabal-version:`); `^name: ...` for cross-input checks |
+| `*.spec` (RPM) | 1 (glob) | regex | `^Version: ...` (capital V); `^Name: ...` for cross-input checks |
+
+### New format: `xml-element`
+
+DR-0015 introduced an `xml` format that was Apple-plist-specific
+(`<key>NAME</key><string>VALUE</string>` pair shape). v0.14.0 adds a
+sibling `xml-element` format for path-rooted XML lookups:
+
+- Path syntax: `/project/version`, `/Project/PropertyGroup/Version`
+- XML namespaces are matched by local name only (Maven's
+  `xmlns="http://maven.apache.org/POM/4.0.0"` does not need to be
+  spelled out)
+- Document-order first match wins on ambiguity
+- Inner text is spliced into the original byte stream; DOCTYPE /
+  attribute order / indentation / declaration are preserved
+
+```bash
+bump-semver get pom.xml
+bump-semver patch pom.xml --write
+bump-semver get MyApp.csproj
+bump-semver patch MyApp.csproj --write
+
+bump-semver get build.gradle
+bump-semver patch build.gradle.kts --write
+```
+
+### No migration needed
+
+All v0.13.x invocations work unchanged. The new file types simply
+become recognised; previously-unsupported invocations like
+`bump-semver get pom.xml` now succeed instead of failing with
+`unsupported file:`.
+
 ## v0.12.x → v0.13.0
 
 One BREAKING removal scoped to the `vcs:` input path plus several

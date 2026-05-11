@@ -176,6 +176,48 @@ var rules = []CandidateRule{
 		Format:       "xml",
 		VersionPaths: []string{"CFBundleShortVersionString"},
 	},
+	{
+		// Maven `pom.xml`. The root `<project>/<version>` is the
+		// project's own version. `<parent>/<version>` references a
+		// different artefact and is intentionally not touched; using a
+		// path-based xml-element rule keeps them strictly separated.
+		// XML namespaces (`<project xmlns="http://maven.apache.org/...">`)
+		// are matched by local name, so the rule works regardless of
+		// the declared schema.
+		Name:         "pom.xml",
+		Basename:     "pom.xml",
+		Confidence:   3,
+		Format:       "xml-element",
+		VersionPaths: []string{"/project/version"},
+		NamePaths:    []string{"/project/artifactId"},
+	},
+	{
+		// .NET MSBuild project files (`*.csproj`, `*.fsproj`, `*.vbproj`).
+		// Version sits as `<Project>/<PropertyGroup>/<Version>`. When a
+		// file has multiple `<PropertyGroup>` blocks (Configurations
+		// etc.), the first child Version wins — typical layouts put the
+		// shared Version field in the first PropertyGroup at the top of
+		// the file.
+		Name:         "*.csproj / *.fsproj / *.vbproj (fallback)",
+		Glob:         "*.csproj",
+		Confidence:   1,
+		Format:       "xml-element",
+		VersionPaths: []string{"/Project/PropertyGroup/Version"},
+	},
+	{
+		Name:         "*.fsproj (fallback)",
+		Glob:         "*.fsproj",
+		Confidence:   1,
+		Format:       "xml-element",
+		VersionPaths: []string{"/Project/PropertyGroup/Version"},
+	},
+	{
+		Name:         "*.vbproj (fallback)",
+		Glob:         "*.vbproj",
+		Confidence:   1,
+		Format:       "xml-element",
+		VersionPaths: []string{"/Project/PropertyGroup/Version"},
+	},
 	// --- DR-0012: regex format rules (basename, confidence 2) ----------
 	//
 	// These are fixed-name files for languages whose version is a
@@ -223,6 +265,31 @@ var rules = []CandidateRule{
 		Confidence:   2,
 		Format:       "regex",
 		VersionRegex: `(?m)^\s*version\s*:?=\s*"([^"]+)"`,
+	},
+	{
+		// Gradle Groovy DSL. Top-level `version = '1.2.3'` /
+		// `version "1.2.3"` (Groovy method-call shorthand) /
+		// `version = "1.2.3"`. Sub-project / allprojects blocks
+		// aren't traversed — only the root-most `^version` line
+		// counts. Name lives on `rootProject.name = ...` in
+		// settings.gradle and is intentionally not extracted from
+		// build.gradle (different file).
+		Name:         "build.gradle",
+		Basename:     "build.gradle",
+		Confidence:   2,
+		Format:       "regex",
+		VersionRegex: `(?m)^version\s*=?\s*['"]([^'"]+)['"]`,
+	},
+	{
+		// Gradle Kotlin DSL. Same root-version idea, but the only
+		// valid syntax is `version = "1.2.3"` (no Groovy method-call
+		// shorthand). The regex still accepts either quote style
+		// for symmetry.
+		Name:         "build.gradle.kts",
+		Basename:     "build.gradle.kts",
+		Confidence:   2,
+		Format:       "regex",
+		VersionRegex: `(?m)^version\s*=\s*['"]([^'"]+)['"]`,
 	},
 
 	// --- DR-0012: regex format rules (glob, confidence 1) --------------
@@ -273,6 +340,30 @@ var rules = []CandidateRule{
 		Format:       "regex",
 		VersionRegex: `(?m)^\s*(?:s|spec)\.version\s*=\s*['"]([^'"]+)['"]`,
 		NameRegex:    `(?m)^\s*(?:s|spec)\.name\s*=\s*['"]([^'"]+)['"]`,
+	},
+	{
+		// Haskell Cabal package manifest. `^version: 1.2.3` and
+		// `^name: foo` at top level. `cabal-version:` is a separate
+		// field; regex anchors strictly to start of line with no
+		// leading hyphen so it doesn't get caught.
+		Name:         "*.cabal (fallback)",
+		Glob:         "*.cabal",
+		Confidence:   1,
+		Format:       "regex",
+		VersionRegex: `(?m)^version\s*:\s*([^\s]+)`,
+		NameRegex:    `(?m)^name\s*:\s*([^\s]+)`,
+	},
+	{
+		// RPM spec file. `^Version: 1.2.3` (capital V). `Name:` and
+		// `Release:` are separate fields; line-anchored regex keeps
+		// them distinct. Macros like `%{version_major}.%{...}` are
+		// not interpreted — bump-semver treats the literal value.
+		Name:         "*.spec (fallback)",
+		Glob:         "*.spec",
+		Confidence:   1,
+		Format:       "regex",
+		VersionRegex: `(?m)^Version\s*:\s*([^\s]+)`,
+		NameRegex:    `(?m)^Name\s*:\s*([^\s]+)`,
 	},
 
 	{
@@ -463,6 +554,8 @@ func tryRule(rule CandidateRule, content []byte) (Inspection, error) {
 		return pbxprojInspect(rule, content)
 	case "xml":
 		return xmlInspect(rule, content)
+	case "xml-element":
+		return xmlElementInspect(rule, content)
 	default:
 		return Inspection{}, fmt.Errorf("unknown format %q in rule %q", rule.Format, rule.Name)
 	}
@@ -484,6 +577,8 @@ func formatReplace(rule CandidateRule, content []byte, current, newVersion strin
 		return pbxprojReplace(rule, content, current, newVersion)
 	case "xml":
 		return xmlReplace(rule, content, current, newVersion)
+	case "xml-element":
+		return xmlElementReplace(rule, content, current, newVersion)
 	default:
 		return nil, fmt.Errorf("unknown format %q in rule %q", rule.Format, rule.Name)
 	}

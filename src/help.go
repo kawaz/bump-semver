@@ -90,11 +90,15 @@ Supported file formats (auto-detected by basename):
   pyproject.toml     TOML, [project].version (try) -> [tool.poetry].version (fallback) [DR-0014]
   mojoproject.toml   TOML, [workspace].version (and [workspace].name) [DR-0014]
   package-lock.json  npm 7+ lockfile, $.version + $.packages[""].version (deps untouched)
+  pom.xml            XML element, /project/version (and /project/artifactId) [DR-0018]
   *.json             JSON, $.version (and optional $.name)
   *.yaml / *.yml     YAML, top-level .version (and optional .name) [DR-0011 fallback]
   *.toml             TOML, top-level version  (and optional name)  [DR-0011 fallback]
   v.mod / build.zig.zon / mix.exs / build.sbt        regex (basename) [DR-0012]
+  build.gradle / build.gradle.kts                    regex (basename) [DR-0018]
   *.xcconfig / *.podspec / *.nimble / *.gemspec      regex (fallback) [DR-0012]
+  *.cabal / *.spec                                   regex (fallback) [DR-0018]
+  *.csproj / *.fsproj / *.vbproj                     XML element, /Project/PropertyGroup/Version [DR-0018]
   VERSION            plain text
 
   Backup-style suffix fallback (DR-0013): Cargo.toml.bak / package.json.20260510 /

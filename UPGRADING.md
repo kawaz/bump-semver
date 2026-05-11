@@ -1,5 +1,87 @@
 # Upgrading guide
 
+## v0.12.x → v0.13.0
+
+One BREAKING removal scoped to the `vcs:` input path plus several
+additive features. The breaking change is easy to migrate (see below).
+
+### BREAKING: `BUMP_SEMVER_VCS` env var removed (DR-0016)
+
+The `BUMP_SEMVER_VCS=jj|git` environment variable, which used to sit
+between `--vcs` and the `.jj` / `.git` probes in the VCS-detection
+priority order, has been removed. The CLI now has:
+
+```
+1. --vcs jj|git           (--vcs auto / no flag → fall through)
+2. .jj directory present  → jj
+3. .git directory present → git
+4. (otherwise)            → error
+```
+
+If your CI / dev environment set `BUMP_SEMVER_VCS=...`, replace it
+with the `--vcs jj|git` flag:
+
+```bash
+# Old
+export BUMP_SEMVER_VCS=jj
+bump-semver compare gt Cargo.toml vcs:main@origin
+
+# New
+bump-semver --vcs jj compare gt Cargo.toml vcs:main@origin
+```
+
+See [`docs/decisions/DR-0016-remove-bump-semver-vcs-env.md`](./docs/decisions/DR-0016-remove-bump-semver-vcs-env.md).
+
+### New: `--vcs auto` as an explicit default value (DR-0016)
+
+`--vcs` now accepts `auto` in addition to `jj` / `git`. `auto` is the
+default and is equivalent to omitting the flag. Useful as a
+self-documenting CI command:
+
+```bash
+bump-semver --vcs auto compare gt Cargo.toml vcs:main@origin
+```
+
+### Changed: `--help` is now a short overview; `--help-full` is the reference
+
+`bump-semver --help` (and a bare `bump-semver`) now prints a ~21-line
+overview pointing at per-action help. The previous full content was
+moved behind `--help-full`. Scripts that grep `bump-semver --help`
+output may need to switch to `--help-full`.
+
+```
+bump-semver --help            # short overview (Usage + actions + pointers)
+bump-semver --help-full       # complete reference (every format, every example)
+bump-semver <action> --help   # action-specific reference (NEW, see below)
+```
+
+### New: subcommand `--help`
+
+Each action accepts `--help` for an action-specific reference:
+
+```bash
+bump-semver patch --help      # bump help (shared by major/minor/patch)
+bump-semver pre --help        # pre help (3 modes documented)
+bump-semver get --help        # get help (--json, --no-pre, ...)
+bump-semver compare --help    # compare help (every OP including DR-0017 precision)
+```
+
+### New: `compare` precision suffix (DR-0017)
+
+Every compare operator optionally accepts a `-major` / `-minor` /
+`-patch` suffix that truncates the comparison:
+
+```bash
+bump-semver compare eq-major 1.2.3 1.9.7        # exit 0 (same major)
+bump-semver compare eq-patch 1.2.3 1.2.3-rc.1   # exit 0 (pre-release ignored)
+bump-semver compare lt-minor Cargo.toml vcs:origin/main   # only minor-or-below changes since main?
+```
+
+5 bases × 4 precisions = 20 operators. Suffix-less operators are
+unchanged (full SemVer 2.0.0 comparison including pre-release).
+
+See [`docs/decisions/DR-0017-compare-precision-suffix.md`](./docs/decisions/DR-0017-compare-precision-suffix.md).
+
 ## v0.11.x → v0.12.0
 
 Pure additive minor release; no breaking changes. See

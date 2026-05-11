@@ -28,44 +28,32 @@ import (
 // version is filled in at build time via -ldflags "-X main.version=v..."
 var version = "dev"
 
-// shortHelpText is the default --help output: aimed at someone who
-// just wants to know what the tool can do. Keep it under one screen
-// (~35 lines). For full reference (every supported file format,
-// every option, every example, exit codes, etc.) use --help-full.
+// shortHelpText is the default --help output: a one-screen overview
+// that points at the per-action help (and at --help-full as the
+// authoritative reference). Aim for ~25 lines; anything longer
+// belongs in helpBump / helpPre / helpGet / helpCompare or in
+// fullHelpText.
 const shortHelpText = `bump-semver — focused semver bump CLI
 
 Usage:
-  bump-semver get <INPUT...>
-  bump-semver <major|minor|patch|pre> <INPUT...> [--write]
-  bump-semver compare <eq|lt|le|gt|ge> <INPUT> <INPUT>
+  bump-semver <action> [args...]
   bump-semver --version
   bump-semver --help | --help-full
 
-Inputs:
-  FILE                 supported file (Cargo.toml, package.json, pyproject.toml, VERSION, ...)
-  VER                  raw semver string (1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
-  -                    read VER from stdin (once per invocation)
-  vcs:REV[:FILE]       read FILE at <REV> from jj or git
-  vcs:latest-tag()     largest semver-compatible tag from the VCS
+Actions:
+  get        Read the current version
+  major      Bump major (X.0.0)
+  minor      Bump minor (x.Y.0)
+  patch      Bump patch (x.y.Z)
+  pre        Pre-release identifiers (counter advance / set / remove)
+  compare    Compare two SemVer values via <eq|lt|le|gt|ge|...>
 
-Common options:
-  --write              Write the new version back to each FILE (bump only)
-  --pre PRE            Set pre-release identifiers (e.g. --pre rc.0)
-  --build-metadata X   Set build metadata identifiers
-  --no-pre             Remove pre-release identifiers
-  --no-build-metadata  Remove build metadata identifiers
-  --vcs jj|git|auto    Force VCS detection for vcs: inputs (default: auto)
-  --json               Output structured JSON (get / bump only)
-  -q / -qq             Suppress stdout / stdout+hint+error output
-  --no-hint            Suppress hints (fallback / unsupported / "files not modified")
+Action-specific help: bump-semver <action> --help
+Full reference:       bump-semver --help-full
 
-Examples:
-  bump-semver get VERSION
-  bump-semver patch package.json --write
-  bump-semver compare gt Cargo.toml vcs:origin/main
-
-For the full reference (every supported file format, every example,
-exit codes, fallback rules, etc.), run: bump-semver --help-full
+Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / vcs:latest-tag().
+Files are auto-detected by basename (Cargo.toml, package.json,
+pyproject.toml, VERSION, ...). See --help-full for the table.
 `
 
 // fullHelpText is the complete reference, printed by --help-full.
@@ -165,6 +153,193 @@ Examples:
   bump-semver compare eq Cargo.toml vcs:HEAD~1           # unchanged since prev commit?
 `
 
+// helpBump documents `major` / `minor` / `patch`. The three share the
+// same shape so we keep a single help text and let the user infer the
+// specific component being bumped from the action name.
+const helpBump = `bump-semver major | minor | patch — bump a SemVer component
+
+Usage:
+  bump-semver <major|minor|patch> <INPUT...> [--write] [--pre PRE] [--build-metadata META] [--no-pre] [--no-build-metadata]
+
+Action semantics:
+  major       Bump the X in X.0.0 (reset Y, Z to 0)
+  minor       Bump the y in x.Y.0 (reset Z to 0; x preserved)
+  patch       Bump the z in x.y.Z  (x, y preserved)
+
+  Pre-release and build-metadata are dropped by default (DR-0006). Use
+  --pre / --build-metadata to re-attach explicit identifiers; --no-pre
+  / --no-build-metadata to assert removal (errors if the user later
+  also passes the matching set form).
+
+Inputs (multiple, must agree):
+  FILE                       supported file (basename auto-detected)
+  VER                        raw semver string (e.g. 1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
+  -                          read VER from stdin
+  vcs:REV[:FILE]             read FILE at <REV> from jj or git (read-only — see --write)
+
+Options:
+  --write                    Write the bumped version back to each FILE input
+                             (vcs:/VER/- inputs are reference-only; --write requires ≥ 1 FILE)
+  --pre PRE                  Set pre-release identifiers on the result (e.g. --pre rc.0)
+  --build-metadata META      Set build metadata on the result (e.g. --build-metadata sha.abc)
+  --no-pre                   Assert removal of pre-release
+  --no-build-metadata        Assert removal of build metadata
+  --json                     Structured JSON output
+  --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
+  -q / -qq / --no-hint       Output suppression (see --help-full)
+
+Examples:
+  bump-semver patch Cargo.toml --write
+  bump-semver minor package.json package-lock.json --write
+  bump-semver patch v1.2.3                         # v1.2.4 (prefix preserved)
+  bump-semver patch 1.2.3-rc.0 --pre rc.0          # 1.2.4-rc.0 (pre re-attached)
+  bump-semver minor pyproject.toml --write --json  # JSON output for jq pipelines
+`
+
+// helpPre documents the three modes of `pre` separately because they
+// behave quite differently from each other (counter advance vs set vs
+// remove). Getting these confused is the most common pre-related
+// foot-gun, so the action help is explicit about them.
+const helpPre = `bump-semver pre — manage pre-release identifiers
+
+Usage:
+  bump-semver pre <INPUT...> [--write]                  # counter advance (default mode)
+  bump-semver pre <INPUT...> --pre PRE [--write]         # set / overwrite
+  bump-semver pre <INPUT...> --no-pre [--write]          # remove
+
+Modes:
+  (no flag)   Advance the trailing numeric identifier.
+              The last identifier must be pure numeric (e.g. rc.0 → rc.1).
+              Errors on identifiers like rc1 (mixed letters/digits).
+
+  --pre PRE   Overwrite the pre-release with PRE (also adds one when absent).
+              Allows rewinding (e.g. rc.5 → rc.0); rewind is the user's call.
+
+  --no-pre    Strip pre-release entirely. No-op when there is no pre-release.
+
+  Build metadata is preserved across all three modes (use bump
+  major/minor/patch to drop it, or pair with --no-build-metadata).
+
+Inputs (multiple, must agree):
+  FILE                       supported file (basename auto-detected)
+  VER                        raw semver string
+  -                          read VER from stdin
+  vcs:REV[:FILE]             read FILE at <REV> from jj or git
+
+Options:
+  --write                    Write the result back to each FILE input
+  --pre PRE                  Set / overwrite (mode 2)
+  --no-pre                   Remove (mode 3) — mutually exclusive with --pre
+  --build-metadata META      Set build metadata on the result
+  --no-build-metadata        Strip build metadata on the result
+  --json                     Structured JSON output
+  --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
+  -q / -qq / --no-hint       Output suppression (see --help-full)
+
+Examples:
+  bump-semver pre 1.2.3-rc.0                         # 1.2.3-rc.1 (counter)
+  bump-semver pre 1.2.3 --pre rc.0                   # 1.2.3-rc.0 (set)
+  bump-semver pre 1.2.3-rc.5 --pre rc.0              # 1.2.3-rc.0 (rewind)
+  bump-semver pre 1.2.3-rc.0 --no-pre                # 1.2.3 (remove)
+  bump-semver pre Cargo.toml --pre rc.0 --write
+`
+
+// helpGet documents the read-only `get` action. Short and focused —
+// most callers just want to print or pipe the current version.
+const helpGet = `bump-semver get — print the current version
+
+Usage:
+  bump-semver get <INPUT...> [--json] [--no-pre] [--no-build-metadata]
+
+When multiple INPUTs are given, all extracted versions must agree;
+otherwise a "version mismatch:" error lists each origin and value.
+This is the read-side mirror of the bump actions and is safe to call
+with --json for piping into jq.
+
+Inputs (multiple, must agree):
+  FILE                       supported file (basename auto-detected)
+  VER                        raw semver string
+  -                          read VER from stdin
+  vcs:REV[:FILE]             read FILE at <REV> from jj or git
+  vcs:latest-tag()           largest semver tag from the VCS
+
+Options:
+  --json                     Structured JSON output (.name, .version, .semver,
+                             .major / .minor / .patch / .pre / .build_metadata, ...)
+  --no-pre                   Strip pre-release from the printed value
+  --no-build-metadata        Strip build metadata from the printed value
+  --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
+  -q / -qq / --no-hint       Output suppression (see --help-full)
+
+Examples:
+  bump-semver get VERSION
+  bump-semver get Cargo.toml package.json package-lock.json   # cross-file agreement check
+  bump-semver get package.json --json | jq -r .semver
+  bump-semver get 'vcs:latest-tag()'                          # largest semver tag
+`
+
+// helpCompare documents the compare subcommand. The OP list is the
+// authoritative reference for which operators are supported — the
+// shortHelpText only shows it as `<eq|lt|le|gt|ge|...>` to stay short.
+const helpCompare = `bump-semver compare — compare two SemVer values (exit-code-driven)
+
+Usage:
+  bump-semver compare <OP> <INPUT> <INPUT>
+
+Operators:
+  eq          true if first == second
+  lt          true if first <  second
+  le          true if first <= second
+  gt          true if first >  second
+  ge          true if first >= second
+
+  Ordering follows SemVer 2.0.0 § 11. Pre-release identifiers are
+  compared, build-metadata is ignored (per spec). For numeric
+  pre-release identifiers leading zeros are rejected (per spec).
+
+Inputs (exactly two):
+  FILE                       supported file (basename auto-detected)
+  VER                        raw semver string
+  -                          read VER from stdin
+  vcs:REV[:FILE]             read FILE at <REV> from jj or git
+  vcs:latest-tag()           largest semver tag from the VCS
+
+  When a vcs: input has no explicit FILE component, the FILE is
+  borrowed from the first sibling input that provides one (DR-0008).
+
+Options:
+  --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
+  -q / -qq / --no-hint       Output suppression (see --help-full)
+
+  --write / --json / --pre / --build-metadata: rejected (compare is
+  read-only and exit-code-driven, not value-output-driven).
+
+Exit codes:
+  0   predicate is true
+  1   predicate is false
+  2   error (parse failure, missing input, unknown OP, etc.)
+
+Examples:
+  bump-semver compare eq 1.2.3 1.2.3
+  bump-semver compare lt 1.2.3-rc.1 1.2.3                    # exit 0 (rc.1 < 1.2.3)
+  bump-semver compare gt Cargo.toml 'vcs:latest-tag()'       # is the local bump ahead of release? (CI)
+  bump-semver compare lt Cargo.toml vcs:origin/main          # stale vs remote main? (pull needed)
+  bump-semver compare eq Cargo.toml vcs:HEAD~1               # unchanged since prev commit?
+  bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json
+`
+
+// actionHelpTexts dispatches per-action help. Keys are CLI action
+// names. major/minor/patch share helpBump because the action name
+// itself disambiguates which component is bumped.
+var actionHelpTexts = map[string]string{
+	"major":   helpBump,
+	"minor":   helpBump,
+	"patch":   helpBump,
+	"pre":     helpPre,
+	"get":     helpGet,
+	"compare": helpCompare,
+}
+
 func main() {
 	if err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		var ee *exitErr
@@ -194,7 +369,7 @@ func (e *exitErr) ExitCode() int { return e.code }
 
 // cliArgs is the parsed command-line.
 type cliArgs struct {
-	kind      string // "bump" | "compare" | "version" | "help"
+	kind      string // "bump" | "compare" | "version" | "help" | "helpFull" | "helpAction"
 	action    string // bump 時: "major"/"minor"/"patch"/"pre"/"get"
 	compareOp string // compare 時: "eq"/"lt"/"gt"/"le"/"ge"
 	inputs    []string
@@ -264,6 +439,12 @@ func parseArgs(argv []string) (cliArgs, error) {
 	out := cliArgs{}
 	var rest []string
 	if argv[0] == "compare" {
+		// `bump-semver compare --help` / `compare -h`: アクション固有 help
+		// に短絡 (OP の解釈は始めない)。OP 後に置かれた `--help` は通常の
+		// rest 走査で拾う。
+		if len(argv) >= 2 && (argv[1] == "--help" || argv[1] == "-h") {
+			return cliArgs{kind: "helpAction", action: "compare"}, nil
+		}
 		out.kind = "compare"
 		if len(argv) < 2 {
 			return cliArgs{}, fmt.Errorf("compare requires an operator (eq|lt|le|gt|ge)")
@@ -281,6 +462,15 @@ func parseArgs(argv []string) (cliArgs, error) {
 		}
 		out.action = argv[0]
 		rest = argv[1:]
+	}
+	// `bump-semver <action> --help` / `<action> -h` (compare の OP 後も含む):
+	// rest 先頭で検出してアクション固有 help に短絡。
+	if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+		helpAction := out.action
+		if out.kind == "compare" {
+			helpAction = "compare"
+		}
+		return cliArgs{kind: "helpAction", action: helpAction}, nil
 	}
 
 	for i := 0; i < len(rest); i++ {
@@ -686,6 +876,17 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return nil
 	case "helpFull":
 		fmt.Fprint(stdout, fullHelpText)
+		return nil
+	case "helpAction":
+		text, ok := actionHelpTexts[args.action]
+		if !ok {
+			// defensive: parseArgs should only set helpAction for
+			// known actions; fall back to the short help so the
+			// caller still sees something useful.
+			fmt.Fprint(stdout, shortHelpText)
+			return nil
+		}
+		fmt.Fprint(stdout, text)
 		return nil
 	case "compare":
 		return runCompare(args, stdin, stdout, stderr)

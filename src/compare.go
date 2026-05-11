@@ -54,7 +54,7 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return emitErr(stderr, args, err)
 	}
 
-	cmp := left.Compare(right)
+	cmp := left.CompareAt(right, args.comparePrecision)
 	if evalCompareOp(args.compareOp, cmp) {
 		return nil
 	}

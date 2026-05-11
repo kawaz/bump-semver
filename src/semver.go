@@ -131,14 +131,38 @@ func (v Version) String() string {
 //     length of the shorter list, the shorter list is "less than" the
 //     longer list.
 func (v Version) Compare(other Version) int {
+	return v.CompareAt(other, "")
+}
+
+// CompareAt is the precision-aware sibling of Compare introduced by
+// DR-0017. precision restricts how far down the X.Y.Z[-pre] hierarchy
+// the comparison reaches:
+//
+//   - ""        → SemVer 2.0.0 full comparison (X → Y → Z → pre)
+//   - "major"   → only X
+//   - "minor"   → X → Y
+//   - "patch"   → X → Y → Z (pre-release is ignored)
+//
+// Build metadata is ignored at every precision (SemVer § 10).
+// Compare(other) === CompareAt(other, "").
+func (v Version) CompareAt(other Version, precision string) int {
 	if c := cmpInt(v.Major, other.Major); c != 0 {
 		return c
+	}
+	if precision == "major" {
+		return 0
 	}
 	if c := cmpInt(v.Minor, other.Minor); c != 0 {
 		return c
 	}
+	if precision == "minor" {
+		return 0
+	}
 	if c := cmpInt(v.Patch, other.Patch); c != 0 {
 		return c
+	}
+	if precision == "patch" {
+		return 0
 	}
 	// pre-release rules (build metadata is ignored).
 	switch {

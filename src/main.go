@@ -81,6 +81,8 @@ Compare (nested subcommand):
   compare le  INPUT INPUT     true if first <= second
   compare gt  INPUT INPUT     true if first >  second
   compare ge  INPUT INPUT     true if first >= second
+  Optional -major / -minor / -patch suffix (DR-0017) truncates the comparison
+  (e.g. eq-major 1.2.3 1.9.7 -> true). See: bump-semver compare --help
 
 Inputs:
   FILE                       path to a supported file (auto-detected by basename)
@@ -286,15 +288,22 @@ const helpCompare = `bump-semver compare — compare two SemVer values (exit-cod
 Usage:
   bump-semver compare <OP> <INPUT> <INPUT>
 
-Operators:
-  eq          true if first == second
-  lt          true if first <  second
-  le          true if first <= second
-  gt          true if first >  second
-  ge          true if first >= second
+Operators (5 base × 4 precision = 20 total):
+                full       -major       -minor       -patch
+  eq            eq         eq-major     eq-minor     eq-patch
+  lt            lt         lt-major     lt-minor     lt-patch
+  le            le         le-major     le-minor     le-patch
+  gt            gt         gt-major     gt-minor     gt-patch
+  ge            ge         ge-major     ge-minor     ge-patch
 
-  Ordering follows SemVer 2.0.0 § 11. Pre-release identifiers are
-  compared, build-metadata is ignored (per spec). For numeric
+  base    {eq, lt, le, gt, ge}: pass/fail mapping of the comparison result
+  suffix  -major / -minor / -patch (DR-0017): truncate the comparison.
+          -major   compares X only
+          -minor   compares X.Y (Z and pre-release ignored)
+          -patch   compares X.Y.Z (pre-release ignored)
+          (omitted) SemVer 2.0.0 § 11 full comparison (includes pre-release)
+
+  Build-metadata is always ignored (SemVer § 10). For numeric
   pre-release identifiers leading zeros are rejected (per spec).
 
 Inputs (exactly two):
@@ -326,6 +335,9 @@ Examples:
   bump-semver compare lt Cargo.toml vcs:origin/main          # stale vs remote main? (pull needed)
   bump-semver compare eq Cargo.toml vcs:HEAD~1               # unchanged since prev commit?
   bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json
+  bump-semver compare eq-major 1.2.3 1.9.7                   # exit 0 (same major)
+  bump-semver compare eq-patch 1.2.3 1.2.3-rc.1              # exit 0 (pre-release ignored)
+  bump-semver compare lt-minor Cargo.toml vcs:origin/main    # only minor bumps since main?
 `
 
 // actionHelpTexts dispatches per-action help. Keys are CLI action
@@ -369,11 +381,12 @@ func (e *exitErr) ExitCode() int { return e.code }
 
 // cliArgs is the parsed command-line.
 type cliArgs struct {
-	kind      string // "bump" | "compare" | "version" | "help" | "helpFull" | "helpAction"
-	action    string // bump 時: "major"/"minor"/"patch"/"pre"/"get"
-	compareOp string // compare 時: "eq"/"lt"/"gt"/"le"/"ge"
-	inputs    []string
-	write     bool
+	kind             string // "bump" | "compare" | "version" | "help" | "helpFull" | "helpAction"
+	action           string // bump 時: "major"/"minor"/"patch"/"pre"/"get"
+	compareOp        string // compare 時 base: "eq"/"lt"/"gt"/"le"/"ge"
+	comparePrecision string // compare 時 precision (DR-0017): "" / "major" / "minor" / "patch"
+	inputs           []string
+	write            bool
 
 	pre              string
 	preSet           bool
@@ -412,6 +425,31 @@ var compareOps = map[string]bool{
 	"eq": true, "lt": true, "le": true, "gt": true, "ge": true,
 }
 
+// comparePrecisions enumerates DR-0017 precision suffixes. Empty
+// string (full SemVer comparison) is implicit and not represented
+// here.
+var comparePrecisions = map[string]bool{
+	"major": true, "minor": true, "patch": true,
+}
+
+// parseCompareOp splits a CLI compare operator into its base ("eq" /
+// "lt" / etc.) and optional precision suffix ("major" / "minor" /
+// "patch", DR-0017). An empty precision means SemVer-full comparison.
+// Returns ok=false for any unrecognised combination so the caller can
+// emit a uniform error.
+func parseCompareOp(s string) (base, precision string, ok bool) {
+	if compareOps[s] {
+		return s, "", true
+	}
+	if i := strings.LastIndex(s, "-"); i > 0 {
+		b, p := s[:i], s[i+1:]
+		if compareOps[b] && comparePrecisions[p] {
+			return b, p, true
+		}
+	}
+	return "", "", false
+}
+
 func parseArgs(argv []string) (cliArgs, error) {
 	if len(argv) == 0 {
 		return cliArgs{kind: "help"}, nil
@@ -447,13 +485,15 @@ func parseArgs(argv []string) (cliArgs, error) {
 		}
 		out.kind = "compare"
 		if len(argv) < 2 {
-			return cliArgs{}, fmt.Errorf("compare requires an operator (eq|lt|le|gt|ge)")
+			return cliArgs{}, fmt.Errorf("compare requires an operator (eq|lt|le|gt|ge, optionally with -major / -minor / -patch suffix)")
 		}
 		op := argv[1]
-		if !compareOps[op] {
-			return cliArgs{}, fmt.Errorf("unknown compare operator: %s (expected one of eq|lt|le|gt|ge)", op)
+		base, precision, ok := parseCompareOp(op)
+		if !ok {
+			return cliArgs{}, fmt.Errorf("unknown compare operator: %s (expected eq|lt|le|gt|ge, optionally with -major / -minor / -patch suffix)", op)
 		}
-		out.compareOp = op
+		out.compareOp = base
+		out.comparePrecision = precision
 		rest = argv[2:]
 	} else {
 		out.kind = "bump"

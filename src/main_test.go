@@ -46,6 +46,10 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"compare-eq", []string{"compare", "eq", "1.2.3", "1.2.3"}, cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}}},
 		{"compare-lt-files", []string{"compare", "lt", "a.json", "b.json"}, cliArgs{kind: "compare", compareOp: "lt", inputs: []string{"a.json", "b.json"}}},
 		{"compare-ge-stdin", []string{"compare", "ge", "1.2.3", "-"}, cliArgs{kind: "compare", compareOp: "ge", inputs: []string{"1.2.3", "-"}}},
+		// DR-0017: compare precision suffix split into base + precision
+		{"compare-eq-major", []string{"compare", "eq-major", "1.2.3", "1.9.7"}, cliArgs{kind: "compare", compareOp: "eq", comparePrecision: "major", inputs: []string{"1.2.3", "1.9.7"}}},
+		{"compare-lt-minor", []string{"compare", "lt-minor", "1.2.9", "1.3.0"}, cliArgs{kind: "compare", compareOp: "lt", comparePrecision: "minor", inputs: []string{"1.2.9", "1.3.0"}}},
+		{"compare-ge-patch", []string{"compare", "ge-patch", "1.2.3", "1.2.3-rc.0"}, cliArgs{kind: "compare", compareOp: "ge", comparePrecision: "patch", inputs: []string{"1.2.3", "1.2.3-rc.0"}}},
 		// DR-0008: vcs flag and vcs: inputs survive parseArgs intact
 		{"vcs-flag-jj", []string{"patch", "1.2.3", "--vcs", "jj"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcs: "jj", vcsSet: true}},
 		{"vcs-flag-git-eq", []string{"patch", "1.2.3", "--vcs=git"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcs: "git", vcsSet: true}},
@@ -90,6 +94,11 @@ func TestParseArgs_Errors(t *testing.T) {
 		{"compare-too-many", []string{"compare", "eq", "1.2.3", "1.2.3", "1.2.4"}},
 		{"compare-no-op", []string{"compare"}},
 		{"compare-bad-op", []string{"compare", "neq", "1.2.3", "1.2.3"}},
+		// DR-0017: precision suffix validation
+		{"compare-bad-precision", []string{"compare", "eq-foo", "1.2.3", "1.2.3"}},
+		{"compare-bad-base-with-precision", []string{"compare", "neq-major", "1.2.3", "1.2.3"}},
+		{"compare-empty-precision", []string{"compare", "eq-", "1.2.3", "1.2.3"}},
+		{"compare-double-precision", []string{"compare", "eq-major-minor", "1.2.3", "1.2.3"}},
 		{"pre-and-no-pre", []string{"pre", "1.2.3", "--pre", "rc.0", "--no-pre"}},
 		{"build-and-no-build", []string{"patch", "1.2.3", "--build-metadata", "x", "--no-build-metadata"}},
 		{"empty-pre", []string{"pre", "1.2.3", "--pre", ""}},

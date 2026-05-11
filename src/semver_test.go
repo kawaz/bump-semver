@@ -248,6 +248,67 @@ func TestVersion_Compare(t *testing.T) {
 	}
 }
 
+// TestVersion_CompareAt pins DR-0017 precision-aware comparison.
+// Precision "" must agree with Compare; "major"/"minor"/"patch"
+// truncate the comparison and ignore lower components (including
+// pre-release at "patch" precision).
+func TestVersion_CompareAt(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		a, b      string
+		precision string
+		want      int
+	}{
+		// precision = "" matches Compare for all cases.
+		{"full-eq", "1.2.3", "1.2.3", "", 0},
+		{"full-lt-patch", "1.2.3", "1.2.4", "", -1},
+		{"full-pre-lt-release", "1.2.3-rc.1", "1.2.3", "", -1},
+
+		// "major": only X is compared, everything else is ignored.
+		{"major-eq-diff-minor", "1.2.3", "1.9.7", "major", 0},
+		{"major-eq-diff-patch", "1.0.0", "1.0.99", "major", 0},
+		{"major-eq-with-pre", "1.0.0", "1.99.99-rc.1", "major", 0},
+		{"major-lt", "1.9.9", "2.0.0", "major", -1},
+		{"major-lt-with-pre-on-bigger", "1.9.9", "2.0.0-rc.0", "major", -1},
+		{"major-gt", "2.0.0", "1.9.9", "major", +1},
+
+		// "minor": X and Y; Z and pre-release ignored.
+		{"minor-eq-diff-patch", "1.2.3", "1.2.9", "minor", 0},
+		{"minor-eq-with-pre", "1.2.0", "1.2.9-rc.1", "minor", 0},
+		{"minor-lt-on-minor", "1.2.9", "1.3.0", "minor", -1},
+		{"minor-lt-with-pre", "1.2.9", "1.3.0-rc.0", "minor", -1},
+		{"minor-gt-major-wins", "2.0.0", "1.9.9", "minor", +1},
+		{"minor-eq-major-diff-minor", "1.2.3", "1.4.0", "minor", -1},
+
+		// "patch": X, Y, Z; pre-release ignored.
+		{"patch-eq-pre-vs-release", "1.2.3", "1.2.3-rc.1", "patch", 0},
+		{"patch-eq-different-pre", "1.2.3-rc.1", "1.2.3-rc.99", "patch", 0},
+		{"patch-lt", "1.2.3", "1.2.4", "patch", -1},
+		{"patch-lt-with-pre-on-bigger", "1.2.3", "1.2.4-rc.0", "patch", -1},
+		{"patch-gt-pre-on-smaller", "1.2.4-rc.0", "1.2.3", "patch", +1},
+		{"patch-eq-build-metadata", "1.2.3+a", "1.2.3+b", "patch", 0},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			va, err := ParseVersion(c.a)
+			if err != nil {
+				t.Fatalf("ParseVersion(%q): %v", c.a, err)
+			}
+			vb, err := ParseVersion(c.b)
+			if err != nil {
+				t.Fatalf("ParseVersion(%q): %v", c.b, err)
+			}
+			got := va.CompareAt(vb, c.precision)
+			if normalize(got) != c.want {
+				t.Errorf("CompareAt(%q, %q, %q) = %d, want %d", c.a, c.b, c.precision, got, c.want)
+			}
+		})
+	}
+}
+
 // TestBump_PreAction focuses on the pre action's three modes from the
 // caller's perspective (counter-advance / overwrite / remove).
 func TestBump_PreAction(t *testing.T) {

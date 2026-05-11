@@ -157,6 +157,40 @@ func TestXmlElement_Csproj_MultiplePropertyGroups(t *testing.T) {
 	}
 }
 
+func TestXmlElement_Vbproj_Inspect(t *testing.T) {
+	t.Parallel()
+	in := []byte(`<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Version>5.6.7</Version>
+  </PropertyGroup>
+</Project>
+`)
+	insp, err := inspectVia("MyVB.vbproj", in)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if insp.Versions[0].Value != "5.6.7" {
+		t.Errorf("Versions = %+v", insp.Versions)
+	}
+}
+
+func TestXmlElement_Vbproj_Replace(t *testing.T) {
+	t.Parallel()
+	in := []byte(`<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Version>5.6.7</Version>
+  </PropertyGroup>
+</Project>
+`)
+	out, err := replaceVia("MyVB.vbproj", in, "5.6.7", "5.6.8")
+	if err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if !strings.Contains(string(out), "<Version>5.6.8</Version>") {
+		t.Errorf("Replace did not write 5.6.8:\n%s", string(out))
+	}
+}
+
 // Missing version: rule should fall through.
 func TestXmlElement_Csproj_MissingVersion(t *testing.T) {
 	t.Parallel()

@@ -157,6 +157,37 @@ func TestResolveRule_FallbackTOMLTopLevel(t *testing.T) {
 	}
 }
 
+// TestDetectHandler_V14Formats covers v0.14.0 / DR-0018 additions: JVM,
+// .NET MSBuild, Maven, Haskell, RPM. Every listed path must succeed
+// detectHandler (the file format dispatch can find a rule for it).
+func TestDetectHandler_V14Formats(t *testing.T) {
+	t.Parallel()
+	good := []string{
+		// path-pinned (confidence 3)
+		"pom.xml",
+		"sub/pom.xml",
+		// basename (confidence 2)
+		"build.gradle",
+		"app/build.gradle",
+		"build.gradle.kts",
+		"app/build.gradle.kts",
+		// glob (confidence 1)
+		"MyApp.csproj",
+		"src/MyApp.csproj",
+		"MyLib.fsproj",
+		"MyVB.vbproj",
+		"my-pkg.cabal",
+		"lib/foo.cabal",
+		"foo.spec",
+		"specs/bar.spec",
+	}
+	for _, p := range good {
+		if _, err := detectHandler(p); err != nil {
+			t.Errorf("detectHandler(%q) unexpected error: %v", p, err)
+		}
+	}
+}
+
 // TestDetectHandler_NewFallbackExtensions extends the recognised-paths
 // list to cover the DR-0011 additions (`*.yaml`, `*.yml`, `*.toml`).
 func TestDetectHandler_NewFallbackExtensions(t *testing.T) {

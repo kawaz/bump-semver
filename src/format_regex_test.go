@@ -416,7 +416,50 @@ func TestRegexReplace_BuildGradleKts(t *testing.T) {
 	}
 }
 
+// Groovy DSL `version = "..."` (double-quoted assignment): build.gradle
+// 用の 3 つ目の Groovy 形 (`= '...'` / `"..."` method-call / `= "..."`)。
+// build.gradle.kts と同じ regex で書けるはずだが、build.gradle rule の
+// 独立した正当性確認。
+func TestRegexInspect_BuildGradle_GroovyAssignDoubleQuoted(t *testing.T) {
+	t.Parallel()
+	in := []byte(`version = "1.2.3"
+group = "com.example"
+`)
+	insp, err := inspectVia("build.gradle", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "1.2.3" {
+		t.Errorf("Versions = %+v", insp.Versions)
+	}
+}
+
+// Negative: build.gradle で quote 無しの `version 1.2.3` は version
+// regex `^version\s*=?\s*['"]...['"]` の quote 必須に弾かれる。Inspect
+// 失敗 = handler dispatcher のフォールバックも無いので detect 失敗。
+func TestRegexInspect_BuildGradle_RejectsUnquotedShorthand(t *testing.T) {
+	t.Parallel()
+	in := []byte("version 1.2.3\ngroup com.example\n")
+	if _, err := inspectVia("build.gradle", in); err == nil {
+		t.Error("expected error for unquoted `version 1.2.3` in build.gradle")
+	}
+}
+
 // --- *.cabal (Haskell Cabal package manifest) ---------------------------
+
+// Negative: cabal-version: のみで version: が無いファイルは Inspect
+// 失敗。regex `(?m)^version\s*:\s*([^\s]+)` が `cabal-version:` を
+// 誤検出しないことを line-anchor で確認する。
+func TestRegexInspect_Cabal_RejectsCabalVersionOnly(t *testing.T) {
+	t.Parallel()
+	in := []byte(`cabal-version:  2.4
+name:           pkg
+synopsis:       no version field
+`)
+	if _, err := inspectVia("pkg.cabal", in); err == nil {
+		t.Error("expected error for cabal file with only cabal-version: (no version:)")
+	}
+}
 
 func TestRegexInspect_Cabal(t *testing.T) {
 	t.Parallel()

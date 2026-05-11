@@ -29,7 +29,20 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"version-json-short", []string{"-V", "--json"}, cliArgs{kind: "version", json: true}},
 		{"help-flag", []string{"--help"}, cliArgs{kind: "help"}},
 		{"help-short", []string{"-h"}, cliArgs{kind: "help"}},
+		{"help-full", []string{"--help-full"}, cliArgs{kind: "helpFull"}},
 		{"empty", []string{}, cliArgs{kind: "help"}},
+		// v0.13.0 subcommand --help dispatch (DR-0017 周辺)
+		{"action-help-major", []string{"major", "--help"}, cliArgs{kind: "helpAction", action: "major"}},
+		{"action-help-minor", []string{"minor", "--help"}, cliArgs{kind: "helpAction", action: "minor"}},
+		{"action-help-patch", []string{"patch", "--help"}, cliArgs{kind: "helpAction", action: "patch"}},
+		{"action-help-patch-short", []string{"patch", "-h"}, cliArgs{kind: "helpAction", action: "patch"}},
+		{"action-help-pre", []string{"pre", "--help"}, cliArgs{kind: "helpAction", action: "pre"}},
+		{"action-help-get", []string{"get", "--help"}, cliArgs{kind: "helpAction", action: "get"}},
+		{"action-help-compare-no-op", []string{"compare", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
+		{"action-help-compare-op-then-help", []string{"compare", "eq", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
+		{"action-help-compare-precision-then-help", []string{"compare", "eq-major", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
+		// --vcs auto (DR-0016) happy path
+		{"vcs-flag-auto", []string{"patch", "1.2.3", "--vcs", "auto"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcs: "auto", vcsSet: true}},
 		{"dash-dash-passthrough", []string{"patch", "--", "--weird-file.json"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"--weird-file.json"}}},
 		{"multi-file", []string{"get", "package.json", "package-lock.json"}, cliArgs{kind: "bump", action: "get", inputs: []string{"package.json", "package-lock.json"}}},
 		{"multi-file-write", []string{"patch", "a.json", "b.json", "c.json", "--write"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"a.json", "b.json", "c.json"}, write: true}},
@@ -647,6 +660,76 @@ func TestRun_Compare_Eq_False(t *testing.T) {
 	}
 	if ee.code != 1 {
 		t.Errorf("exit code = %d, want 1", ee.code)
+	}
+}
+
+// TestRun_HelpDispatch covers v0.13.0 の 3 段 help 体系 (short / full /
+// per-action) が run() 経由で正しく異なる出力を返すことを確認。文字列
+// 完全一致ではなく「各 help が固有の sentinel 句を含むか」で識別する
+// (将来の文言変更で fragile にならないように)。
+func TestRun_HelpDispatch(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		argv        []string
+		mustContain string // 出力にこの substring が含まれていれば pass
+		mustExclude string // 出力にこの substring が含まれていれば fail (空文字なら無視)
+	}{
+		// short help: コンパクトな overview。Actions 一覧 + --help-full 案内
+		{"short-help-flag", []string{"--help"}, "Action-specific help: bump-semver <action> --help", "Supported file formats"},
+		{"short-help-h", []string{"-h"}, "Full reference:       bump-semver --help-full", ""},
+		{"short-help-empty", []string{}, "Action-specific help: bump-semver <action> --help", ""},
+		// full help: Supported file formats 表 + 全 Examples
+		{"full-help", []string{"--help-full"}, "Supported file formats (auto-detected by basename)", "Action-specific help: bump-semver <action> --help"},
+		// per-action helps: それぞれ固有の見出しを持つ
+		{"action-help-major", []string{"major", "--help"}, "bump-semver major | minor | patch — bump a SemVer component", ""},
+		{"action-help-minor", []string{"minor", "--help"}, "bump-semver major | minor | patch — bump a SemVer component", ""},
+		{"action-help-patch", []string{"patch", "--help"}, "bump-semver major | minor | patch — bump a SemVer component", ""},
+		{"action-help-pre", []string{"pre", "--help"}, "bump-semver pre — manage pre-release identifiers", ""},
+		{"action-help-get", []string{"get", "--help"}, "bump-semver get — print the current version", ""},
+		{"action-help-compare", []string{"compare", "--help"}, "bump-semver compare — compare two SemVer values", ""},
+		{"action-help-compare-with-op", []string{"compare", "eq", "--help"}, "bump-semver compare — compare two SemVer values", ""},
+		{"action-help-compare-with-precision-op", []string{"compare", "eq-major", "--help"}, "bump-semver compare — compare two SemVer values", ""},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			if err := run(tc.argv, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("run(%v) error: %v", tc.argv, err)
+			}
+			out := stdout.String()
+			if !strings.Contains(out, tc.mustContain) {
+				t.Errorf("run(%v) output does not contain %q\ngot:\n%s", tc.argv, tc.mustContain, out)
+			}
+			if tc.mustExclude != "" && strings.Contains(out, tc.mustExclude) {
+				t.Errorf("run(%v) output should not contain %q (wrong help variant)", tc.argv, tc.mustExclude)
+			}
+		})
+	}
+}
+
+// TestRun_BumpSemverVcsEnvIgnored は DR-0016 で削除された
+// BUMP_SEMVER_VCS 環境変数が誤って再導入された場合の regression を
+// 防ぐ。env を設定しても detectVcs / parseVcsOverride が一切影響を
+// 受けないことを assert する。
+func TestRun_BumpSemverVcsEnvIgnored(t *testing.T) {
+	// t.Setenv は test cleanup で復元される
+	t.Setenv("BUMP_SEMVER_VCS", "git")
+	// parseVcsOverride: 空文字 / "auto" は env を見ずに vcsAuto を返す
+	if got, err := parseVcsOverride(""); err != nil || got != vcsAuto {
+		t.Errorf("parseVcsOverride(\"\") = (%v, %v), want (vcsAuto, nil)", got, err)
+	}
+	if got, err := parseVcsOverride("auto"); err != nil || got != vcsAuto {
+		t.Errorf("parseVcsOverride(\"auto\") = (%v, %v), want (vcsAuto, nil)", got, err)
+	}
+	// 明示的 jj / git は env と無関係に解決される
+	if got, err := parseVcsOverride("jj"); err != nil || got != vcsJj {
+		t.Errorf("parseVcsOverride(\"jj\") = (%v, %v), want (vcsJj, nil)", got, err)
+	}
+	if got, err := parseVcsOverride("git"); err != nil || got != vcsGit {
+		t.Errorf("parseVcsOverride(\"git\") = (%v, %v), want (vcsGit, nil)", got, err)
 	}
 }
 

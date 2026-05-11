@@ -57,11 +57,14 @@ bump-semver compare <OP> <INPUT> <INPUT>
 
 終了コード: `0` = 真 / `1` = 偽 / `2` = エラー (`test` / `dpkg --compare-versions` 慣習)。
 
+OP には `-major` / `-minor` / `-patch` の suffix を付けて比較精度を切り詰められる ([DR-0017](./docs/decisions/DR-0017-compare-precision-suffix.md))。5 base × 4 precision = 20 OP。
+
 ```bash
 bump-semver compare eq Cargo.toml v1.2.3 && echo same
 bump-semver compare lt 1.2.3-rc.1 1.2.3                       # exit 0 (rc < 確定版)
-bump-semver compare lt Cargo.toml < <(jj file show -r main@origin Cargo.toml)
-                                                              # main からズレてないか CI チェック
+bump-semver compare eq-major 1.2.3 1.9.7                      # exit 0 (同じ major)
+bump-semver compare eq-patch 1.2.3 1.2.3-rc.1                 # exit 0 (pre-release 無視)
+bump-semver compare lt-minor Cargo.toml vcs:origin/main       # minor 以下しか動いてない?
 ```
 
 ### フラグ

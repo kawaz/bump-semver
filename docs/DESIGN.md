@@ -202,6 +202,17 @@ Exit codes:
 
 This follows the `test` / `dpkg --compare-versions` convention (DR-0006 確定論点 A). The bump path's old "error = exit 1" behaviour was also unified to `2` here; shell scripts that previously branched on `$? -eq 1` for errors should switch to `$? -ne 0` (see UPGRADING.md).
 
+#### precision suffix (DR-0017)
+
+Each OP optionally accepts a `-major` / `-minor` / `-patch` suffix that truncates the comparison:
+
+- `-major`: compare X only (`eq-major 1.2.3 1.9.7` → true)
+- `-minor`: compare X.Y (`eq-minor 1.2.3 1.2.9` → true)
+- `-patch`: compare X.Y.Z, ignoring pre-release (`eq-patch 1.2.3 1.2.3-rc.1` → true)
+- (no suffix): full SemVer 2.0.0 § 11 comparison (pre-release included)
+
+5 bases × 4 precisions = 20 operators. Build metadata is always ignored (SemVer § 10). Lets CI scripts express "I only care about the major bump" or "ignore pre-release noise — did the release version change?" in one line.
+
 ### Output
 
 The new version is **always written to stdout on a single line** on success (regardless of `--write`, for bump actions). `compare` writes nothing to stdout even on a true predicate (avoids pipeline pollution; the result is signalled via exit code only).

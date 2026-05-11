@@ -202,6 +202,17 @@ separator 不一致 (`1.2_3`) はエラー。
 
 これは `test` / `dpkg --compare-versions` 慣習に揃えた (DR-0006 確定論点 A)。bump 系の旧 exit code 1 (エラー) もこの統一に合わせて 2 に変更されているため、`if [ $? -eq 1 ]` を直接見る古いスクリプトは `if [ $? -ne 0 ]` への書き換えが必要 (UPGRADING.md 参照)。
 
+#### precision suffix (DR-0017)
+
+OP には `-major` / `-minor` / `-patch` のいずれかを suffix で付けられる。比較対象の component を切り詰めて評価する:
+
+- `-major`: X のみで比較 (`eq-major 1.2.3 1.9.7` → true)
+- `-minor`: X.Y で比較 (`eq-minor 1.2.3 1.2.9` → true)
+- `-patch`: X.Y.Z で比較し pre-release は無視 (`eq-patch 1.2.3 1.2.3-rc.1` → true)
+- suffix なし: SemVer 2.0.0 § 11 完全比較 (pre-release を含む)
+
+5 base × 4 precision = 20 OP。build metadata は常に無視 (SemVer § 10)。CI で「メジャー upgrade を検知したい」「pre-release 違いは無視して同じ release version か知りたい」用途を 1 行で表現できる。
+
 ### 出力
 
 成功時は **常に新しいバージョンを stdout に1行出力** する (`--write` の有無で変わらない、bump 系)。`compare` は predicate true でも stdout 出力なし (パイプライン汚染回避、結果は exit code で取得)。

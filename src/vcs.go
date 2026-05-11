@@ -11,12 +11,11 @@ import (
 
 // vcsKind identifies which VCS is in use for `vcs:` inputs.
 //
-// Resolution precedence (DR-0008):
-//  1. --vcs jj|git CLI flag
-//  2. BUMP_SEMVER_VCS=jj|git environment variable
-//  3. .jj exists in the working directory tree → jj
-//  4. .git exists in the working directory tree → git
-//  5. otherwise → error
+// Resolution precedence:
+//  1. --vcs jj|git CLI flag (--vcs auto falls through to probing)
+//  2. .jj exists in the working directory tree → jj
+//  3. .git exists in the working directory tree → git
+//  4. otherwise → error
 //
 // jj wins over git when both are present (kawaz's git-bare + jj-workspace
 // layout has both `.jj` and `.git` at the repo root; we want jj semantics
@@ -41,40 +40,31 @@ func (k vcsKind) String() string {
 	}
 }
 
-// parseVcsOverride parses a --vcs / BUMP_SEMVER_VCS value. Empty string
-// means "no override".
+// parseVcsOverride parses a --vcs value. Empty string and "auto" both
+// fall through to auto-detection.
 func parseVcsOverride(s string) (vcsKind, error) {
 	switch s {
-	case "":
+	case "", "auto":
 		return vcsAuto, nil
 	case "jj":
 		return vcsJj, nil
 	case "git":
 		return vcsGit, nil
 	default:
-		return vcsAuto, fmt.Errorf("invalid --vcs value %q (expected jj or git)", s)
+		return vcsAuto, fmt.Errorf("invalid --vcs value %q (expected jj, git, or auto)", s)
 	}
 }
 
 // detectVcs resolves the VCS to use for a `vcs:` input.
 //
-// override is from --vcs (highest priority). When override == vcsAuto we
-// look at BUMP_SEMVER_VCS, then probe for `.jj` / `.git` directories in
-// the current working directory (walking up to find them). The probe
-// behaviour mirrors what `jj` and `git` themselves do — they look for
-// the metadata directory in cwd or any parent.
+// override is from --vcs (highest priority). When override == vcsAuto
+// we probe for `.jj` / `.git` directories in the current working
+// directory (walking up to find them). The probe behaviour mirrors
+// what `jj` and `git` themselves do — they look for the metadata
+// directory in cwd or any parent.
 func detectVcs(override vcsKind) (vcsKind, error) {
 	if override != vcsAuto {
 		return override, nil
-	}
-	if env := os.Getenv("BUMP_SEMVER_VCS"); env != "" {
-		k, err := parseVcsOverride(env)
-		if err != nil {
-			return vcsAuto, fmt.Errorf("BUMP_SEMVER_VCS: %w", err)
-		}
-		if k != vcsAuto {
-			return k, nil
-		}
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -251,7 +241,7 @@ func vcsFetchFile(vcs vcsKind, rev, file string) ([]byte, error) {
 	case vcsGit:
 		return runVcs("git", "show", rev+":"+file)
 	default:
-		return nil, fmt.Errorf("vcs not detected (set --vcs or BUMP_SEMVER_VCS)")
+		return nil, fmt.Errorf("vcs not detected (set --vcs)")
 	}
 }
 
@@ -301,7 +291,7 @@ func vcsListTags(vcs vcsKind) ([]string, error) {
 		}
 		return splitAndDedup(string(out)), nil
 	default:
-		return nil, fmt.Errorf("vcs not detected (set --vcs or BUMP_SEMVER_VCS)")
+		return nil, fmt.Errorf("vcs not detected (set --vcs)")
 	}
 }
 

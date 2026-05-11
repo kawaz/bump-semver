@@ -57,22 +57,21 @@ Inputs:
   vcs:REV[:FILE]             read FILE at <REV> from the VCS (jj or git, auto-detected)
   vcs:latest-tag()           read the largest semver-compatible tag from the VCS
 
-Flags:
-  --pre PRE              Set pre-release identifiers (e.g. --pre rc.0)
-  --no-pre               Remove pre-release identifiers
-  --build-metadata META  Set build metadata identifiers (e.g. --build-metadata sha.abc)
-  --no-build-metadata    Remove build metadata identifiers
+Options:
   --write                Write the new version back to each FILE input (bump only)
-  --vcs jj|git           Force VCS detection (overrides BUMP_SEMVER_VCS env)
+  --pre PRE              Set pre-release identifiers (e.g. --pre rc.0)
+  --build-metadata META  Set build metadata identifiers (e.g. --build-metadata sha.abc)
+  --no-pre               Remove pre-release identifiers
+  --no-build-metadata    Remove build metadata identifiers
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection for vcs: inputs (default: auto)
   --no-hint              Suppress hints (fallback / unsupported / "files not modified")
   -q, --quiet            Suppress stdout (and the hint)
   -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
   --json                 Output structured JSON (get / bump only, not for compare)
   --version, -V          Print the binary version
   --help, -h             Show this help
-
-Environment:
-  BUMP_SEMVER_VCS=jj|git Force VCS detection (overridden by --vcs)
 
 Supported file formats (auto-detected by basename):
   Cargo.toml         TOML, [package].version (and [package].name for cross-input checks)
@@ -100,9 +99,12 @@ Exit codes:
   2   error (parse failure, mismatch, missing input, etc.)
 
 Examples:
+  bump-semver get VERSION
+  bump-semver patch VERSION --write
   bump-semver patch Cargo.toml --write
+  bump-semver patch package.json --write
+  bump-semver minor pyproject.toml --write
   bump-semver minor package.json package-lock.json --write
-  bump-semver get Cargo.toml
   bump-semver patch 1.2.3
   bump-semver patch v1.2.3                       # v1.2.4 (prefix preserved)
   bump-semver minor version_1_2_3                # version_1_3_0 (prefix + body sep '_' preserved)
@@ -111,7 +113,7 @@ Examples:
   bump-semver patch 1.2.3-rc.0 --pre rc.0        # 1.2.4-rc.0 (pre re-attached)
   bump-semver compare lt 1.2.3-rc.1 1.2.3        # exit 0
   bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json
-  bump-semver get Cargo.toml --json              # structured output for jq
+  bump-semver get package.json --json            # structured output for jq
   bump-semver --version --json                   # decompose own version into the same JSON schema
   bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # ready to release? (CI)
   bump-semver compare lt Cargo.toml vcs:origin/main      # stale vs remote main? (pull needed)
@@ -175,9 +177,9 @@ type cliArgs struct {
 	// the bare String(). Rejected for compare (predicate-only output).
 	json bool // --json
 
-	// VCS override (DR-0008). When non-empty, takes priority over the
-	// BUMP_SEMVER_VCS env var and the auto-probe (`.jj` / `.git`).
-	// Accepted values: "jj" / "git".
+	// VCS override (DR-0008). When non-empty and not "auto", takes
+	// priority over the auto-probe (`.jj` / `.git`). Accepted values:
+	// "jj" / "git" / "auto" (auto and "" both fall through to probing).
 	vcs    string // --vcs value (validated in parseArgs)
 	vcsSet bool   // whether --vcs was supplied at all
 }
@@ -303,7 +305,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("--vcs specified twice")
 			}
 			if i+1 >= len(rest) {
-				return cliArgs{}, fmt.Errorf("--vcs requires a value (jj or git)")
+				return cliArgs{}, fmt.Errorf("--vcs requires a value (jj, git, or auto)")
 			}
 			out.vcs = rest[i+1]
 			out.vcsSet = true

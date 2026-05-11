@@ -46,8 +46,9 @@ func TestVcsParseSpec(t *testing.T) {
 	}
 }
 
-// TestParseVcsOverride covers the --vcs / BUMP_SEMVER_VCS value
-// validation done at the CLI layer.
+// TestParseVcsOverride covers the --vcs value validation done at the
+// CLI layer. Both "" (flag not passed) and "auto" resolve to vcsAuto so
+// the probe runs.
 func TestParseVcsOverride(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -56,10 +57,12 @@ func TestParseVcsOverride(t *testing.T) {
 		wantErr bool
 	}{
 		{"", vcsAuto, false},
+		{"auto", vcsAuto, false},
 		{"jj", vcsJj, false},
 		{"git", vcsGit, false},
 		{"foo", vcsAuto, true},
-		{"JJ", vcsAuto, true}, // case-sensitive on purpose; users see help
+		{"JJ", vcsAuto, true},   // case-sensitive on purpose; users see help
+		{"AUTO", vcsAuto, true}, // case-sensitive
 	}
 	for _, tc := range cases {
 		got, err := parseVcsOverride(tc.in)

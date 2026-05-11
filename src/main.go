@@ -28,13 +28,57 @@ import (
 // version is filled in at build time via -ldflags "-X main.version=v..."
 var version = "dev"
 
-const helpText = `bump-semver — focused semver bump CLI
+// shortHelpText is the default --help output: aimed at someone who
+// just wants to know what the tool can do. Keep it under one screen
+// (~35 lines). For full reference (every supported file format,
+// every option, every example, exit codes, etc.) use --help-full.
+const shortHelpText = `bump-semver — focused semver bump CLI
+
+Usage:
+  bump-semver get <INPUT...>
+  bump-semver <major|minor|patch|pre> <INPUT...> [--write]
+  bump-semver compare <eq|lt|le|gt|ge> <INPUT> <INPUT>
+  bump-semver --version
+  bump-semver --help | --help-full
+
+Inputs:
+  FILE                 supported file (Cargo.toml, package.json, pyproject.toml, VERSION, ...)
+  VER                  raw semver string (1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
+  -                    read VER from stdin (once per invocation)
+  vcs:REV[:FILE]       read FILE at <REV> from jj or git
+  vcs:latest-tag()     largest semver-compatible tag from the VCS
+
+Common options:
+  --write              Write the new version back to each FILE (bump only)
+  --pre PRE            Set pre-release identifiers (e.g. --pre rc.0)
+  --build-metadata X   Set build metadata identifiers
+  --no-pre             Remove pre-release identifiers
+  --no-build-metadata  Remove build metadata identifiers
+  --vcs jj|git|auto    Force VCS detection for vcs: inputs (default: auto)
+  --json               Output structured JSON (get / bump only)
+  -q / -qq             Suppress stdout / stdout+hint+error output
+  --no-hint            Suppress hints (fallback / unsupported / "files not modified")
+
+Examples:
+  bump-semver get VERSION
+  bump-semver patch package.json --write
+  bump-semver compare gt Cargo.toml vcs:origin/main
+
+For the full reference (every supported file format, every example,
+exit codes, fallback rules, etc.), run: bump-semver --help-full
+`
+
+// fullHelpText is the complete reference, printed by --help-full.
+// It includes the supported-format table, the full Examples block,
+// exit codes, and the multi-input semantics — anything a user might
+// reach for when scripting or debugging an unusual file.
+const fullHelpText = `bump-semver — focused semver bump CLI
 
 Usage:
   bump-semver <ACTION> <INPUT...> [flags]
   bump-semver compare <OP> <INPUT> <INPUT> [flags]
   bump-semver --version
-  bump-semver --help
+  bump-semver --help | --help-full
 
 Actions (bump/read):
   major   Bump major (X.0.0); pre-release / build-metadata dropped by default
@@ -71,7 +115,8 @@ Global Options:
   -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
   --json                 Output structured JSON (get / bump only, not for compare)
   --version, -V          Print the binary version
-  --help, -h             Show this help
+  --help, -h             Show the short help (Usage + common options)
+  --help-full            Show this full reference
 
 Supported file formats (auto-detected by basename):
   Cargo.toml         TOML, [package].version (and [package].name for cross-input checks)
@@ -212,6 +257,8 @@ func parseArgs(argv []string) (cliArgs, error) {
 		return out, nil
 	case "--help", "-h":
 		return cliArgs{kind: "help"}, nil
+	case "--help-full":
+		return cliArgs{kind: "helpFull"}, nil
 	}
 
 	out := cliArgs{}
@@ -635,7 +682,10 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, version)
 		return nil
 	case "help":
-		fmt.Fprint(stdout, helpText)
+		fmt.Fprint(stdout, shortHelpText)
+		return nil
+	case "helpFull":
+		fmt.Fprint(stdout, fullHelpText)
 		return nil
 	case "compare":
 		return runCompare(args, stdin, stdout, stderr)

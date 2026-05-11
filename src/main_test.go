@@ -699,6 +699,91 @@ func TestRun_Compare_AllOps(t *testing.T) {
 	}
 }
 
+// TestRun_Compare_PrecisionOps pins DR-0017 precision-suffix OPs at
+// the CLI layer. TestVersion_CompareAt covers the underlying math;
+// this test ensures parseArgs → runCompare → exit-code mapping all
+// agree for the suffix form.
+func TestRun_Compare_PrecisionOps(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		op       string
+		a, b     string
+		wantTrue bool
+	}{
+		// -major: only X matters.
+		{"eq-major", "1.2.3", "1.9.7", true},
+		{"eq-major", "1.2.3", "2.0.0", false},
+		{"lt-major", "1.9.9", "2.0.0-rc.0", true}, // pre-release on bigger is ignored
+		{"ge-major", "1.0.0", "1.99.99", true},
+
+		// -minor: X.Y only.
+		{"eq-minor", "1.2.3", "1.2.9", true},
+		{"eq-minor", "1.2.3", "1.3.0", false},
+		{"lt-minor", "1.2.9", "1.3.0-rc.0", true},
+
+		// -patch: X.Y.Z; pre-release ignored.
+		{"eq-patch", "1.2.3", "1.2.3-rc.1", true},
+		{"eq-patch", "1.2.3-rc.1", "1.2.3-rc.99", true},
+		{"eq-patch", "1.2.3", "1.2.4", false},
+		{"gt-patch", "1.2.4-rc.0", "1.2.3", true},
+		{"ge-patch", "1.2.3-rc.0", "1.2.3", true},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.op+"_"+c.a+"_"+c.b, func(t *testing.T) {
+			t.Parallel()
+			err := run([]string{"compare", c.op, c.a, c.b}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+			if c.wantTrue {
+				if err != nil {
+					t.Errorf("expected success (true), got: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected predicate-false (exit 1), got success")
+			}
+			var ee *exitErr
+			if !errors.As(err, &ee) {
+				t.Fatalf("expected *exitErr, got %T: %v", err, err)
+			}
+			if ee.code != 1 {
+				t.Errorf("exit code = %d, want 1", ee.code)
+			}
+		})
+	}
+}
+
+// TestRun_Compare_PrecisionInvalidOps pins error paths for malformed
+// precision suffixes — they must exit 2 (error), not 1 (predicate
+// false).
+func TestRun_Compare_PrecisionInvalidOps(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"eq-foo",         // unknown precision
+		"neq-major",      // unknown base
+		"eq-",            // empty precision
+		"eq-major-minor", // double suffix
+		"-major",         // empty base
+	}
+	for _, op := range cases {
+		op := op
+		t.Run(op, func(t *testing.T) {
+			t.Parallel()
+			err := run([]string{"compare", op, "1.2.3", "1.2.3"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error for op %q", op)
+			}
+			var ee *exitErr
+			if !errors.As(err, &ee) {
+				t.Fatalf("expected *exitErr, got %T: %v", err, err)
+			}
+			if ee.code != 2 {
+				t.Errorf("invalid OP should map to exit 2, got %d: %v", ee.code, err)
+			}
+		})
+	}
+}
+
 func TestRun_Compare_ParseError(t *testing.T) {
 	t.Parallel()
 	err := run([]string{"compare", "eq", "1.2.3", "not-a-version"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})

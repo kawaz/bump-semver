@@ -23,9 +23,9 @@
 /// justfile は **比較用に残してあるだけ**。CI / ローカルの主運用は
 /// 本 Taskfile.pkl + pkf (kawaz/pkf-tasks 経由)。justfile への依存は
 /// Taskfile.pkl 内には一切無い (lint で `just --fmt` を呼んだりしない)。
-amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.4.0#/Taskfile.pkl"
+amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.6.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.12#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.14#/all.pkl" as kawaz
 
 // =============================================================================
 // Shared file sets

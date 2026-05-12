@@ -22,9 +22,9 @@ jobs:
           key: pkl-cache-${{ hashFiles('PklProject.deps.json', '**/PklProject.deps.json') }}
           restore-keys: |
             pkl-cache-
-      # SHA pin: tag pin (`mizchi/pkfire@pkfire@0.4.0`) は GitHub Actions の
-      # workflow parser が file-level error を起こす (kawaz/pkf-tasks の DR-0004
-      # 参照)。pkfire 0.4.0 対応の commit を直接指す。
-      - name: Setup pkfire (pkfire@0.4.0)
-        uses: mizchi/pkfire@6e8f4735acd74407455ee6be3debfe9ca8c8e4e9
+      # pkfire 0.5.0+ で action 用の `v<version>` tag (v0.6.0 / v0 等) が
+      # upstream に切られたので SHA pin 不要 (kawaz/pkf-tasks の DR-0004 は
+      # Superseded)。
+      - name: Setup pkfire (pkfire@0.6.0)
+        uses: mizchi/pkfire@v0.6.0
       - run: pkf run ci

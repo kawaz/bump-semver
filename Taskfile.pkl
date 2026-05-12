@@ -1,35 +1,12 @@
 /// bump-semver Taskfile (pkfire).
 ///
-/// 設計方針: ゴール起点の DAG。VCS 抽象と翻訳ペア検証は
-/// [kawaz/pkf-tasks](https://github.com/kawaz/pkf-tasks) に集約し、
-/// 本ファイルは Go 系の lint/test/build と bump-semver 固有の
-/// release flow だけ持つ。
-///
-///   User-facing goals    | 内部 gate
-///   ---------------------|----------------
-///   default (= list)     | lint
-///   lint / test / build  | kawaz.vcs.ensureClean (kawaz/pkf-tasks)
-///   ci                   | kawaz.docs.checkTranslations (kawaz/pkf-tasks)
-///   bump-version         | checkVersionBumped (本リポ固有)
-///   run                  |
-///   push                 |
-///
-/// pkfire の旨味:
-///   - inputs ベースで lint/test/build は incremental cache
-///   - typed Task 参照 + Param で deps / 引数のタイポは Pkl 評価時に検出
-///   - DAG 並列実行 (`pkf graph --format mermaid`)
-///   - 副作用タスクは cache = false で常時実行
-///
-/// justfile は **比較用に残してあるだけ**。CI / ローカルの主運用は
-/// 本 Taskfile.pkl + pkf (kawaz/pkf-tasks 経由)。justfile への依存は
-/// Taskfile.pkl 内には一切無い (lint で `just --fmt` を呼んだりしない)。
+/// VCS 抽象 / 翻訳ペア / migrate / semver gate は [kawaz/pkf-tasks](https://github.com/kawaz/pkf-tasks) 由来。
+/// 本ファイルは Go 系の lint/test/build + bump-semver 固有の release flow だけ持つ。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.6.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.0.0#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.1.0#/all.pkl" as kawaz
 
-// =============================================================================
-// Shared file sets
-// =============================================================================
+// ---------- shared ----------
 
 local goSources: Listing<String> = new {
   "src/**/*.go"
@@ -37,14 +14,11 @@ local goSources: Listing<String> = new {
   "go.sum"
 }
 
-// =============================================================================
-// Atomic tasks
-// =============================================================================
+// ---------- atomic ----------
 
-// lint:go — Go 系の lint。本リポ固有。
 local lintGo: Task = new {
   name = "lint:go"
-  description = "gofmt -w / go vet"
+  description = "gofmt + go vet"
   inputs = goSources
   cmd =
     """
@@ -53,12 +27,10 @@ local lintGo: Task = new {
     """
 }
 
-// lint:pkl — Pkl ファイルの自動整形。pkf-tasks v2.0.0 で library export
-// から外れたので本リポ内に inline 定義 (DR-0008 of pkf-tasks 参照、library
-// 化するほど複雑ではない 5 行 task)。
+// pkf-tasks v2.0.0 で library export から外れたので inline (DR-0008 of pkf-tasks)
 local lintPkl: Task = new {
   name = "lint:pkl"
-  description = "pkl format -w (recursively format all Pkl files)"
+  description = "pkl format -w"
   inputs {
     "**/*.pkl"
     "**/PklProject"
@@ -71,11 +43,9 @@ local lintPkl: Task = new {
     """
 }
 
-// lint — umbrella。lint:go (Go) と lint:pkl (Pkl format) をまとめる。
-// `pkf list` でソートしたとき lint / lint:go / lint:pkl が隣接して読みやすい。
 local lint: Task = new {
   name = "lint"
-  description = "all lints (lint:go + lint:pkl)"
+  description = "lint:go + lint:pkl"
   cache = false
   deps { lintGo; lintPkl }
   cmd = "echo lint ok"
@@ -83,7 +53,7 @@ local lint: Task = new {
 
 local test: Task = new {
   name = "test"
-  description = "go test ./..."
+  description = "go test"
   inputs = goSources
   deps { lint }
   cmd = "go test ./..."
@@ -91,7 +61,7 @@ local test: Task = new {
 
 local build: Task = new {
   name = "build"
-  description = "release binary (host target) -> bin/bump-semver"
+  description = "build (host target)"
   inputs {
     ...goSources
     "VERSION"
@@ -106,41 +76,28 @@ local build: Task = new {
     """#
 }
 
-// =============================================================================
-// Umbrella
-// =============================================================================
+// ---------- umbrella / entries ----------
 
 local ci: Task = new {
   name = "ci"
-  description = "lint + test + build (DAG 並列)"
+  description = "lint + test + build"
   cache = false
   deps { lint; test; build }
   cmd = "echo ci ok"
 }
 
-// =============================================================================
-// Run (variadic args passthrough; `just run *ARGS` の代替)
-//
-// pkfire 0.4.0+ の acceptsArgs = true で `--` 後の任意引数を $@ で受ける。
-//   pkf run run -- patch Cargo.toml --write
-//   pkf run run -- compare gt VERSION 1.0.0
-// =============================================================================
-
 local run: Task = new {
   name = "run"
-  description = "Run built bin/bump-semver with forwarded args"
+  description = "build + run"
   cache = false
   deps { build }
   acceptsArgs = true
   cmd = #"./bin/bump-semver "$@""#
 }
 
-// =============================================================================
-// Project-specific gates (semver:check-* は kawaz/pkf-tasks 0.0.7+ semver group)
-// =============================================================================
+// ---------- gates ----------
 
-// push 前ガード: main@origin と比較して src/ 変更があれば自プロジェクトの VERSION
-// ファイル (本リポでは ./VERSION) が bump されていることを要求。
+// main@origin と比較、src/ 変更があれば VERSION bump 必須
 local checkVersionBumped: Task =
   (kawaz.semver.checkBumped) {
     compareRefCmd = "echo main@origin"
@@ -149,14 +106,7 @@ local checkVersionBumped: Task =
     taskName = "semver:check-version-bumped"
   }.check
 
-// CI release 向け補助ガード: 最新 v* tag と比較して src/ 変更があれば
-// 自プロジェクト VERSION の bump 必須。release tag を作る前に local で確認する用途。
-// release.yml 自体は tag push で trigger されるため CI に組み込んではいない
-// (tag 作成時点で既に bump 済が前提)。
-//
-// needsFetchTags = true: tag 系の compareRef を使うので vcs:fetch-tags を
-// deps に挟む (pkf-tasks 0.0.9+、DR-0006)。これにより jj 環境で `git fetch
-// --tags origin` 後に `jj git import` が必要になる症状を吸収する。
+// latest v* tag と比較 (release 前の local 確認用)
 local checkAgainstLatestRelease: Task =
   (kawaz.semver.checkBumped) {
     compareRefCmd = "git tag -l 'v*' --sort=-v:refname | head -1"
@@ -166,13 +116,11 @@ local checkAgainstLatestRelease: Task =
     needsFetchTags = true
   }.check
 
-// =============================================================================
-// Bump version (typed Param: level=patch|minor|major)
-// =============================================================================
+// ---------- release flow ----------
 
 local bumpVersion: Task = new {
   name = "bump-version"
-  description = "自プロジェクト VERSION の bump + jj commit (level=patch|minor|major)"
+  description = "bump version file(s) for Release"
   cache = false
   deps { kawaz.vcs.ensureClean }
   params {
@@ -191,66 +139,44 @@ local bumpVersion: Task = new {
     """#
 }
 
-// =============================================================================
-// Push (top-level goal)
-//
-// kawaz.vcs.push を base にして deps だけ拡張 (cmd / env は継承)。
-// 全 gate (ci + kawaz.docs.checkTranslations + checkVersionBumped) 通過後に
-// main を進めて push。release.yml が VERSION 変更を検出した時のみ
-// tag + GitHub Release を作る。
-// =============================================================================
-
 local push: Task = (kawaz.vcs.push) {
   name = "push"
-  description = "all gates → jj bookmark main → jj git push (extends kawaz.vcs.push)"
-  // push 時の気づき発火点: 全 gate を 1 箇所に集約、それぞれが「何を見るか」を行内に明示。
+  description = "push with some checks"
   deps {
-    ci // lint + test + build (DAG 並列)
-    kawaz.docs.checkTranslations // 翻訳ペア整合性 (README ja/en 等)
-    checkVersionBumped // 自プロジェクト VERSION の bump 漏れ (main@origin 比較)
-    kawaz.migrate.checkPkfTasks // pkf-tasks 依存の追従漏れ
-    kawaz.migrate.checkPkfire // pkfire 依存の追従漏れ
+    ci
+    kawaz.docs.checkTranslations
+    checkVersionBumped
+    kawaz.migrate.checkPkfTasks
+    kawaz.migrate.checkPkfire
   }
 }
 
-// =============================================================================
-// Default
-// =============================================================================
+// ---------- default ----------
 
 local default: Task = new {
   name = "default"
-  description = "list available tasks"
+  description = "default is list"
   cache = false
   cmd = "pkf list"
 }
 
-// =============================================================================
-// Task registry
-// =============================================================================
+// ---------- task registry ----------
 
 tasks {
   default
-  // lint umbrella + children (どちらも本リポ内 inline 定義)
   lint
   lintGo
   lintPkl
-  // atomic (test / build は lint umbrella を依存)
   test
   build
   run
-  // ci umbrella
   ci
-  // gates (kawaz.vcs.ensureClean / kawaz.docs.checkTranslations は pkf-tasks 由来)
   ...kawaz.vcs.allTasks
   ...kawaz.docs.allTasks
-  // semver gates (pkf-tasks/semver/check-bumped を 2 instance 化)
   checkVersionBumped
   checkAgainstLatestRelease
-  // semver:compare 汎用 task (pkf-tasks 0.0.8 実験的、ad-hoc CLI 用)
   kawaz.semver.compare
-  // migrate group (pkf-tasks 0.0.11: 利用側の pkf-tasks 追従 gate + action)
   ...kawaz.migrate.allTasks
-  // release flow
   bumpVersion
   push
 }

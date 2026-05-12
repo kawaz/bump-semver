@@ -25,7 +25,7 @@
 /// Taskfile.pkl 内には一切無い (lint で `just --fmt` を呼んだりしない)。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.6.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.15#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@0.0.16#/all.pkl" as kawaz
 
 // =============================================================================
 // Shared file sets
@@ -191,8 +191,8 @@ local push: Task = (kawaz.vcs.push) {
     ci
     kawaz.docs.checkTranslations
     checkVersionBumped
-    kawaz.migrate.check        // pkf-tasks 古さ
-    kawaz.migrate.checkPkfire  // pkfire 古さ (v0.0.15+)
+    kawaz.migrate.checkPkfTasks // pkf-tasks 古さ
+    kawaz.migrate.checkPkfire // pkfire 古さ
   }
 }
 

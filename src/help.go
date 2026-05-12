@@ -28,7 +28,7 @@ Actions:
 Action-specific help: bump-semver <action> --help
 Full reference:       bump-semver --help-full
 
-Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / vcs:latest-tag().
+Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / vcs:latest-tag([REPO]).
 Files are auto-detected by basename (Cargo.toml, package.json,
 pyproject.toml, VERSION, ...). See --help-full for the table.
 `
@@ -66,7 +66,7 @@ Inputs:
   VER                        a raw semver string (e.g. 1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
   -                          read VER from stdin (single line, used at most once)
   vcs:REV[:FILE]             read FILE at <REV> from the VCS (jj or git, auto-detected)
-  vcs:latest-tag()           read the largest semver-compatible tag from the VCS
+  vcs:latest-tag([REPO])     largest semver tag; REPO = owner/repo or full URL (default: cwd VCS)
 
 Options:
   --write                Write the new version back to each FILE input (bump only)
@@ -244,7 +244,7 @@ Inputs (multiple, must agree):
   VER                        raw semver string
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git
-  vcs:latest-tag()           largest semver tag from the VCS
+  vcs:latest-tag([REPO])     largest semver tag (cwd VCS or remote: owner/repo / URL)
 
 Options:
   --json                     Structured JSON output (.name, .version, .semver,
@@ -258,7 +258,9 @@ Examples:
   bump-semver get VERSION
   bump-semver get Cargo.toml package.json package-lock.json   # cross-file agreement check
   bump-semver get package.json --json | jq -r .semver
-  bump-semver get 'vcs:latest-tag()'                          # largest semver tag
+  bump-semver get 'vcs:latest-tag()'                          # largest semver tag (cwd)
+  bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'            # remote (GitHub short)
+  bump-semver get 'vcs:latest-tag(https://github.com/x/y)'     # remote (full URL)
 `
 
 // helpCompare documents the compare subcommand. The OP list is the
@@ -292,7 +294,7 @@ Inputs (exactly two):
   VER                        raw semver string
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git
-  vcs:latest-tag()           largest semver tag from the VCS
+  vcs:latest-tag([REPO])     largest semver tag (cwd VCS or remote: owner/repo / URL)
 
   When a vcs: input has no explicit FILE component, the FILE is
   borrowed from the first sibling input that provides one (DR-0008).

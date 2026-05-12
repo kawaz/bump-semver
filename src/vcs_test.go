@@ -28,6 +28,8 @@ func TestVcsParseSpec(t *testing.T) {
 		{"jj-remote-slash", "vcs:origin/main", "origin/main", "", false, ""},
 		{"function-no-args", "vcs:latest-tag()", "", "", true, "latest-tag"},
 		{"function-with-spaces-empty", "vcs:latest-tag( )", " ", "", true, "latest-tag"},
+		{"function-with-owner-repo", "vcs:latest-tag(kawaz/pkf-tasks)", "kawaz/pkf-tasks", "", true, "latest-tag"},
+		{"function-with-https-url", "vcs:latest-tag(https://github.com/kawaz/pkf-tasks)", "https://github.com/kawaz/pkf-tasks", "", true, "latest-tag"},
 		{"unknown-function", "vcs:current-branch()", "", "", true, "current-branch"},
 		// Path with subdirectories shouldn't trip up the `:` split.
 		{"rev-and-nested-file", "vcs:HEAD:src/Cargo.toml", "HEAD", "src/Cargo.toml", false, ""},
@@ -41,6 +43,37 @@ func TestVcsParseSpec(t *testing.T) {
 				t.Errorf("vcsParseSpec(%q) = (rev=%q, file=%q, isFunc=%v, func=%q)\n  want = (rev=%q, file=%q, isFunc=%v, func=%q)",
 					tc.spec, rev, file, isFunc, funcName,
 					tc.wantRev, tc.wantFile, tc.wantIsFunc, tc.wantFunc)
+			}
+		})
+	}
+}
+
+// TestExpandRepoArg covers the remote-arg expansion used by
+// `vcs:latest-tag(<arg>)`. Short GitHub-style `owner/repo` is expanded
+// to a full HTTPS URL; full URLs and SSH URLs pass through unchanged;
+// the empty string represents "no arg — use cwd VCS".
+func TestExpandRepoArg(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"kawaz/pkf-tasks", "https://github.com/kawaz/pkf-tasks"},
+		{"  kawaz/pkf-tasks  ", "https://github.com/kawaz/pkf-tasks"}, // whitespace trim
+		{"https://github.com/kawaz/pkf-tasks", "https://github.com/kawaz/pkf-tasks"},
+		{"http://example.com/x/y", "http://example.com/x/y"},
+		{"git@github.com:kawaz/pkf-tasks.git", "git@github.com:kawaz/pkf-tasks.git"},
+		{"ssh://git@github.com/kawaz/pkf-tasks.git", "ssh://git@github.com/kawaz/pkf-tasks.git"},
+		{"too/many/slashes", "too/many/slashes"}, // unknown shape, pass-through (ls-remote will fail)
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+			got := expandRepoArg(tc.in)
+			if got != tc.want {
+				t.Errorf("expandRepoArg(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -272,7 +305,7 @@ func TestVcsLatestTag_Git(t *testing.T) {
 	}
 	dir := setupGitRepo(t, []string{"v1.0.0", "v1.2.3", "v1.1.0", "build-2025"}, "1.2.3")
 	withCwd(t, dir, func() {
-		v, err := vcsLatestTag(vcsGit)
+		v, err := vcsLatestTag(vcsGit, "")
 		if err != nil {
 			t.Fatalf("vcsLatestTag: %v", err)
 		}
@@ -290,7 +323,7 @@ func TestVcsLatestTag_Git_NoSemver(t *testing.T) {
 	}
 	dir := setupGitRepo(t, []string{"build-2025", "rolling"}, "1.0.0")
 	withCwd(t, dir, func() {
-		_, err := vcsLatestTag(vcsGit)
+		_, err := vcsLatestTag(vcsGit, "")
 		if err == nil {
 			t.Fatal("expected error for no-semver-tags repo")
 		}

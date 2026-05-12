@@ -191,10 +191,11 @@ func resolveVcsInput(spec string, otherFile string, vcs vcsKind) (resolvedInput,
 func resolveVcsFunc(spec, name, args string, vcs vcsKind) (resolvedInput, error) {
 	switch name {
 	case "latest-tag":
-		if strings.TrimSpace(args) != "" {
-			return resolvedInput{}, fmt.Errorf("%s: latest-tag() takes no arguments", spec)
-		}
-		v, err := vcsLatestTag(vcs)
+		// args is the inside of `latest-tag(...)`. Empty (or whitespace
+		// only) means "use cwd VCS"; non-empty is a remote repo spec
+		// resolved by expandRepoArg.
+		remoteURL := expandRepoArg(args)
+		v, err := vcsLatestTag(vcs, remoteURL)
 		if err != nil {
 			return resolvedInput{}, fmt.Errorf("%s: %w", spec, err)
 		}
@@ -295,6 +296,42 @@ func vcsListTags(vcs vcsKind) ([]string, error) {
 	}
 }
 
+// vcsListTagsRemote returns tag names visible via `git ls-remote --tags
+// <url>` against a remote repository (no cwd VCS state involved).
+//
+// Output format of `git ls-remote --tags <url>`:
+//
+//	<sha>\trefs/tags/<tag>
+//	<sha>\trefs/tags/<tag>^{}   (annotated tag's peeled commit)
+//
+// We strip the `refs/tags/` prefix and the `^{}` peeled-commit suffix so
+// the caller sees plain tag names matching `vcsListTags` output.
+func vcsListTagsRemote(url string) ([]string, error) {
+	out, err := runVcs("git", "ls-remote", "--tags", url)
+	if err != nil {
+		return nil, err
+	}
+	var tags []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		ref := parts[1]
+		if !strings.HasPrefix(ref, "refs/tags/") {
+			continue
+		}
+		tag := strings.TrimPrefix(ref, "refs/tags/")
+		tag = strings.TrimSuffix(tag, "^{}") // peeled annotated tag
+		tags = append(tags, tag)
+	}
+	return splitAndDedup(strings.Join(tags, "\n")), nil
+}
+
 // splitAndDedup extracts non-empty lines and removes duplicates while
 // preserving first-seen order (so reproducibility doesn't depend on
 // map iteration).
@@ -312,6 +349,36 @@ func splitAndDedup(s string) []string {
 	return out
 }
 
+// expandRepoArg normalises a `<arg>` portion of `vcs:latest-tag(<arg>)`
+// into a URL/spec that `git ls-remote --tags` accepts.
+//
+//   - Empty string is preserved (caller uses cwd VCS).
+//   - HTTP(S) / SSH (`git@...` / `ssh://`) URLs pass through unchanged.
+//   - `<owner>/<repo>` (exactly one `/`, no whitespace) is expanded to
+//     `https://github.com/<owner>/<repo>` (GitHub-default convention).
+//   - Anything else passes through verbatim; `git ls-remote` will report
+//     the parse error which is more accurate than anything we could say.
+//
+// Whitespace around the input is trimmed so `vcs:latest-tag( foo/bar )`
+// behaves the same as `vcs:latest-tag(foo/bar)`.
+func expandRepoArg(arg string) string {
+	s := strings.TrimSpace(arg)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return s
+	}
+	if strings.HasPrefix(s, "git@") || strings.HasPrefix(s, "ssh://") {
+		return s
+	}
+	// owner/repo: exactly one `/`, no embedded whitespace.
+	if strings.Count(s, "/") == 1 && !strings.ContainsAny(s, " \t") {
+		return "https://github.com/" + s
+	}
+	return s
+}
+
 // vcsLatestTag returns the SemVer-largest tag known to the VCS.
 //
 // Tags that don't parse as semver (e.g. `my-build-2025-01-01`) are
@@ -323,8 +390,15 @@ func splitAndDedup(s string) []string {
 // SemVer order is determined by Version.Compare (DR-0006), so
 // pre-release tags rank below their corresponding release as
 // expected (`v1.0.0-rc.1` < `v1.0.0`).
-func vcsLatestTag(vcs vcsKind) (Version, error) {
-	tags, err := vcsListTags(vcs)
+func vcsLatestTag(vcs vcsKind, remoteURL string) (Version, error) {
+	var tags []string
+	var err error
+	if remoteURL != "" {
+		// Remote query: cwd VCS is irrelevant, always `git ls-remote`.
+		tags, err = vcsListTagsRemote(remoteURL)
+	} else {
+		tags, err = vcsListTags(vcs)
+	}
 	if err != nil {
 		return Version{}, err
 	}
@@ -336,7 +410,17 @@ func vcsLatestTag(vcs vcsKind) (Version, error) {
 	for _, t := range tags {
 		v, err := ParseVersion(t)
 		if err != nil {
-			continue
+			// Fallback: monorepo-style `<name>@<version>` (e.g.
+			// `pkf-tasks@0.0.11`, `react@18.2.0`). Peel everything up
+			// to and including the last `@` and retry. Tag-listing
+			// output never contains jj-style `main@origin` revsets so
+			// this is unambiguous in this context.
+			if i := strings.LastIndex(t, "@"); i >= 0 {
+				v, err = ParseVersion(t[i+1:])
+			}
+			if err != nil {
+				continue
+			}
 		}
 		candidates = append(candidates, parsed{raw: t, v: v})
 	}

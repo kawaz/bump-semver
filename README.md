@@ -113,7 +113,7 @@ Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the bu
 | VER  | A raw semver string (e.g. `1.2.3`, `v1.2.3`, `1.2.3-rc.1+build.42`) |
 | `-`  | Read VER from stdin, one line (used at most once) |
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from jj or git (auto-detected, see [vcs: input](#vcs-input)) |
-| `vcs:latest-tag()` | Read the largest semver-compatible tag from jj or git |
+| `vcs:latest-tag([REPO])` | Read the largest semver-compatible tag. `REPO` = `owner/repo` short form or full URL queries a remote (`git ls-remote --tags`); omit for cwd VCS |
 
 If a local file is literally named `1.2.3` and you mean the file, write `./1.2.3` (Unix convention).
 
@@ -311,12 +311,18 @@ bump-semver compare lt Cargo.toml vcs:origin/main
 # Did Cargo.toml's version change since the previous commit?
 bump-semver compare eq Cargo.toml vcs:HEAD~1            # FILE borrowed from the sibling
 bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # explicit form
+
+# v0.15.0+ — Query a different repo's latest release tag
+bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'        # owner/repo short form
+bump-semver get 'vcs:latest-tag(https://github.com/x/y)' # full URL
+bump-semver compare ge 0.0.13 'vcs:latest-tag(kawaz/pkf-tasks)'  # current pin up-to-date?
 ```
 
 | Form | Meaning |
 |---|---|
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from the VCS. The first `:` is consumed by the `vcs:` prefix; the second `:` (if present) splits REV from FILE. Omitted FILE is borrowed from the first sibling input (FILE-origin or another `vcs:REV:FILE`) in argv order |
-| `vcs:latest-tag()` | All tags are listed; tags that don't parse as semver are silently ignored; the largest by SemVer 2.0.0 ordering wins. Errors with `no semver-compatible tags found` if the candidate set is empty |
+| `vcs:latest-tag()` | All tags from the cwd VCS; semver-incompatible tags are silently dropped; the largest by SemVer 2.0.0 ordering wins. Errors with `no semver-compatible tags found` if the candidate set is empty |
+| `vcs:latest-tag(<arg>)` | v0.15.0+. `<arg>` = `owner/repo` (GitHub short, expanded to `https://github.com/...`) or full HTTPS/SSH URL. Queries the remote via `git ls-remote --tags`; jj/git auto-detection is irrelevant for remote queries. Monorepo-style tags like `pkf-tasks@0.0.13` are recognised (`@` peel fallback) so the same call works against multi-package repos. The argument is a **raw string** — no inner quotes needed (think markdown link `[]()`). **Trust boundary**: the validity of the URL is the caller's responsibility; pointing at an untrusted repo lets attackers publish `malicious@99.99.99` and have it returned as the largest tag (DR-0019) |
 
 **VCS detection** (in priority order):
 

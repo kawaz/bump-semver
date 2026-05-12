@@ -311,12 +311,18 @@ bump-semver compare lt Cargo.toml vcs:origin/main
 # 前コミットからバージョン変わってる?
 bump-semver compare eq Cargo.toml vcs:HEAD~1            # FILE は相手から借用
 bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # 明示形式
+
+# v0.15.0+: 他リポの最新 release tag を取得
+bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'        # owner/repo 短縮
+bump-semver get 'vcs:latest-tag(https://github.com/x/y)' # フル URL
+bump-semver compare ge 0.0.13 'vcs:latest-tag(kawaz/pkf-tasks)'  # 現 pin は最新追従済?
 ```
 
 | 形式 | 解釈 |
 |---|---|
 | `vcs:REV[:FILE]` | `<REV>` 時点の `<FILE>` を VCS から読み出す。最初の `:` は `vcs:` プレフィックス、2 つ目の `:` で REV と FILE を分割。FILE 省略時は位置順で最初の sibling (FILE 起源 or `vcs:REV:FILE` 形式) から借用 |
-| `vcs:latest-tag()` | 全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。0 件なら `no semver-compatible tags found` エラー |
+| `vcs:latest-tag()` | cwd VCS の全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。0 件なら `no semver-compatible tags found` エラー |
+| `vcs:latest-tag(<arg>)` | v0.15.0+。`<arg>` = `owner/repo` (GitHub 短縮、`https://github.com/...` に展開) or HTTPS/SSH フル URL。`git ls-remote --tags` でリモートを照会するため jj/git 自動判定はリモート時に無関係。`pkf-tasks@0.0.13` のような monorepo-style tag は `@` peel fallback で認識される (multi-package repo にも同じ呼び出しで対応)。引数は **raw string** で内部 quote 不要 (markdown link `[]()` 感覚)。**信頼境界**: URL の正当性は呼び出し側責任。第三者書き込み可能 repo を指せば悪意ある `malicious@99.99.99` tag が最大として返る攻撃が成立する (DR-0019) |
 
 **VCS 自動判定** (優先順):
 

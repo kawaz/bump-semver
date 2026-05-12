@@ -53,7 +53,17 @@ INPUT  = FILE | VER | -
 
 `vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ (`auto` / 未指定は次へ) → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。v0.13.0 までフラグと probe の間に環境変数による override が挟まる優先順 2 位があったが廃止されている (経緯は DR-0016)。
 
-`vcs:latest-tag()` は MVP 唯一の関数: 全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す。
+`vcs:latest-tag([<arg>])` は全 tag を取得し、semver パース不可なものは無視、SemVer 2.0.0 順序で最大を返す関数。v0.15.0 (DR-0019) で他リポ参照に対応:
+
+- `vcs:latest-tag()` — 引数なし: cwd の VCS から取得 (既存仕様)
+- `vcs:latest-tag(kawaz/pkf-tasks)` — owner/repo 短縮: `https://github.com/<owner>/<repo>` に展開して `git ls-remote --tags` で取得
+- `vcs:latest-tag(https://...)` / `vcs:latest-tag(git@...)` — フル URL / SSH URL もそのまま受ける
+
+加えて **`@` peel fallback** を内蔵: `pkf-tasks@0.0.12` のような monorepo-style tag (Pkl package / npm scoped / Go module subpath などで使われる `<name>@<version>` 形式) は通常の semver パースに失敗するが、最後の `@` 以降を再 parse することで認識される。tag list 経由でだけ有効、jj revset `main@origin` 等とは衝突しない。
+
+**引数仕様の設計** (DR-0019): `vcs:latest-tag(<arg>)` の `<arg>` は raw string として扱われ、内部ダブルクオートは不要 (markdown link `[text](url)` 記法と同じ感覚)。Pkl の `Task.cmd` を配列形式 (`["bump-semver", "get", "vcs:latest-tag(kawaz/pkf-tasks)"]`) で書く時の JSON エスケープ地獄を回避する設計。shell で叩く時は外側の single quote (`'vcs:latest-tag(kawaz/pkf-tasks)'`) で `()` の subshell 解釈を回避する。
+
+**信頼境界** (DR-0019): remote URL の正当性は **呼び出し側責任**。第三者書き込み可能 repo に向けると悪意ある `malicious@99.99.99` tag を最大として返す攻撃が成立する。bump-semver 側で防げない領域のため、利用側で repo を default 固定して書き換え不要にする運用が推奨 (`kawaz/pkf-tasks` の `migrate:check-pkf-tasks-current` 等)。
 
 FILE 省略時は **位置順で最初の FILE 提供 sibling** から借用 (実 FILE 起源 or 他の `vcs:REV:FILE`)。借用源がない場合はエラー。
 

@@ -123,7 +123,8 @@ local run: Task = new {
 // Project-specific gates (semver:check-* は kawaz/pkf-tasks 0.0.7+ semver group)
 // =============================================================================
 
-// push 前ガード: main@origin と比較して src/ 変更があれば VERSION bump 必須。
+// push 前ガード: main@origin と比較して src/ 変更があれば自プロジェクトの VERSION
+// ファイル (本リポでは ./VERSION) が bump されていることを要求。
 local checkVersionBumped: Task =
   (kawaz.semver.checkBumped) {
     compareRefCmd = "echo main@origin"
@@ -133,7 +134,7 @@ local checkVersionBumped: Task =
   }.check
 
 // CI release 向け補助ガード: 最新 v* tag と比較して src/ 変更があれば
-// VERSION bump 必須。release tag を作る前に local で確認する用途。
+// 自プロジェクト VERSION の bump 必須。release tag を作る前に local で確認する用途。
 // release.yml 自体は tag push で trigger されるため CI に組み込んではいない
 // (tag 作成時点で既に bump 済が前提)。
 //
@@ -155,7 +156,7 @@ local checkAgainstLatestRelease: Task =
 
 local bumpVersion: Task = new {
   name = "bump-version"
-  description = "VERSION bump + jj commit (level=patch|minor|major)"
+  description = "自プロジェクト VERSION の bump + jj commit (level=patch|minor|major)"
   cache = false
   deps { kawaz.vcs.ensureClean }
   params {
@@ -188,11 +189,11 @@ local push: Task = (kawaz.vcs.push) {
   description = "all gates → jj bookmark main → jj git push (extends kawaz.vcs.push)"
   // push 時の気づき発火点: 全 gate を 1 箇所に集約、それぞれが「何を見るか」を行内に明示。
   deps {
-    ci                          // lint + test + build (DAG 並列)
+    ci // lint + test + build (DAG 並列)
     kawaz.docs.checkTranslations // 翻訳ペア整合性 (README ja/en 等)
-    checkVersionBumped          // VERSION bump 漏れ (main@origin 比較)
-    kawaz.migrate.checkPkfTasks // pkf-tasks 古さ
-    kawaz.migrate.checkPkfire   // pkfire 古さ
+    checkVersionBumped // 自プロジェクト VERSION の bump 漏れ (main@origin 比較)
+    kawaz.migrate.checkPkfTasks // pkf-tasks 依存の追従漏れ
+    kawaz.migrate.checkPkfire // pkfire 依存の追従漏れ
   }
 }
 

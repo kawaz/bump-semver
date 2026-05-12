@@ -25,7 +25,7 @@
 /// Taskfile.pkl 内には一切無い (lint で `just --fmt` を呼んだりしない)。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.6.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@1.0.0#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.0.0#/all.pkl" as kawaz
 
 // =============================================================================
 // Shared file sets
@@ -41,8 +41,7 @@ local goSources: Listing<String> = new {
 // Atomic tasks
 // =============================================================================
 
-// lint:go — Go 系の lint。本リポ固有 (将来 kawaz/* に Go リポが増えれば
-// pkf-tasks/lint/go.pkl に外出しする候補)。
+// lint:go — Go 系の lint。本リポ固有。
 local lintGo: Task = new {
   name = "lint:go"
   description = "gofmt -w / go vet"
@@ -54,14 +53,31 @@ local lintGo: Task = new {
     """
 }
 
-// lint — umbrella。言語横断の lint:pkl (pkf-tasks 由来) と本リポの
-// lint:go をまとめる。`pkf list` でソートしたとき lint / lint:go /
-// lint:pkl が隣接して読みやすい。
+// lint:pkl — Pkl ファイルの自動整形。pkf-tasks v2.0.0 で library export
+// から外れたので本リポ内に inline 定義 (DR-0008 of pkf-tasks 参照、library
+// 化するほど複雑ではない 5 行 task)。
+local lintPkl: Task = new {
+  name = "lint:pkl"
+  description = "pkl format -w (recursively format all Pkl files)"
+  inputs {
+    "**/*.pkl"
+    "**/PklProject"
+    "**/PklProject.deps.json"
+  }
+  cmd =
+    """
+    set -euo pipefail
+    pkl format -w .
+    """
+}
+
+// lint — umbrella。lint:go (Go) と lint:pkl (Pkl format) をまとめる。
+// `pkf list` でソートしたとき lint / lint:go / lint:pkl が隣接して読みやすい。
 local lint: Task = new {
   name = "lint"
   description = "all lints (lint:go + lint:pkl)"
   cache = false
-  deps { lintGo; kawaz.lint.pkl }
+  deps { lintGo; lintPkl }
   cmd = "echo lint ok"
 }
 
@@ -214,10 +230,10 @@ local default: Task = new {
 
 tasks {
   default
-  // lint umbrella + children (lint:go ローカル / lint:pkl は pkf-tasks 由来)
+  // lint umbrella + children (どちらも本リポ内 inline 定義)
   lint
   lintGo
-  kawaz.lint.pkl
+  lintPkl
   // atomic (test / build は lint umbrella を依存)
   test
   build

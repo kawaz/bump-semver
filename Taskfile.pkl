@@ -186,13 +186,13 @@ local bumpVersion: Task = new {
 local push: Task = (kawaz.vcs.push) {
   name = "push"
   description = "all gates → jj bookmark main → jj git push (extends kawaz.vcs.push)"
-  // push 時の気づき発火点: pkf-tasks / pkfire の version drift も検知
+  // push 時の気づき発火点: 全 gate を 1 箇所に集約、それぞれが「何を見るか」を行内に明示。
   deps {
-    ci
-    kawaz.docs.checkTranslations
-    checkVersionBumped
+    ci                          // lint + test + build (DAG 並列)
+    kawaz.docs.checkTranslations // 翻訳ペア整合性 (README ja/en 等)
+    checkVersionBumped          // VERSION bump 漏れ (main@origin 比較)
     kawaz.migrate.checkPkfTasks // pkf-tasks 古さ
-    kawaz.migrate.checkPkfire // pkfire 古さ
+    kawaz.migrate.checkPkfire   // pkfire 古さ
   }
 }
 

@@ -2,9 +2,9 @@
 ///
 /// VCS 抽象 / 翻訳ペア / migrate / semver gate は [kawaz/pkf-tasks](https://github.com/kawaz/pkf-tasks) 由来。
 /// 本ファイルは Go 系の lint/test/build + bump-semver 固有の release flow だけ持つ。
-amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.6.0#/Taskfile.pkl"
+amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.7.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.1.1#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.2.0#/all.pkl" as kawaz
 
 // ---------- shared ----------
 
@@ -14,11 +14,12 @@ local goSources: Listing<String> = new {
   "go.sum"
 }
 
-// ---------- atomic ----------
+// ---------- atomic (lint / test / build) ----------
 
 local lintGo: Task = new {
   name = "lint:go"
   description = "gofmt + go vet"
+  visibility = "internal"
   inputs = goSources
   cmd =
     """
@@ -31,6 +32,7 @@ local lintGo: Task = new {
 local lintPkl: Task = new {
   name = "lint:pkl"
   description = "pkl format -w"
+  visibility = "internal"
   inputs {
     "**/*.pkl"
     "**/PklProject"
@@ -76,8 +78,6 @@ local build: Task = new {
     """#
 }
 
-// ---------- umbrella / entries ----------
-
 local ci: Task = new {
   name = "ci"
   description = "lint + test + build"
@@ -86,16 +86,7 @@ local ci: Task = new {
   cmd = "echo ci ok"
 }
 
-local run: Task = new {
-  name = "run"
-  description = "build + run"
-  cache = false
-  deps { build }
-  acceptsArgs = true
-  cmd = #"./bin/bump-semver "$@""#
-}
-
-// ---------- gates ----------
+// ---------- gates (push 内部、利用者が直接叩くことほぼなし) ----------
 
 // main@origin と比較、src/ 変更があれば VERSION bump 必須
 local checkVersionBumped: Task =
@@ -106,7 +97,7 @@ local checkVersionBumped: Task =
     taskName = "semver:check-version-bumped"
   }.check
 
-// latest v* tag と比較 (release 前の local 確認用)
+// latest v* tag と比較 (release 前の local 確認用、push deps には含めない)
 local checkAgainstLatestRelease: Task =
   (kawaz.semver.checkBumped) {
     compareRefCmd = "git tag -l 'v*' --sort=-v:refname | head -1"
@@ -151,32 +142,44 @@ local push: Task = (kawaz.vcs.push) {
   }
 }
 
-// ---------- default ----------
+// ---------- main entries (利用者が直接叩く、宣言順 = 利用頻度の高い順) ----------
 
+// pkf run -- args で default の $@ に args が流れる (pkfire 0.7.0+)
 local default: Task = new {
   name = "default"
-  description = "default is list"
+  description = "default is run"
   cache = false
-  cmd = "pkf list"
+  deps { build }
+  acceptsArgs = true
+  cmd = #"./bin/bump-semver "$@""#
 }
 
-// ---------- task registry ----------
+// pkf list の unsorted 版 (declaration 順表示、利用頻度の高い順)
+local list: Task = new {
+  name = "list"
+  description = "list recipes (order matters)"
+  cache = false
+  cmd = "pkf list --unsorted"
+}
+
+// ---------- task registry (宣言順が pkf list --unsorted の表示順) ----------
 
 tasks {
   default
+  list
+  test
+  push
+  bumpVersion
+  ci
+  build
   lint
   lintGo
   lintPkl
-  test
-  build
-  run
-  ci
+  // push 内部 gate (visibility は pkf-tasks 側で設定済 or 本リポ local の internal 設定)
   ...kawaz.vcs.allTasks
   ...kawaz.docs.allTasks
   checkVersionBumped
   checkAgainstLatestRelease
   kawaz.semver.compare
   ...kawaz.migrate.allTasks
-  bumpVersion
-  push
 }

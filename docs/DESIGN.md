@@ -84,12 +84,12 @@ When the FILE component is omitted, it is borrowed from the first FILE-providing
 
 ### Module layout
 
-Go sources live under `src/`, leaving only metadata (README / docs / justfile / VERSION / go.mod, etc.) at the repository root. `go.mod` itself stays at the root, so the module / import path remains `github.com/kawaz/bump-semver`. Build with `go build ./src`.
+Go sources live under `src/`, leaving only metadata (README / docs / Taskfile.pkl / VERSION / go.mod, etc.) at the repository root. `go.mod` itself stays at the root, so the module / import path remains `github.com/kawaz/bump-semver`. Build with `go build ./src`.
 
 ```
 .
 ├── go.mod / go.sum
-├── justfile
+├── Taskfile.pkl
 ├── VERSION
 ├── README{,-ja}.md
 ├── UPGRADING.md             v0.4.x → v0.5.0 migration guide
@@ -250,9 +250,9 @@ Origin labels: `<file>:<path>` (FILE) / `<argv>` or `<argv:N>` (positional VER) 
 ### Release flow
 
 ```
-just bump-version [patch|minor|major]
+pkf run bump-version [patch|minor|major]
   ↓
-ensure-clean → test → build → rewrite VERSION → jj describe + new → just push
+ensure-clean → test → build → rewrite VERSION → jj describe + new → pkf run push
   ↓
 GitHub Actions (.github/workflows/release.yml) detects the VERSION change
   ↓

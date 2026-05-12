@@ -7,7 +7,7 @@
 ├── LICENSE                       MIT (kawaz)
 ├── VERSION                       現バージョン文字列 (release.yml がこれを監視)
 ├── go.mod / go.sum               Go module 定義 (リポルートに維持)
-├── justfile                      開発タスク (lint / test / build / push / bump-version)
+├── Taskfile.pkl                  pkfire の Taskfile (default/list/run/test/push/bump-version/ci/build/lint)
 ├── bin/                          ローカルビルド成果物 (gitignore)
 ├── docs/
 │   ├── DESIGN.md / DESIGN-ja.md  アーキテクチャ + module layout (英訳ペア)
@@ -32,7 +32,7 @@
 │   └── *_test.go                 各ファイル対応の単体 + 統合テスト
 └── .github/
     └── workflows/
-        ├── ci.yml                push / PR で `just ci`
+        ├── ci.yml                push / PR で `pkf run ci`
         └── release.yml           VERSION 変化検知 → tag + Releases + homebrew-tap
 ```
 
@@ -40,10 +40,10 @@
 
 ### `src/` 配下に Go ソースを隔離
 
-リポジトリ直下にはメタ情報 (README / docs / justfile / VERSION / go.mod 等) のみを置き、Go ソースは `src/` に集約する。`go.mod` 自体はリポルートに残しているため module / import path は `github.com/kawaz/bump-semver` のまま (パッケージとしての import path は `github.com/kawaz/bump-semver/src`)。
+リポジトリ直下にはメタ情報 (README / docs / Taskfile.pkl / VERSION / go.mod 等) のみを置き、Go ソースは `src/` に集約する。`go.mod` 自体はリポルートに残しているため module / import path は `github.com/kawaz/bump-semver` のまま (パッケージとしての import path は `github.com/kawaz/bump-semver/src`)。
 
 ビルドターゲット指定:
-- `go build ./src` (justfile / release.yml ともに `./src`)
+- `go build ./src` (Taskfile.pkl / release.yml ともに `./src`)
 - `go test ./...` は go.mod 起点でリポ全体を巡るので `src/` 配下のテストも自動で実行される
 
 ### `go.mod` をリポルートに置く理由
@@ -52,11 +52,11 @@
 
 ### `bin/` はローカル成果物のみ
 
-`just build` は `bin/bump-semver` を生成するが、CI はリポジトリの `bin/` を使わずに直接 `go build` する。`bin/` は `.gitignore` 対象。
+`pkf run build` は `bin/bump-semver` を生成するが、CI はリポジトリの `bin/` を使わずに直接 `go build` する。`bin/` は `.gitignore` 対象。
 
 ### release.yml が `VERSION` ファイルを監視
 
-`paths: ["VERSION"]` により VERSION 変更コミットが push されたときだけ release ジョブが起動する。`just bump-version <level>` がこのファイルを書き換えて push する責務を持つ。
+`paths: ["VERSION"]` により VERSION 変更コミットが push されたときだけ release ジョブが起動する。`pkf run bump-version <level>` がこのファイルを書き換えて push する責務を持つ。
 
 ### `UPGRADING.md` をリポルートに置く理由
 

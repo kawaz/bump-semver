@@ -23,7 +23,7 @@ local lintGo: Task = new {
   inputs = goSources
   cmd =
     """
-    gofmt -w .
+    gofmt -w . >/dev/null
     go vet ./...
     """
 }
@@ -41,7 +41,7 @@ local lintPkl: Task = new {
   cmd =
     """
     set -euo pipefail
-    pkl format -w .
+    pkl format -w . >/dev/null
     """
 }
 
@@ -50,7 +50,7 @@ local lint: Task = new {
   description = "lint:go + lint:pkl"
   cache = false
   deps { lintGo; lintPkl }
-  cmd = "echo lint ok"
+  cmd = ":" // umbrella、stdout を汚さない (bash noop)
 }
 
 local test: Task = new {
@@ -83,7 +83,7 @@ local ci: Task = new {
   description = "lint + test + build"
   cache = false
   deps { lint; test; build }
-  cmd = "echo ci ok"
+  cmd = ":" // umbrella、stdout を汚さない (bash noop)
 }
 
 // ---------- gates (push 内部、利用者が直接叩くことほぼなし) ----------

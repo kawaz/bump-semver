@@ -4,7 +4,7 @@
 /// 本ファイルは Go 系の lint/test/build + bump-semver 固有の release flow だけ持つ。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.10.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.3.1#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@3.0.2#/all.pkl" as kawaz
 
 // ---------- shared ----------
 
@@ -89,21 +89,31 @@ local ci: Task = new {
 // main@origin と比較、src/ 変更があれば VERSION bump 必須
 local checkVersionBumped: Task =
   (kawaz.semver.checkBumped) {
-    compareRefCmd = "echo main@origin"
+    compareRef = "main@origin"
     triggerPaths = List("src/")
     versionFiles = List("VERSION")
     taskName = "semver:check-version-bumped"
   }.check
 
-// latest v* tag と比較 (release 前の local 確認用、push deps には含めない)
+// latest semver tag と比較 (release 前の local 確認用、push deps には含めない)
 local checkAgainstLatestRelease: Task =
   (kawaz.semver.checkBumped) {
-    compareRefCmd = "git tag -l 'v*' --sort=-v:refname | head -1"
+    compareRef = "vcs:latest-tag()"
     triggerPaths = List("src/")
     versionFiles = List("VERSION")
     taskName = "semver:check-against-latest-release"
     needsFetchTags = true
   }.check
+
+// v0.16.0 で導入した cmd: input source を使って「VERSION 値 + bin --version 出力」を
+// 横断比較。release 前 release commit に bin build 忘れがないか検出する gate。
+// (kawaz/pkf-tasks v3.0 で導入された versions module の dogfood)
+local versions = (kawaz.semver.versions) {
+  versionFiles = List("VERSION")
+  cmdSources = List("cmd:./bin/bump-semver --version")
+}
+local versionDisplay: Task = versions.version
+local checkVersionsAligned: Task = versions.checkAligned
 
 // ---------- release flow ----------
 
@@ -214,10 +224,12 @@ tasks {
   lintPkl
   testWorkflow
   // push 内部 gate (visibility は pkf-tasks 側で設定済 or 本リポ local の internal 設定)
-  ...kawaz.vcs.allTasks
-  ...kawaz.docs.allTasks
+  ...kawaz.vcs.tasks
+  ...kawaz.docs.tasks
   checkVersionBumped
   checkAgainstLatestRelease
+  versionDisplay
+  checkVersionsAligned
   kawaz.semver.compare
-  ...kawaz.migrate.allTasks
+  ...kawaz.migrate.tasks
 }

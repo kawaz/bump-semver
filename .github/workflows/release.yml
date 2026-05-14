@@ -23,12 +23,24 @@ jobs:
       # bump-semver 自身を install (dogfooding)
       - name: Install bump-semver
         run: |
-          BUMP_SEMVER_VERSION=$(cat VERSION | tr -d '[:space:]')
+          set -euo pipefail
+          BUMP_SEMVER_VERSION=$(tr -d '[:space:]' < VERSION)
           # 直前リリース版を使う (今 push してる VERSION ではなく、main にある最新 tag)
           # 自己ドッグフーディングだが、新規 release の検証に旧 release を使う構図
           LATEST=$(gh release list --repo kawaz/bump-semver --limit 1 --json tagName -q '.[0].tagName' | sed 's/^v//')
-          curl -fsSL "https://github.com/kawaz/bump-semver/releases/download/v${LATEST}/bump-semver-linux-amd64" -o /usr/local/bin/bump-semver
-          chmod +x /usr/local/bin/bump-semver
+          if [ -z "$LATEST" ]; then
+            # Bootstrap fallback: 過去 release が 1 件も無い (initial release / 全削除後)。
+            # この checkout のソースから自前で build して使う。
+            echo "::notice::No prior release found; bootstrapping from source."
+            go build -buildvcs=false -trimpath \
+              -ldflags "-s -w -X main.version=v${BUMP_SEMVER_VERSION}" \
+              -o /usr/local/bin/bump-semver ./src
+          else
+            curl -fsSL --retry 5 --retry-delay 2 --max-time 60 \
+              "https://github.com/kawaz/bump-semver/releases/download/v${LATEST}/bump-semver-linux-amd64" \
+              -o /usr/local/bin/bump-semver
+            chmod +x /usr/local/bin/bump-semver
+          fi
           bump-semver --version
         env:
           GH_TOKEN: ${{ github.token }}

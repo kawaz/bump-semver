@@ -687,16 +687,20 @@ func emitFallbackHints(stderr io.Writer, args cliArgs, resolved []resolvedInput)
 }
 
 func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
-	// DR-0008: --write + any vcs: input is rejected up-front. vcs: is
-	// read-only by design (writing back into VCS would require us to
-	// implement commit/amend semantics, which is far out of scope), and
-	// silently dropping the vcs: portion of a multi-input --write would
+	// DR-0008: --write + any read-only input (vcs: / cmd:) is rejected up-front.
+	// Both schemas resolve to a value without a writable backing file —
+	// writing back would require commit/amend semantics for vcs: or
+	// process re-execution for cmd:, both far out of scope. Silently
+	// dropping the read-only portion of a multi-input --write would
 	// surprise users. The cleanest answer is to refuse the combination
 	// and let the caller split the invocation.
 	if args.write {
 		for _, in := range args.inputs {
 			if strings.HasPrefix(in, "vcs:") {
 				return emitErr(stderr, args, fmt.Errorf("--write cannot be used with vcs: inputs (vcs: is read-only)"))
+			}
+			if strings.HasPrefix(in, "cmd:") {
+				return emitErr(stderr, args, fmt.Errorf("--write cannot be used with cmd: inputs (cmd: is read-only)"))
 			}
 		}
 	}

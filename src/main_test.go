@@ -1657,6 +1657,27 @@ func TestRun_VcsInput_WriteRejected(t *testing.T) {
 	})
 }
 
+// --write with cmd: input is rejected (same policy as vcs:, both are
+// read-only schemas resolved from external sources without a writable
+// backing file).
+func TestRun_CmdInput_WriteRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"patch", "VERSION", "cmd:echo 1.2.3", "--write"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected --write + cmd: rejection")
+		}
+		if !strings.Contains(stderr.String(), "--write cannot be used with cmd: inputs") {
+			t.Errorf("stderr should mention the rejection reason, got: %q", stderr.String())
+		}
+	})
+}
+
 // --vcs git forces the override even though the directory is also
 // suitable for jj. We only have a git fixture here, so this primarily
 // tests the flag parsing + override propagation path.

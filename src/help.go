@@ -28,7 +28,7 @@ Actions:
 Action-specific help: bump-semver <action> --help
 Full reference:       bump-semver --help-full
 
-Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / vcs:latest-tag([REPO]).
+Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / vcs:latest-tag([REPO]) / cmd:CMD.
 Files are auto-detected by basename (Cargo.toml, package.json,
 pyproject.toml, VERSION, ...). See --help-full for the table.
 `
@@ -67,6 +67,8 @@ Inputs:
   -                          read VER from stdin (single line, used at most once)
   vcs:REV[:FILE]             read FILE at <REV> from the VCS (jj or git, auto-detected)
   vcs:latest-tag([REPO])     largest semver tag; REPO = owner/repo or full URL (default: cwd VCS)
+  cmd:CMD                    run CMD via bash -c, take first non-empty stdout line as VER
+                             (read-only, strips a leading 'v'; e.g. cmd:mytool --version)
 
 Options:
   --write                Write the new version back to each FILE input (bump only)
@@ -105,9 +107,10 @@ Supported file formats (auto-detected by basename):
   Chart.yaml~ etc. strip one trailing suffix and retry against the table above.
   Suffixes: .bak / .backup / .orig / .tmp / .old / .YYYYMMDD / .YYYYMMDD_HHMMSS / ~
 
-Multiple inputs (FILE / VER / -) may be mixed. All extracted versions must
-agree; otherwise a "version mismatch:" error lists each origin and value.
-With --write, only FILE-origin inputs are written back.
+Multiple inputs (FILE / VER / - / vcs: / cmd:) may be mixed. All extracted
+versions must agree; otherwise a "version mismatch:" error lists each origin
+and value. With --write, only FILE-origin inputs are written back (vcs: and
+cmd: are read-only).
 
 Exit codes:
   0   success (or compare predicate true)
@@ -134,6 +137,7 @@ Examples:
   bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # ready to release? (CI)
   bump-semver compare lt Cargo.toml vcs:origin/main      # stale vs remote main? (pull needed)
   bump-semver compare eq Cargo.toml vcs:HEAD~1           # unchanged since prev commit?
+  bump-semver compare eq VERSION 'cmd:./bin/mytool --version'   # built bin matches version file?
 `
 
 // helpBump documents `major` / `minor` / `patch`. The three share the
@@ -159,10 +163,11 @@ Inputs (multiple, must agree):
   VER                        raw semver string (e.g. 1.2.3, v1.2.3, 1.2.3-rc.1+build.42)
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git (read-only — see --write)
+  cmd:CMD                    run CMD via bash -c, take first non-empty stdout line (read-only)
 
 Options:
   --write                    Write the bumped version back to each FILE input
-                             (vcs:/VER/- inputs are reference-only; --write requires ≥ 1 FILE)
+                             (vcs:/cmd:/VER/- inputs are reference-only; --write requires ≥ 1 FILE)
   --pre PRE                  Set pre-release identifiers on the result (e.g. --pre rc.0)
   --build-metadata META      Set build metadata on the result (e.g. --build-metadata sha.abc)
   --no-pre                   Assert removal of pre-release
@@ -208,6 +213,7 @@ Inputs (multiple, must agree):
   VER                        raw semver string
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git
+  cmd:CMD                    run CMD via bash -c, take first non-empty stdout line (read-only)
 
 Options:
   --write                    Write the result back to each FILE input
@@ -245,6 +251,8 @@ Inputs (multiple, must agree):
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git
   vcs:latest-tag([REPO])     largest semver tag (cwd VCS or remote: owner/repo / URL)
+  cmd:CMD                    run CMD via bash -c, take first non-empty stdout line as VER
+                             (strips a leading 'v'; e.g. cmd:./bin/mytool --version)
 
 Options:
   --json                     Structured JSON output (.name, .version, .semver,
@@ -261,6 +269,7 @@ Examples:
   bump-semver get 'vcs:latest-tag()'                          # largest semver tag (cwd)
   bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'            # remote (GitHub short)
   bump-semver get 'vcs:latest-tag(https://github.com/x/y)'     # remote (full URL)
+  bump-semver get 'cmd:./bin/mytool --version'                 # run a command, parse its output
 `
 
 // helpCompare documents the compare subcommand. The OP list is the
@@ -295,6 +304,7 @@ Inputs (exactly two):
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git
   vcs:latest-tag([REPO])     largest semver tag (cwd VCS or remote: owner/repo / URL)
+  cmd:CMD                    run CMD via bash -c, take first non-empty stdout line as VER
 
   When a vcs: input has no explicit FILE component, the FILE is
   borrowed from the first sibling input that provides one (DR-0008).
@@ -321,6 +331,7 @@ Examples:
   bump-semver compare eq-major 1.2.3 1.9.7                   # exit 0 (same major)
   bump-semver compare eq-patch 1.2.3 1.2.3-rc.1              # exit 0 (pre-release ignored)
   bump-semver compare lt-minor Cargo.toml vcs:origin/main    # only minor bumps since main?
+  bump-semver compare eq VERSION 'cmd:./bin/mytool --version'   # built bin matches version file?
 `
 
 // actionHelpTexts dispatches per-action help. Keys are CLI action

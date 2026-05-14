@@ -37,15 +37,16 @@ INPUT  = FILE | VER | -
 
 複数 INPUT は単一の単位として扱う (DR-0004)。検出された全 version は事前に一致している必要があり、name (取れた範囲) も整合性検証される。
 
-### 入力モード (FILE | VER | `-` | `vcs:`)
+### 入力モード (FILE | VER | `-` | `vcs:` | `cmd:`)
 
-各位置引数は以下の優先順で解決される (DR-0006 確定論点 B、DR-0008 で `vcs:` を追加):
+各位置引数は以下の優先順で解決される (DR-0006 確定論点 B、DR-0008 で `vcs:` を追加、v0.16.0 で `cmd:` を追加):
 
 1. `-` → stdin から VER を 1 行読み込み (1 引数につき stdin 消費は 1 回まで)
 2. `vcs:` で始まる → VCS 経由で解決 (DR-0008、後述)
-3. ファイルとして存在する → FILE 扱い
-4. semver としてパース可能 → VER 扱い
-5. それ以外 → エラー
+3. `cmd:` で始まる → shell コマンドを実行して stdout から VER を取得 (後述)
+4. ファイルとして存在する → FILE 扱い
+5. semver としてパース可能 → VER 扱い
+6. それ以外 → エラー
 
 `1.2.3` のようにファイル名と VER 文字列が衝突するケースは `./1.2.3` で明示する (Unix 慣習)。
 
@@ -68,6 +69,14 @@ INPUT  = FILE | VER | -
 FILE 省略時は **位置順で最初の FILE 提供 sibling** から借用 (実 FILE 起源 or 他の `vcs:REV:FILE`)。借用源がない場合はエラー。
 
 `bump-semver` は `git fetch` / `jj git fetch` を自動実行しない。古い remote の場合は VCS のエラーがそのまま伝わる。`vcs:` 入力が混ざる invocation での `--write` はエラー (vcs: は read-only)。
+
+#### `cmd:` 入力 (v0.16.0)
+
+`cmd:<shell-command>` は `<shell-command>` を `bash -c` で実行し、stdout の最初の非空行を VER として取得する。leading `v` は strip され、SemVer 2.0.0 として parse される。`vcs:` と同じく **read-only** (`--write` には FILE が最低 1 つ必要)。
+
+主な用途は「ビルド済みバイナリの `--version` 出力」と「version files」を 1 つの `bump-semver` 呼び出しで横断比較するケース。例えば `bump-semver compare eq VERSION 'cmd:./bin/mytool --version'` で「VERSION の値とバイナリに焼かれた version 文字列が一致しているか」を release gate にできる (= `bump-version` 後の `go build` 忘れを検出)。
+
+エラー伝播: コマンドの exit code 非 0 → child の stderr を含めてエラー、stdout 空 → `command produced no output` エラー、stdout の最初の行が SemVer として parse 不可 → `cmd:<command>: "<line>" is not a valid version` エラー。**信頼境界**: 任意 shell コマンドが実行されるため、CI / 自動化スクリプトで使う場合は呼び出し側の責任で安全な command 文字列を組み立てること。
 
 ### 引数排他ルール
 
@@ -105,6 +114,7 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
     ├── semver.go            semver 2.0.0 parser + Bump + Compare
     ├── json.go              --json 出力スキーマ (DR-0007)
     ├── vcs.go               vcs: 入力 (jj/git 自動判定 + `latest-tag()`) (DR-0008)
+    ├── cmd_source.go        cmd: 入力 (shell コマンド実行で VER 取得、v0.16.0)
     └── *_test.go            単体 + 統合 + spec_table_test.go (DR-0006 仕様駆動テスト)
 ```
 

@@ -2,9 +2,9 @@
 ///
 /// VCS 抽象 / 翻訳ペア / migrate / semver gate は [kawaz/pkf-tasks](https://github.com/kawaz/pkf-tasks) 由来。
 /// 本ファイルは Go 系の lint/test/build + bump-semver 固有の release flow だけ持つ。
-amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.7.0#/Taskfile.pkl"
+amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.10.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.2.2#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@2.3.1#/all.pkl" as kawaz
 
 // ---------- shared ----------
 
@@ -50,7 +50,7 @@ local lint: Task = new {
   description = "lint:go + lint:pkl"
   cache = false
   deps { lintGo; lintPkl }
-  cmd = ":" // umbrella、stdout を汚さない (bash noop)
+  // cmd 省略 = deps-only umbrella (pkfire 0.8+)
 }
 
 local test: Task = new {
@@ -83,7 +83,7 @@ local ci: Task = new {
   description = "lint + test + build"
   cache = false
   deps { lint; test; build }
-  cmd = ":" // umbrella、stdout を汚さない (bash noop)
+  // cmd 省略 = deps-only umbrella (pkfire 0.8+)
 }
 
 // ---------- gates (push 内部、利用者が直接叩くことほぼなし) ----------
@@ -145,20 +145,24 @@ local push: Task = (kawaz.vcs.push) {
 // ---------- main entries (利用者が直接叩く、宣言順 = 利用頻度の高い順) ----------
 
 // pkf run -- args で default の $@ に args が流れる (pkfire 0.7.0+)
+// quiet = true (0.8+) で `[pkf] default: ...` log header を抑制、bin 出力を綺麗に
 local default: Task = new {
   name = "default"
   description = "default is run"
   cache = false
   deps { build }
   acceptsArgs = true
+  quiet = true
   cmd = #"./bin/bump-semver "$@""#
 }
 
 // pkf list の unsorted 版 (declaration 順表示、利用頻度の高い順)
+// quiet = true (0.8+) で pkf list 出力を綺麗に
 local list: Task = new {
   name = "list"
   description = "list recipes (order matters)"
   cache = false
+  quiet = true
   cmd = "pkf list --unsorted"
 }
 

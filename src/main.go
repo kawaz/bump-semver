@@ -454,6 +454,10 @@ func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *
 		return resolveVcsInput(arg, borrowedFile, vcs)
 	}
 
+	if strings.HasPrefix(arg, "cmd:") {
+		return resolveCmdInput(arg)
+	}
+
 	// Try as file first if it exists. Use Stat so we don't masquerade
 	// directories or sockets as parseable VERs.
 	if fi, err := os.Stat(arg); err == nil && !fi.IsDir() {

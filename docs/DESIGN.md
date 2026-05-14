@@ -39,13 +39,14 @@ Multiple INPUTs are operated on as a single unit (DR-0004). Their detected versi
 
 ### Input modes (FILE | VER | `-` | `vcs:`)
 
-Each positional argument is resolved in this priority order (DR-0006 確定論点 B; DR-0008 added the `vcs:` rule):
+Each positional argument is resolved in this priority order (DR-0006 確定論点 B; DR-0008 added the `vcs:` rule; v0.16.0 added the `cmd:` rule):
 
 1. `-` → read VER from stdin, one line (stdin can be consumed at most once across all `-` arguments)
 2. Starts with `vcs:` → resolve through the VCS (DR-0008, see below)
-3. Exists as a file → FILE
-4. Parses as semver → VER
-5. Otherwise → error
+3. Starts with `cmd:` → run a shell command and read VER from its stdout (see below)
+4. Exists as a file → FILE
+5. Parses as semver → VER
+6. Otherwise → error
 
 When a filename collides with a valid semver string (e.g. a local file literally named `1.2.3`), prefix with `./` to disambiguate, per Unix convention.
 
@@ -68,6 +69,14 @@ In addition, a **`@` peel fallback** is applied during the semver parse of each 
 When the FILE component is omitted, it is borrowed from the first FILE-providing sibling argument in **position order** (a real FILE-origin input, or another `vcs:REV:FILE`). Errors out when no sibling can supply a FILE.
 
 `bump-semver` does not run `git fetch` / `jj git fetch`; stale-remote errors surface verbatim from the underlying VCS. `--write` is rejected when any input starts with `vcs:` (vcs: is read-only by design).
+
+#### `cmd:` input (v0.16.0)
+
+`cmd:<shell-command>` runs `<shell-command>` via `bash -c` and takes the first non-empty stdout line as VER. A leading `v` is stripped and the rest is parsed as SemVer 2.0.0. Like `vcs:`, this is a **read-only** input (any invocation with `--write` requires at least one FILE input).
+
+The primary motivation is cross-checking a built binary's `--version` output against the version files in a single `bump-semver` invocation. For example `bump-semver compare eq VERSION 'cmd:./bin/mytool --version'` is a release-time gate that fails if the binary embeds a stale version (= a forgotten `go build` after `bump-version`).
+
+Error propagation: non-zero exit code → error including the child process's stderr; empty stdout → `command produced no output`; the first line failing to parse → `cmd:<command>: "<line>" is not a valid version`. **Trust boundary**: an arbitrary shell command is executed, so callers in CI / automation are responsible for assembling the command string safely (never `concat` untrusted input).
 
 ### Mutual exclusivity rules
 
@@ -105,6 +114,7 @@ Go sources live under `src/`, leaving only metadata (README / docs / Taskfile.pk
     ├── semver.go            SemVer 2.0.0 parser + Bump + Compare
     ├── json.go              --json output schema (DR-0007)
     ├── vcs.go               vcs: input (jj/git auto-detect + `latest-tag()`) (DR-0008)
+    ├── cmd_source.go        cmd: input (run a shell command, parse stdout as VER, v0.16.0)
     └── *_test.go            unit + integration + spec_table_test.go (DR-0006 spec-driven)
 ```
 

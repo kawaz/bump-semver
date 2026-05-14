@@ -28,7 +28,7 @@ bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
 
-`<INPUT>` is either a **FILE path**, a **raw VER string**, **`-` (read VER from stdin, single line)**, or **`vcs:REV[:FILE]` / `vcs:<func>(...)`** (read from the VCS, see [vcs: input](#vcs-input)). Multiple inputs of mixed kinds may be given.
+`<INPUT>` is either a **FILE path**, a **raw VER string**, **`-` (read VER from stdin, single line)**, **`vcs:REV[:FILE]` / `vcs:<func>(...)`** (read from the VCS, see [vcs: input](#vcs-input)), or **`cmd:<shell-command>`** (read from a shell command, see [cmd: input](#cmd-input)). Multiple inputs of mixed kinds may be given.
 
 Help comes in three tiers (v0.13.0+):
 
@@ -114,6 +114,7 @@ Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the bu
 | `-`  | Read VER from stdin, one line (used at most once) |
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from jj or git (auto-detected, see [vcs: input](#vcs-input)) |
 | `vcs:latest-tag([REPO])` | Read the largest semver-compatible tag. `REPO` = `owner/repo` short form or full URL queries a remote (`git ls-remote --tags`); omit for cwd VCS |
+| `cmd:<shell-command>` | Run `<shell-command>` via `bash -c`, take the first non-empty stdout line as VER (read-only, see [cmd: input](#cmd-input)) |
 
 If a local file is literally named `1.2.3` and you mean the file, write `./1.2.3` (Unix convention).
 
@@ -341,6 +342,31 @@ When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-w
 
 For CI scripts that need to be VCS-agnostic, prefer revisions that work in both flavours: `origin/main` (auto-translated to `main@origin` for jj), commit hashes, and `latest-tag()`.
 
+### cmd: input
+
+`cmd:<shell-command>` runs `<shell-command>` via `bash -c` and takes the first non-empty stdout line as VER (read-only, v0.16.0+). A leading `v` is stripped, and the value is parsed as SemVer 2.0.0.
+
+```bash
+# Does the built binary's --version match the VERSION file?
+bump-semver compare eq VERSION 'cmd:./bin/mytool --version'
+
+# Read a version that lives outside vcs:latest-tag's reach
+bump-semver get 'cmd:brew info --json mytool | jq -r .[0].installed[0].version'
+
+# Compare against another bump-semver invocation
+bump-semver compare gt 'cmd:bump-semver get Cargo.toml' 'vcs:latest-tag()'
+```
+
+| Form | Interpretation |
+|---|---|
+| `cmd:<shell-command>` | Executes `<shell-command>` via `bash -c`. The first non-empty stdout line is taken as VER (leading `v` stripped, parsed as SemVer). Non-zero exit, empty stdout, or parse failure surface as errors (child stderr is included). **Read-only**: rejected by `--write` (same as `vcs:`) |
+
+**`--write` and `cmd:` are mutually exclusive** (same as `vcs:`). There is no notion of writing back to a command's output.
+
+**Trust boundary**: an arbitrary shell command is executed. Callers in CI / automation must assemble the command string safely — never `concat` untrusted input (env vars, argv) into a `cmd:` value.
+
+The primary driver is kawaz/pkf-tasks v3.0's `semver/versions.pkl` (release-time gate), where version files and the built binary's `--version` output need to be cross-checked through a single `bump-semver get` invocation.
+
 ### Error message format
 
 Errors print `bump-semver: <reason>` to stderr on a single line. The format depends on the input origin (VER vs FILE), so callers can grep for known substrings.
@@ -386,7 +412,7 @@ v0.5.0 ships three breaking changes. See [UPGRADING.md](./UPGRADING.md) for full
 
 ## Status
 
-v0.14.0 adds JVM / .NET / Maven / Haskell / RPM support and a new `xml-element` format (DR-0018) — `pom.xml`, `*.csproj` / `*.fsproj` / `*.vbproj`, `build.gradle` / `build.gradle.kts`, `*.cabal`, `*.spec` all become recognised. `pom.xml` uses slash-rooted XML path lookup (`/project/version`) that correctly skips `<parent>/<version>`. v0.13.0 brings three changes: the help system is restructured into three tiers (`--help` short / `--help-full` complete reference / `bump-semver <action> --help` action-specific), the `BUMP_SEMVER_VCS` env var is removed in favour of `--vcs jj|git|auto` (DR-0016, BREAKING — see UPGRADING.md), and `compare` gains 15 precision-suffix operators (`eq-major` / `lt-minor` / `eq-patch` etc., DR-0017) for a 5×4 = 20 total. v0.12.0 added two Xcode-specific path-pinned rules — `project.pbxproj` (multi-match `MARKETING_VERSION` synced across build configurations) and `Info.plist` (XML plist with byte-range value rewriting) — together with `pbxproj` and `xml` formats (DR-0015). v0.11.0 generalised the TOML rewriter into a reusable section-scoped helper and added `pyproject.toml` (PEP 621 with Poetry-legacy fallback) and `mojoproject.toml` (DR-0014). v0.10.0 added the suffix-stripped fallback for backup-style filenames (DR-0013). v0.9.0 introduced the `regex` format with eight new file types (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`) (DR-0012). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically (DR-0008). Earlier: v0.6.0 added `--json` output (DR-0007); v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+v0.16.0 adds the `cmd:<shell-command>` input mode — a read-only input that runs the command via `bash -c`, takes its first non-empty stdout line, strips a leading `v`, and parses the rest as SemVer. The primary use case is gating releases on agreement between version files and the built binary's `--version` output (e.g. `compare eq VERSION 'cmd:./bin/mytool --version'`). It also underpins kawaz/pkf-tasks v3.0's `semver/versions.pkl`. v0.14.0 adds JVM / .NET / Maven / Haskell / RPM support and a new `xml-element` format (DR-0018) — `pom.xml`, `*.csproj` / `*.fsproj` / `*.vbproj`, `build.gradle` / `build.gradle.kts`, `*.cabal`, `*.spec` all become recognised. `pom.xml` uses slash-rooted XML path lookup (`/project/version`) that correctly skips `<parent>/<version>`. v0.13.0 brings three changes: the help system is restructured into three tiers (`--help` short / `--help-full` complete reference / `bump-semver <action> --help` action-specific), the `BUMP_SEMVER_VCS` env var is removed in favour of `--vcs jj|git|auto` (DR-0016, BREAKING — see UPGRADING.md), and `compare` gains 15 precision-suffix operators (`eq-major` / `lt-minor` / `eq-patch` etc., DR-0017) for a 5×4 = 20 total. v0.12.0 added two Xcode-specific path-pinned rules — `project.pbxproj` (multi-match `MARKETING_VERSION` synced across build configurations) and `Info.plist` (XML plist with byte-range value rewriting) — together with `pbxproj` and `xml` formats (DR-0015). v0.11.0 generalised the TOML rewriter into a reusable section-scoped helper and added `pyproject.toml` (PEP 621 with Poetry-legacy fallback) and `mojoproject.toml` (DR-0014). v0.10.0 added the suffix-stripped fallback for backup-style filenames (DR-0013). v0.9.0 introduced the `regex` format with eight new file types (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`) (DR-0012). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically (DR-0008). Earlier: v0.6.0 added `--json` output (DR-0007); v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

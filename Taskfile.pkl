@@ -128,6 +128,17 @@ local bumpVersion: Task = new {
     """#
 }
 
+// workflowTests を pkf affected --check で検証する gate (pkfire 0.10+)
+// Taskfile.pkl の構造変更で affected が想定外になったら CI で検出
+local testWorkflow: Task = new {
+  name = "test:workflow"
+  description = "verify workflowTests match actual affected plan"
+  cache = false
+  visibility = "internal"
+  quiet = true
+  cmd = "pkf affected --check"
+}
+
 local push: Task = (kawaz.vcs.push) {
   name = "push"
   description = "push with some checks"
@@ -137,6 +148,7 @@ local push: Task = (kawaz.vcs.push) {
     checkVersionBumped
     kawaz.migrate.checkPkfTasks
     kawaz.migrate.checkPkfire
+    testWorkflow
   }
 }
 
@@ -160,6 +172,33 @@ local list: Task = new {
   cmd = "pkf list --unsorted"
 }
 
+// ---------- workflow tests (pkfire 0.10+、Taskfile 自体の壊れを affected --check で検出) ----------
+
+workflowTests {
+  new {
+    name = "Go source change triggers full push pipeline"
+    changed { "src/main.go" }
+    direct { "lint:go"; "build"; "test" }
+    tasks {
+      "lint:go"
+      "lint:pkl"
+      "lint"
+      "build"
+      "test"
+      "ci"
+      "default"
+      "docs:check-translation-commit-lag"
+      "docs:check-translation-links"
+      "docs:check-translations"
+      "migrate:check-pkf-tasks-current"
+      "migrate:check-pkfire-current"
+      "semver:check-version-bumped"
+      "test:workflow"
+      "push"
+    }
+  }
+}
+
 // ---------- task registry (宣言順が pkf list --unsorted の表示順) ----------
 
 tasks {
@@ -173,6 +212,7 @@ tasks {
   lint
   lintGo
   lintPkl
+  testWorkflow
   // push 内部 gate (visibility は pkf-tasks 側で設定済 or 本リポ local の internal 設定)
   ...kawaz.vcs.allTasks
   ...kawaz.docs.allTasks

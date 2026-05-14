@@ -4,7 +4,7 @@
 /// 本ファイルは Go 系の lint/test/build + bump-semver 固有の release flow だけ持つ。
 amends "package://pkg.pkl-lang.org/github.com/mizchi/pkfire/pkfire@0.10.0#/Taskfile.pkl"
 
-import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@3.0.2#/all.pkl" as kawaz
+import "package://pkg.pkl-lang.org/github.com/kawaz/pkf-tasks/pkf-tasks@3.0.3#/all.pkl" as kawaz
 
 // ---------- shared ----------
 

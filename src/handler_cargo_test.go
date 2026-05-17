@@ -161,10 +161,14 @@ opt-level = 3
 	}
 }
 
-func TestCargoInspect_WorkspacePackageNotMatched(t *testing.T) {
+func TestCargoInspect_WorkspacePackageFallback(t *testing.T) {
 	t.Parallel()
-	// [workspace.package].version は MVP では扱わない (DR-0002 参照)。
-	// [package] が無い時点で Inspect がエラーになる必要がある。
+	// DR-0021 (supersedes DR-0002): a workspace-root Cargo.toml has no
+	// [package] section; its version lives in [workspace.package].version,
+	// which member crates inherit via `version.workspace = true`. The
+	// Cargo.toml rule falls back to [workspace.package].version when
+	// [package].version is absent (OR / first-match-wins, same machinery
+	// as pyproject.toml's [project] → [tool.poetry] fallback).
 	in := []byte(`[workspace]
 members = ["crate-a", "crate-b"]
 
@@ -172,7 +176,98 @@ members = ["crate-a", "crate-b"]
 version = "1.0.0"
 edition = "2021"
 `)
+	insp, err := inspectVia("Cargo.toml", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Versions) != 1 || insp.Versions[0].Value != "1.0.0" || insp.Versions[0].Path != "[workspace.package].version" {
+		t.Errorf("Versions = %+v, want one [workspace.package].version=1.0.0", insp.Versions)
+	}
+}
+
+func TestCargoInspect_PackageWinsOverWorkspacePackage(t *testing.T) {
+	t.Parallel()
+	// When both [package].version and [workspace.package].version exist
+	// (a member crate that also declares workspace-shared fields), the
+	// crate's own [package].version takes precedence — that's the version
+	// the crate actually publishes. [workspace.package] is only the
+	// template inherited by members that opt in via `version.workspace`.
+	in := []byte(`[package]
+name = "foo"
+version = "2.0.0"
+
+[workspace.package]
+version = "1.0.0"
+`)
+	insp, err := inspectVia("Cargo.toml", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Versions) != 1 || insp.Versions[0].Value != "2.0.0" || insp.Versions[0].Path != "[package].version" {
+		t.Errorf("Versions = %+v, want [package].version=2.0.0 to win", insp.Versions)
+	}
+}
+
+func TestCargoReplace_WorkspacePackage(t *testing.T) {
+	t.Parallel()
+	in := []byte(`[workspace]
+members = ["crate-a", "crate-b"]
+
+[workspace.package]
+version = "1.0.0"  # shared by members via version.workspace = true
+edition = "2021"
+`)
+	out, err := replaceVia("Cargo.toml", in, "1.0.0", "1.1.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `version = "1.1.0"  # shared by members via version.workspace = true`) {
+		t.Errorf("Replace did not update [workspace.package].version line\n--- output ---\n%s", s)
+	}
+	if !strings.Contains(s, `members = ["crate-a", "crate-b"]`) {
+		t.Errorf("Replace touched [workspace].members\n--- output ---\n%s", s)
+	}
+	if !strings.Contains(s, `edition = "2021"`) {
+		t.Errorf("Replace dropped edition line\n--- output ---\n%s", s)
+	}
+}
+
+func TestCargoReplace_PackageWinsOverWorkspacePackage(t *testing.T) {
+	t.Parallel()
+	// Replace must rewrite the same path Inspect chose: [package].version,
+	// not [workspace.package].version.
+	in := []byte(`[package]
+name = "foo"
+version = "2.0.0"
+
+[workspace.package]
+version = "1.0.0"
+`)
+	out, err := replaceVia("Cargo.toml", in, "2.0.0", "2.1.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `version = "2.1.0"`) {
+		t.Errorf("[package].version not updated:\n%s", s)
+	}
+	if !strings.Contains(s, `version = "1.0.0"`) {
+		t.Errorf("[workspace.package].version must stay untouched:\n%s", s)
+	}
+}
+
+func TestCargoInspect_NeitherPackageNorWorkspacePackage(t *testing.T) {
+	t.Parallel()
+	// A Cargo.toml with neither [package].version nor
+	// [workspace.package].version still errors (no top-level version to
+	// fall back to either — the confidence-3 Cargo.toml rule fails and
+	// no lower-confidence rule rescues a non-top-level version).
+	in := []byte(`[workspace]
+members = ["crate-a", "crate-b"]
+resolver = "2"
+`)
 	if _, err := inspectVia("Cargo.toml", in); err == nil {
-		t.Error("expected error: [workspace.package].version should not be matched as [package].version")
+		t.Error("expected error: no [package].version nor [workspace.package].version")
 	}
 }

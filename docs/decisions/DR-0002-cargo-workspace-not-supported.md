@@ -1,8 +1,8 @@
 # DR-0002: Cargo workspace の `[workspace.package].version` を MVP では扱わない
 
-- ステータス: Accepted
+- ステータス: Superseded by DR-0021
 - 日付: 2026-05-09
-- 関連: DR-0001 (flat 4-action + basename 形式判定), `src/handler_cargo.go`
+- 関連: DR-0001 (flat 4-action + basename 形式判定), DR-0021 (本 DR を supersede し `[workspace.package].version` 対応を決定), `src/rules.go`
 
 ## 文脈
 

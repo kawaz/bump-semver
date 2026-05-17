@@ -164,7 +164,7 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **3** | `.claude-plugin/plugin.json` | JSON | `$.version` | `$.name` |
 | **3** | `package.json` | JSON | `$.version` | `$.name` |
 | **3** | `package-lock.json` | JSON | `$.version`, `$.packages[""].version` | `$.name`, `$.packages[""].name` |
-| **3** | `Cargo.toml` | TOML | `[package].version` | `[package].name` |
+| **3** | `Cargo.toml` | TOML | `[package].version` (try) → `[workspace.package].version` | `[package].name` (try) → `[workspace.package].name` |
 | **3** | `pyproject.toml` | TOML | `[project].version` (try) → `[tool.poetry].version` | `[project].name` (try) → `[tool.poetry].name` |
 | **3** | `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
 | **3** | `project.pbxproj` (Xcode) | pbxproj | every `MARKETING_VERSION = ...;` (synced) | — |
@@ -196,6 +196,8 @@ Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `un
 YAML / TOML fallbacks (DR-0011) only look at top-level keys: a `version` nested inside a section / mapping is intentionally not picked up. For `Cargo.toml` / `pyproject.toml` / `mojoproject.toml` the explicit confidence-3 rules still win (so their existing section-scoped behaviour is unchanged). Multi-document YAML (`---` separators) reads only the first document. The same DR-0010 fallback hint fires for these new rules — with `--no-hint` to suppress.
 
 The `pyproject.toml` rule (DR-0014) tries PEP 621's `[project].version` first and falls back to Poetry-legacy `[tool.poetry].version` so a single rule covers both ecosystems mid-migration. When a file carries both sections (theoretical mid-migration state), only the first match (PEP 621) is rewritten. The `mojoproject.toml` rule (DR-0014) reads / writes `[workspace].version` directly. Both rules use the same TOML section-scoped rewriter, so quote style and surrounding sections / comments stay intact.
+
+The `Cargo.toml` rule (DR-0021) uses the same try-fallback shape: a single-crate manifest's `[package].version` is tried first, and a workspace-root manifest (no `[package]`) falls back to `[workspace.package].version` — the value member crates inherit via `version.workspace = true`. When a member crate declares both, its own `[package].version` wins. The matched path (`[package].version` or `[workspace.package].version`) is shown in `get` / `--json` output so you always see which version you are bumping.
 
 The DR-0012 `regex` format covers eight language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim.
 

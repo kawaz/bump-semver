@@ -164,7 +164,7 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **3** | `.claude-plugin/plugin.json` | JSON | `$.version` | `$.name` |
 | **3** | `package.json` | JSON | `$.version` | `$.name` |
 | **3** | `package-lock.json` | JSON | `$.version`, `$.packages[""].version` | `$.name`, `$.packages[""].name` |
-| **3** | `Cargo.toml` | TOML | `[package].version` | `[package].name` |
+| **3** | `Cargo.toml` | TOML | `[package].version` (try) → `[workspace.package].version` | `[package].name` (try) → `[workspace.package].name` |
 | **3** | `pyproject.toml` | TOML | `[project].version` (try) → `[tool.poetry].version` | `[project].name` (try) → `[tool.poetry].name` |
 | **3** | `mojoproject.toml` | TOML | `[workspace].version` | `[workspace].name` |
 | **3** | `project.pbxproj` (Xcode) | pbxproj | 全 `MARKETING_VERSION = ...;` (同期更新) | — |
@@ -196,6 +196,8 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section 配下 / nested mapping 配下の `version` は意図的に対象外。`Cargo.toml` / `pyproject.toml` / `mojoproject.toml` は引き続き confidence-3 ルールが優先されるので、それぞれの section-scoped 挙動は不変。multi-document YAML (`---` 区切り) は最初の document のみ。これらの新ルールでも DR-0010 の fallback hint が出る (`--no-hint` で抑制可能)。
 
 `pyproject.toml` ルール (DR-0014) は PEP 621 の `[project].version` を優先し、無ければ Poetry 旧形式の `[tool.poetry].version` を試行する (TOML format の OR semantics)。両方を持つ pyproject.toml (PEP 621 移行中の理論的中間状態) では最初の hit (PEP 621) のみ書き換えられる。`mojoproject.toml` ルール (DR-0014) は `[workspace].version` を直接読み書きする。両ルールとも共通の TOML section-scoped Replace を経由するので quote style と前後セクション・コメントは保持される。
+
+`Cargo.toml` ルール (DR-0021) も同じ try-fallback 形を使う。シングルクレートの `[package].version` を先に試し、`[package]` を持たない workspace-root では `[workspace.package].version` (メンバー crate が `version.workspace = true` で継承する正本) にフォールバックする。両方を宣言するメンバー crate では crate 自身の `[package].version` が優先。マッチした path (`[package].version` か `[workspace.package].version`) は `get` / `--json` 出力に出るので、何の version を bump しているか常に確認できる。
 
 DR-0012 の `regex` フォーマットは「version が 1 行のソースコード式で書かれる」8 つの言語マニフェスト (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt) をカバーする。**最初のマッチ 1 個** だけが読み書きされ、quote style と version 行末尾のコメントは保持される。
 

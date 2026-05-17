@@ -88,7 +88,7 @@ Global Options:
   --help-full            Show this full reference
 
 Supported file formats (auto-detected by basename):
-  Cargo.toml         TOML, [package].version (and [package].name for cross-input checks)
+  Cargo.toml         TOML, [package].version (try) -> [workspace.package].version (fallback) [DR-0021]
   pyproject.toml     TOML, [project].version (try) -> [tool.poetry].version (fallback) [DR-0014]
   mojoproject.toml   TOML, [workspace].version (and [workspace].name) [DR-0014]
   package-lock.json  npm 7+ lockfile, $.version + $.packages[""].version (deps untouched)

@@ -179,7 +179,7 @@ local list: Task = new {
   description = "list recipes (order matters)"
   cache = false
   quiet = true
-  cmd = "pkf list --unsorted"
+  cmd = "pkf list --unsorted --color=always"
 }
 
 // ---------- workflow tests (pkfire 0.10+、Taskfile 自体の壊れを affected --check で検出) ----------

@@ -6,6 +6,10 @@
 
 過去ロードマップから移送。実装履歴の参考用に残す。
 
+### Cargo workspace の `[workspace.package].version` 対応 (DR-0021)
+
+ワークスペースルートの `Cargo.toml` は `[package]` を持たず version が `[workspace.package].version` にあり、メンバー crate が `version.workspace = true` で継承する。`Cargo.toml` ルールの `VersionPaths` / `NamePaths` を `[package]` → `[workspace.package]` の OR フォールバック (DR-0014 で確立した `pyproject.toml` と同形の first-match-wins) で拡張して対応。両方ある場合は crate 自身の `[package].version` が優先。マッチ path は `get` / `--json` / 診断に出るので、利用者は何を bump しているか確認できる (DR-0002 の「暗黙的すぎる」懸念への回答)。rules.go テーブルの 1 行拡張のみ、新 format / 新ハンドラ不要。DR-0002 を supersede。詳細は [DR-0021](./decisions/DR-0021-cargo-workspace-package-version.md)。
+
 ### JVM (Gradle) / .NET (csproj 系) / Maven (pom.xml) / Haskell (cabal) / RPM (spec) 対応 + 新 format `xml-element` (v0.14.0 / DR-0018)
 
 `pom.xml` (Maven) と `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) のために、`<key>/<string>` ペア専用の既存 `xml` format とは別系統の slash-rooted XML path format `xml-element` を新設。`/project/version` のような element path で値を取得 / 書き換え (XML 名前空間は local name で比較、byte range splice で DOCTYPE / 属性順序 / インデント完全保持)。同時に DR-0012 の regex format を拡張して `build.gradle` (Groovy DSL の 3 形 `version = '...'` / `version "..."` / `version = "..."` を 1 regex で吸収)、`build.gradle.kts` (Kotlin DSL)、`*.cabal` (Haskell、`cabal-version:` と line-anchored で区別)、`*.spec` (RPM、capital V で `Name:` / `Release:` と区別) を path-pinned / basename / glob 各レイヤで追加。詳細は [DR-0018](./decisions/DR-0018-jvm-dotnet-haskell-rpm-support.md) と [UPGRADING.md](../UPGRADING.md) を参照。
@@ -91,9 +95,9 @@ v0.8.0 (DR-0011) で `*.yaml` / `*.yml` / `*.toml` の confidence 1 fallback (to
 
 ## 機能候補
 
-### Cargo workspace の `[workspace.package].version` 対応
+### `vcs` サブコマンド群 (git/jj 吸収のリリース/push 定型操作)
 
-`Cargo.toml` がワークスペースルートのとき、`[package]` は無く `[workspace.package].version` だけがある。MVP では非対応 (DR-0002)。DR-0005 の path-aware ルール体制で `[package]` フォールバック → `[workspace.package]` の優先順位で対応可能 (rules.go テーブル拡張)。
+Taskfile/justfile に jj/git 分岐を毎回手書きする板挟みを解消する、git/jj 共通の最小サブセットを吸収するサブコマンド群。`vcs get root|backend|current-branch` / `vcs is <pred>` / `vcs diff` / `vcs commit [--staged|--amend]` / `vcs push --branch|--bookmark` / `vcs tag push --rev REV NAME [--allow-move]` / `vcs tag delete` (冪等)。設計哲学・各仕様・jj 一次情報調査は [DR-0020](./decisions/DR-0020-vcs-subcommands.md) と [journal](./journal/2026-05-30-vcs-subcommands-design.md) に確定済み (jj v0.35+ 前提)。実装は read 系 (get/is/diff) → commit/push → tag (jj export・immutability 連動) の順。
 
 ### pre-release のラベル昇格 (alpha → beta → rc → stable)
 

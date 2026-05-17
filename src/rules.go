@@ -109,12 +109,28 @@ var rules = []CandidateRule{
 		VersionPaths: []string{".version"},
 	},
 	{
+		// DR-0021 (supersedes DR-0002): a single Cargo.toml rule covers
+		// both single-crate and workspace-root layouts via the TOML
+		// format's OR / first-match-wins VersionPaths (the same mechanism
+		// pyproject.toml uses for [project] → [tool.poetry]).
+		//
+		// Precedence is deliberate: a crate's own [package].version is the
+		// version it publishes, so it wins. Only when [package] is absent
+		// (the typical workspace-root layout) does the rule fall back to
+		// [workspace.package].version — the shared template member crates
+		// inherit via `version.workspace = true`.
+		//
+		// The matched path is surfaced verbatim in `get` output and
+		// diagnostics (e.g. `[workspace.package].version`), so the user
+		// always sees which version they are bumping. That transparency is
+		// what answers DR-0002's "too implicit" objection without a mode
+		// flag (DR-0001) or a separate content-dispatched handler (DR-0005).
 		Name:         "Cargo.toml",
 		Basename:     "Cargo.toml",
 		Confidence:   3,
 		Format:       "toml",
-		NamePaths:    []string{".package.name"},
-		VersionPaths: []string{".package.version"},
+		NamePaths:    []string{".package.name", ".workspace.package.name"},
+		VersionPaths: []string{".package.version", ".workspace.package.version"},
 	},
 	{
 		// DR-0014: PEP 621 (`[project]` section) is the modern Python

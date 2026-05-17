@@ -1,5 +1,41 @@
 # Upgrading guide
 
+## → Cargo workspace `[workspace.package].version` support (DR-0021)
+
+Pure additive change. No breaking changes, no migration needed. See
+[`docs/decisions/DR-0021-cargo-workspace-package-version.md`](./docs/decisions/DR-0021-cargo-workspace-package-version.md).
+
+### New: workspace-root `Cargo.toml` is now supported
+
+Previously, running `bump-semver` against a Cargo **workspace root**
+(a `Cargo.toml` with `[workspace]` / `[workspace.package]` but no
+`[package]`) failed:
+
+```
+$ bump-semver get Cargo.toml
+bump-semver: Cargo.toml: *.toml (fallback): missing version
+```
+
+Now the `Cargo.toml` rule falls back to `[workspace.package].version`
+when `[package].version` is absent — the same try-fallback shape
+`pyproject.toml` uses (`[project]` → `[tool.poetry]`):
+
+```
+$ bump-semver get Cargo.toml          # workspace root
+0.2.0
+$ bump-semver minor Cargo.toml --write
+0.3.0   # rewrote [workspace.package].version, members inherit via version.workspace = true
+```
+
+Precedence: a member crate that declares both `[package].version` and
+`[workspace.package].version` still has its own `[package].version`
+read / written (the version it publishes). The matched path is shown
+in `get` / `--json` output, so you always see which one you bumped.
+
+This supersedes DR-0002 (which deliberately left workspace roots
+unsupported in the MVP). Single-crate `Cargo.toml` behaviour is
+unchanged.
+
 ## v0.13.x → v0.14.0
 
 Pure additive minor release adding several new package-manifest

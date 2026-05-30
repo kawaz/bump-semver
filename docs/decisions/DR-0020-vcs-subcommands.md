@@ -353,6 +353,18 @@ two-tier verb (`vcs tag <sub-verb>`) で、parser 側にも追加変更が入る
   深い問題は自分の error で surface する)。`refs/` prefix の reject は
   copy-paste 事故 (`refs/tags/v1` を NAME にして refs/tags/refs/tags/... と
   二重 prefix 化) を catch する
+- **非 colocated 経路の pre-push hook 回避 (`--no-verify`)**: 非 colocated
+  layout で `git -C <git_target> push origin refs/tags/NAME` を実行する際、
+  user の global `core.hooksPath` (kawaz 環境では `~/.dotfiles/config/git/hooks`
+  + lefthook) の pre-push hook が `git rev-parse --show-toplevel` を内部で
+  叩き、bare repo context では `fatal: this operation must be run in a
+  work tree` で exit 128 → push 全体が exit 1。**bare に対する push に
+  pre-push hook を効かせる発想自体が hook の前提と乖離している**
+  (worktree 想定の lint/format/test 系 hook が大半) ため、非 colocated 経路
+  (= `git -C <bare>`) でのみ `--no-verify` を付与する設計とした。colocated 経路
+  (cwd push) は worktree が揃うので hook は通常通り効く (= release-gating
+  hook を壊さない)。test では `setupJjRepoNonColocatedWithRemote` で 1 fixture
+  追加し、non-colocated TagPush / TagDelete を共に green に
 - **jj fixture の SHA drift 対策 (test 側)**: `jj git init --git-repo`
   は git HEAD を新規 empty change `@` に move し、commit hash も jj 側で
   rewrite されるケースがある (test 環境では auto-snapshot のたびに変動)。

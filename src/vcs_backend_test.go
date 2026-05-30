@@ -2480,3 +2480,181 @@ func TestJjBackend_TagDelete_BadRemote(t *testing.T) {
 		}
 	})
 }
+
+// --- DR-0020 PR-5.2: --jj-bookmark-auto-advance backend tests --------------
+//
+// PR-5.2 adds an opt-in pre-step to `vcs push` (jj only): when the named
+// bookmark is a strict ancestor of @, move it forward to @- before pushing.
+// jj慣習: bookmarks live on confirmed commits (= @-), the working copy (@)
+// is throw-away. Manually advancing the bookmark every bump is friction; the
+// flag removes it but only when ALL preconditions hold:
+//
+//   - working copy is clean (no uncommitted changes)
+//   - the bookmark exists
+//   - the bookmark is on the ancestor line of @ (not divergent / sideways)
+//   - the bookmark is strictly before @- (= forward move required)
+//
+// Failure modes return exit 3 (= exitCodeVCSExec, "VCS-layer precondition
+// not met" — same taxonomy as "unknown remote" / "not a repo"). exit 1
+// (exitCodeFalse) is reserved for predicate verbs (`compare` / `vcs is`)
+// and would mis-classify a refusal as a query result.
+
+// TestJjBackend_Push_AutoAdvance_Forward: bookmark sits 1 commit below @-;
+// auto-advance moves it to @- and pushes. After success the bookmark must
+// be at @-'s change_id on the local AND on the bare (= bookmark advanced
+// AND push happened).
+func TestJjBackend_Push_AutoAdvance_Forward(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	// Setup: place "main" bookmark at @-- (one commit behind @-) so a
+	// forward move to @- is required. setupJjRepoWithRemote leaves @ on
+	// an empty working copy above the seed commits.
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true}); err != nil {
+			t.Fatalf("Push auto-advance: %v", err)
+		}
+	})
+	// Bookmark must be at @-'s commit on the local.
+	localBkSHA, err := runBackendCmdIn(work, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("local rev-parse main: %v", err)
+	}
+	parentSHA, err := runBackendCmdIn(work, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("local rev-parse HEAD~?: %v", err)
+	}
+	_ = parentSHA
+	// And the bare must have main at the same SHA.
+	bareBkSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(localBkSHA)) != strings.TrimSpace(string(bareBkSHA)) {
+		t.Errorf("bare main = %q, want local main = %q",
+			strings.TrimSpace(string(bareBkSHA)), strings.TrimSpace(string(localBkSHA)))
+	}
+}
+
+// TestJjBackend_Push_AutoAdvance_AlreadyAtParent: bookmark is already at @-;
+// auto-advance is a no-op for the move step, push proceeds normally.
+func TestJjBackend_Push_AutoAdvance_AlreadyAtParent(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true}); err != nil {
+			t.Fatalf("Push auto-advance no-op: %v", err)
+		}
+	})
+}
+
+// TestJjBackend_Push_AutoAdvance_Divergent: bookmark is on a sibling change
+// (= not in ancestors(@)); auto-advance must refuse with exit 3 and NOT
+// move the bookmark.
+//
+// Setup tactic: capture the change_id of the "bump" commit (which IS in
+// ancestors of the default @), then `jj new <bump>` to anchor @ on the
+// bump line, then `jj new <bump> -m sib` to create a sibling, set the
+// bookmark on the sibling, finally re-edit / new on the original bump
+// line so the bookmark is sideways relative to the final @.
+func TestJjBackend_Push_AutoAdvance_Divergent(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	// Capture the bump commit's change_id so we can branch deterministically.
+	bumpCID, err := runBackendCmdIn(work, "jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
+	if err != nil {
+		t.Fatalf("capture bump change_id: %v", err)
+	}
+	bump := strings.TrimSpace(string(bumpCID))
+	// Create a sibling change off bump and place "main" on it.
+	runIn(t, work, "jj", "new", bump, "-m", "sib")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@", "--allow-backwards")
+	// Return @ to a fresh empty working copy above the original bump line —
+	// now main is on a sibling, NOT in ancestors(@).
+	runIn(t, work, "jj", "new", bump)
+	bookmarkBefore, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true})
+		if err == nil {
+			t.Fatal("auto-advance on divergent bookmark should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec (3), got: %v", err)
+		}
+		if !strings.Contains(ee.msg, "ancestor") && !strings.Contains(ee.msg, "advance") {
+			t.Errorf("expected divergent hint, got: %q", ee.msg)
+		}
+	})
+	bookmarkAfter, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
+	if string(bookmarkBefore) != string(bookmarkAfter) {
+		t.Errorf("bookmark must NOT move on refusal: before=%q after=%q",
+			string(bookmarkBefore), string(bookmarkAfter))
+	}
+}
+
+// TestJjBackend_Push_AutoAdvance_Dirty: working copy has uncommitted edits;
+// auto-advance refuses with exit 3 before touching the bookmark or pushing.
+func TestJjBackend_Push_AutoAdvance_Dirty(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	// Dirty the working copy by writing to VERSION (an existing tracked file).
+	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	bookmarkBefore, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true})
+		if err == nil {
+			t.Fatal("auto-advance with dirty worktree should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec (3), got: %v", err)
+		}
+		if !strings.Contains(ee.msg, "clean") {
+			t.Errorf("expected 'clean' in hint, got: %q", ee.msg)
+		}
+	})
+	bookmarkAfter, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
+	if string(bookmarkBefore) != string(bookmarkAfter) {
+		t.Errorf("bookmark must NOT move on dirty refusal: before=%q after=%q",
+			string(bookmarkBefore), string(bookmarkAfter))
+	}
+}
+
+// TestGitBackend_Push_AutoAdvance_Reject: --jj-bookmark-auto-advance reaching
+// the git backend is a "should never happen" condition (the dispatcher
+// rejects it at exit 2 before calling Push). Defensive: if it slips through,
+// gitBackend.Push must refuse rather than silently no-op.
+func TestGitBackend_Push_AutoAdvance_Reject(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true})
+		if err == nil {
+			t.Fatal("gitBackend.Push must refuse jjBookmarkAutoAdvance")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) {
+			t.Errorf("expected *exitErr, got: %v", err)
+		}
+	})
+}

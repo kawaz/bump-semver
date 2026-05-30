@@ -3759,6 +3759,138 @@ func TestJjBackend_Push_ExportRetryGenericFallback(t *testing.T) {
 	})
 }
 
+// --- DR-0020 PR-5.2: --jj-bookmark-auto-advance dispatcher tests ---------
+//
+// PR-5.2 adds `vcs push --jj-bookmark-auto-advance`. The flag is opt-in,
+// jj-only (git backend rejects with exit 2 + a `jj-specific` hint), and
+// threads through to the backend Push which performs the
+// clean → ancestor → forward-move precondition chain (covered at the
+// backend layer in vcs_backend_test.go). The dispatcher tests below pin:
+//
+//   - parser accepts the flag (no false-positive "unknown flag" rejection)
+//   - on a git repo, the flag is rejected with exit 2 + a hint mentioning
+//     "jj-specific" and the flag name (so the user knows what to drop)
+//   - on a jj repo, the flag reaches the backend (= forward-move case
+//     succeeds, mirroring TestRun_VcsPush_Branch but with the flag set)
+//
+// Quiet rules and stdout/stderr passthrough are unchanged from PR-5/5.1;
+// re-asserting them here would be redundant.
+
+// TestRun_VcsPush_AutoAdvance_GitReject: passing the jj-only flag to a git
+// repo is a usage error (exit 2). The hint must name the flag and the
+// "jj-specific" reason so the user can see what went wrong without
+// re-reading the help.
+func TestRun_VcsPush_AutoAdvance_GitReject(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("--jj-bookmark-auto-advance on a git repo should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit %d, got: %v", exitCodeUsage, err)
+		}
+		s := stderr.String() + ee.msg
+		if !strings.Contains(s, "--jj-bookmark-auto-advance") {
+			t.Errorf("error should name the flag, got: %q", s)
+		}
+		if !strings.Contains(s, "jj-specific") && !strings.Contains(s, "jj-only") {
+			t.Errorf("error should explain the flag is jj-specific, got: %q", s)
+		}
+	})
+}
+
+// TestRun_VcsPush_AutoAdvance_JjForward: the happy path — clean jj working
+// copy, bookmark sitting before @-, flag set; auto-advance runs and the
+// push succeeds. End-to-end mirror of TestRun_VcsPush_Branch.
+func TestRun_VcsPush_AutoAdvance_JjForward(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	// Place main bookmark before @- so auto-advance has work to do.
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs push --jj-bookmark-auto-advance (jj forward): %v", err)
+		}
+	})
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(bareSHA)) == "" {
+		t.Errorf("bare should have main after auto-advance push")
+	}
+}
+
+// TestRun_VcsPush_AutoAdvance_JjDirty: dirty working copy → exit 3 with a
+// hint mentioning "clean". The bookmark must NOT move.
+func TestRun_VcsPush_AutoAdvance_JjDirty(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, work, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("auto-advance on dirty worktree should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exit %d, got: %v", exitCodeVCSExec, err)
+		}
+		s := stderr.String() + ee.msg
+		if !strings.Contains(s, "clean") {
+			t.Errorf("dirty error should mention 'clean' precondition, got: %q", s)
+		}
+	})
+}
+
+// TestRun_VcsPush_AutoAdvance_ParserAcceptsFlag: the parser must accept
+// `--jj-bookmark-auto-advance` as a verb-local boolean flag (no false
+// "unknown flag" rejection at the parser layer). Specifying it without
+// --branch is still a usage error for the same reason as a bare
+// `vcs push --remote origin` (NAME required) — this test pins the
+// "flag is parsed cleanly, semantic checks happen downstream" boundary.
+func TestRun_VcsPush_AutoAdvance_ParserAcceptsFlag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	// No --branch: should hit the "name required" error, not "unknown flag".
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error for missing --branch")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit %d, got: %v", exitCodeUsage, err)
+		}
+		s := stderr.String() + ee.msg
+		if strings.Contains(s, "unknown flag") {
+			t.Errorf("parser must accept --jj-bookmark-auto-advance, but got 'unknown flag': %q", s)
+		}
+	})
+}
+
 // --- DR-0020 PR-6: vcs tag push / vcs tag delete dispatcher tests -------
 
 // TestRun_VcsTagPR6 hosts all PR-6 dispatcher subtests so the file's

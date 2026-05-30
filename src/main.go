@@ -57,10 +57,12 @@ func (e *exitErr) ExitCode() int { return e.code }
 
 // cliArgs is the parsed command-line.
 type cliArgs struct {
-	kind             string // "bump" | "compare" | "version" | "help" | "helpFull" | "helpAction"
-	action           string // bump 時: "major"/"minor"/"patch"/"pre"/"get"
+	kind             string // "bump" | "compare" | "vcs" | "version" | "help" | "helpFull" | "helpAction"
+	action           string // bump 時: "major"/"minor"/"patch"/"pre"/"get"; vcs 時: "get" / ...
 	compareOp        string // compare 時 base: "eq"/"lt"/"gt"/"le"/"ge"
 	comparePrecision string // compare 時 precision (DR-0017): "" / "major" / "minor" / "patch"
+	vcsVerb          string // vcs 時 1st verb (e.g. "get"); "" = parent-level (show help)
+	vcsArgs          []string
 	inputs           []string
 	write            bool
 
@@ -152,6 +154,43 @@ func parseArgs(argv []string) (cliArgs, error) {
 
 	out := cliArgs{}
 	var rest []string
+	if argv[0] == "vcs" {
+		// `vcs` is a two-tier subcommand (vcs <verb> [args...]) — we
+		// parse it specially because the existing flat-action grammar
+		// doesn't fit. Help routing:
+		//
+		//   bump-semver vcs            → show vcs parent help
+		//   bump-semver vcs --help     → show vcs parent help
+		//   bump-semver vcs get        → show vcs get help (no key given)
+		//   bump-semver vcs <verb> --help → show vcs <verb> help
+		//   bump-semver vcs <verb> <args...> → dispatch to runVcsCmd
+		out.kind = "vcs"
+		if len(argv) == 1 {
+			return cliArgs{kind: "helpAction", action: "vcs"}, nil
+		}
+		if argv[1] == "--help" || argv[1] == "-h" {
+			return cliArgs{kind: "helpAction", action: "vcs"}, nil
+		}
+		out.vcsVerb = argv[1]
+		// Per-verb help only for known verbs — unknown verbs must
+		// surface as an exit-2 error, not as a silent help fallthrough.
+		// We route them to runVcsCmd which emits the proper usage error.
+		isKnownVerb := out.vcsVerb == "get"
+		if len(argv) == 2 {
+			if isKnownVerb {
+				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+			}
+			return out, nil
+		}
+		if argv[2] == "--help" || argv[2] == "-h" {
+			if isKnownVerb {
+				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+			}
+			return out, nil
+		}
+		out.vcsArgs = append(out.vcsArgs, argv[2:]...)
+		return out, nil
+	}
 	if argv[0] == "compare" {
 		// `bump-semver compare --help` / `compare -h`: アクション固有 help
 		// に短絡 (OP の解釈は始めない)。OP 後に置かれた `--help` は通常の
@@ -610,9 +649,123 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return nil
 	case "compare":
 		return runCompare(args, stdin, stdout, stderr)
+	case "vcs":
+		return runVcsCmd(args, stdin, stdout, stderr)
 	}
 
 	return runBump(args, stdin, stdout, stderr)
+}
+
+// runVcsCmd is the dispatcher for the `vcs <verb>` family (DR-0020). PR-1
+// implements only `vcs get`; future verbs (is / diff / commit / push /
+// tag) plug in here as additional cases.
+func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
+	switch args.vcsVerb {
+	case "get":
+		return runVcsCmdGet(args, stdout, stderr)
+	default:
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("unknown vcs verb: %s (expected: get)", args.vcsVerb))
+	}
+}
+
+// vcsGetKeys lists the keys recognised by `vcs get`. Kept as a slice so
+// the order is preserved when we surface it in error messages.
+var vcsGetKeys = []string{"root", "backend", "current-branch"}
+
+// runVcsCmdGet implements `vcs get <key>`.
+//
+// Exit codes (DR-0020):
+//
+//   - 0  on success
+//   - 2  when the key is missing / unknown (usage)
+//   - 3  when the VCS subprocess fails or the cwd is not a vcs repo
+//   - 4  when the answer is ambiguous (detached HEAD, multi-bookmark)
+//
+// The output is unadorned (no JSON wrapper) — `vcs get` is intentionally
+// shell-friendly, like `git rev-parse --show-toplevel`.
+func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) == 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs get requires a key (one of: %s)", strings.Join(vcsGetKeys, " / ")))
+	}
+	if len(args.vcsArgs) > 1 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs get takes exactly one key, got %d", len(args.vcsArgs)))
+	}
+	key := args.vcsArgs[0]
+
+	// The `backend` key is the only one that doesn't need to actually
+	// build a backend before answering — but for consistency (and so a
+	// non-vcs cwd reports exit 3 here too) we resolve the backend up
+	// front and let the unknown-key check fall through.
+	known := false
+	for _, k := range vcsGetKeys {
+		if k == key {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("unknown vcs get key: %s (expected one of: %s)", key, strings.Join(vcsGetKeys, " / ")))
+	}
+
+	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+
+	switch key {
+	case "backend":
+		fmt.Fprintln(stdout, b.Kind())
+		return nil
+	case "root":
+		root, err := b.Root()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		fmt.Fprintln(stdout, root)
+		return nil
+	case "current-branch":
+		name, err := b.CurrentBranch()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		fmt.Fprintln(stdout, name)
+		return nil
+	}
+	// Unreachable: key was validated against vcsGetKeys above.
+	return emitVcsUsage(stderr, args, fmt.Errorf("internal: unhandled vcs get key %q", key))
+}
+
+// emitVcsUsage prints a "bump-semver: <msg>" line and returns an
+// exitErr with exitCodeUsage. Separate from emitErr because the
+// existing emitErr hardcodes exit code 2 (kept as exitCodeUsage), but
+// future vcs errors need a different code path (exitCodeAmbiguous /
+// exitCodeVCSExec etc.) and we want a focused helper for those.
+func emitVcsUsage(stderr io.Writer, args cliArgs, err error) error {
+	if !args.quietAll {
+		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+	}
+	return &exitErr{code: exitCodeUsage, msg: err.Error()}
+}
+
+// emitVcsErr surfaces an error from a vcs verb. When the error already
+// carries an exit code (= an *exitErr produced by the backend layer),
+// we preserve it. Anything else is treated as a VCS-exec failure
+// (exit 3), so a stray non-coded error doesn't silently downgrade into
+// the generic exit 2.
+func emitVcsErr(stderr io.Writer, args cliArgs, err error) error {
+	if !args.quietAll {
+		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+	}
+	var ee *exitErr
+	if errors.As(err, &ee) {
+		return ee
+	}
+	return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 }
 
 // emitErr writes a "bump-semver: <reason>" line to stderr unless the

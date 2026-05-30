@@ -24,6 +24,7 @@ Actions:
   patch      Bump patch (x.y.Z)
   pre        Pre-release identifiers (counter advance / set / remove)
   compare    Compare two SemVer values via <eq|lt|le|gt|ge|...>
+  vcs        VCS helpers (git/jj-agnostic; e.g. vcs get root|backend|current-branch)
 
 Action-specific help: bump-semver <action> --help
 Full reference:       bump-semver --help-full
@@ -112,10 +113,19 @@ versions must agree; otherwise a "version mismatch:" error lists each origin
 and value. With --write, only FILE-origin inputs are written back (vcs: and
 cmd: are read-only).
 
+VCS helpers (DR-0020):
+  vcs get root             Print the repository root
+  vcs get backend          Print "git" or "jj"
+  vcs get current-branch   Print the unambiguous branch (git) / bookmark (jj)
+  (See: bump-semver vcs --help)
+
 Exit codes:
   0   success (or compare predicate true)
-  1   compare predicate false
-  2   error (parse failure, mismatch, missing input, etc.)
+  1   compare predicate false (or 'vcs is' predicate false in future PRs)
+  2   usage error (parse failure, mismatch, missing input, unknown verb/key, etc.)
+  3   VCS subprocess error (vcs subcommands only — e.g. not in a repo)
+  4   ambiguous answer (vcs subcommands only — e.g. detached HEAD)
+  5   non-fast-forward push (vcs push in future PRs)
 
 Examples:
   bump-semver get VERSION
@@ -334,9 +344,78 @@ Examples:
   bump-semver compare eq VERSION 'cmd:./bin/mytool --version'   # built bin matches version file?
 `
 
+// helpVcs documents the `vcs` parent subcommand (DR-0020). PR-1 only
+// implements `vcs get`; other verbs (is / diff / commit / push / tag)
+// are listed in the design doc and will appear here as they land.
+//
+// kawaz CLI design preferences: sections in order (subcommand list,
+// options, global options, env), long options only, --help is the
+// no-args default.
+const helpVcs = `bump-semver vcs — VCS helpers (git/jj-agnostic) [DR-0020]
+
+Usage:
+  bump-semver vcs <verb> [args...]
+  bump-semver vcs --help
+
+Verbs:
+  get <key>     Read a value from the VCS. Keys: root | backend | current-branch.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (and the hint)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+  --help, -h             Show this help
+
+Exit codes:
+  0   success
+  2   usage error (unknown verb / unknown key / wrong number of args)
+  3   VCS subprocess error (not a repo, command failed)
+  4   ambiguous answer (e.g. detached HEAD, multiple bookmarks)
+`
+
+// helpVcsGet documents `vcs get <key>`.
+//
+// The three keys are intentionally minimal — anything more elaborate
+// belongs in a dedicated verb (e.g. tag listing in a future `vcs tag
+// list`). Keep the set tight so callers can rely on every key being
+// equally cheap and equally well-defined.
+const helpVcsGet = `bump-semver vcs get — read a value from the VCS [DR-0020]
+
+Usage:
+  bump-semver vcs get <key>
+
+Keys:
+  root             Absolute path to the repository root
+  backend          The detected backend: "git" or "jj"
+  current-branch   The unambiguous current branch (git) / bookmark (jj)
+                   git:  HEAD's symbolic-ref short name. Detached HEAD → exit 4.
+                   jj:   The single bookmark naming heads(::@ & bookmarks()).
+                         Zero / multiple bookmarks at the head → exit 4.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+
+Exit codes:
+  0   success (value printed on stdout, single line, no trailing newline beyond '\n')
+  2   usage error (key missing / unknown / multiple keys given)
+  3   VCS subprocess error (not a repo, command failed)
+  4   ambiguous answer
+
+Examples:
+  bump-semver vcs get root                    # /path/to/repo
+  bump-semver vcs get backend                 # git  (or jj)
+  bump-semver vcs get current-branch          # main
+  ROOT=$(bump-semver vcs get root) || exit    # capture for further use
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
+//
+// Two-tier verbs use space-separated keys ("vcs get"). The parent verb
+// ("vcs") gets the parent help; per-verb keys map to the per-verb help.
 var actionHelpTexts = map[string]string{
 	"major":   helpBump,
 	"minor":   helpBump,
@@ -344,4 +423,6 @@ var actionHelpTexts = map[string]string{
 	"pre":     helpPre,
 	"get":     helpGet,
 	"compare": helpCompare,
+	"vcs":     helpVcs,
+	"vcs get": helpVcsGet,
 }

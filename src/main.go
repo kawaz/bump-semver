@@ -127,6 +127,15 @@ type cliArgs struct {
 	vcsPushRemote    string
 	vcsPushRemoteSet bool
 
+	// vcsPushJjBookmarkAutoAdvance: DR-0020 PR-5.2. Verb-local to `vcs
+	// push`, jj-only opt-in. When true, the dispatcher runs the bookmark
+	// auto-advance pre-step (clean → bookmark set to @-, dirty →
+	// bookmark set to @) before the push. The `--jj-` prefix names the
+	// backend the flag is scoped to (= structural typo guard: a git
+	// repo getting this flag is exit-2 rejected at the dispatcher, not
+	// silently no-op'd at the backend).
+	vcsPushJjBookmarkAutoAdvance bool
+
 	// vcsTagSubVerb / vcsTagRev / vcsTagRevSet / vcsTagAllowMove:
 	// DR-0020 PR-6. Verb-local to `vcs tag`.
 	//
@@ -419,6 +428,15 @@ func parseArgs(argv []string) (cliArgs, error) {
 				}
 				out.vcsPushRemote = strings.TrimPrefix(a, "--remote=")
 				out.vcsPushRemoteSet = true
+			// DR-0020 PR-5.2: --jj-bookmark-auto-advance (vcs push only,
+			// jj backend only). Boolean opt-in. Parsed here so the
+			// parser doesn't emit "unknown flag for 'vcs push'"; the
+			// jj-vs-git semantic check happens in runVcsCmdPush after
+			// backend detection (= exit 2 with a hint naming the flag
+			// and the jj-specific reason, instead of the generic
+			// unknown-flag message).
+			case a == "--jj-bookmark-auto-advance" && out.vcsVerb == "push":
+				out.vcsPushJjBookmarkAutoAdvance = true
 			// --- DR-0020 PR-6: vcs tag push flags ----------------------
 			//
 			// `--rev` carries the target revision for `vcs tag push`;
@@ -1398,6 +1416,17 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
+	// PR-5.2: --jj-bookmark-auto-advance is jj-only. Reject at the
+	// dispatcher (exit 2 + hint naming the flag and the jj-specific
+	// reason) so the message tells the user exactly what to drop. The
+	// gitBackend.Push also has a defensive reject for the unreachable
+	// case, but the user-facing diagnostic must come from here — the
+	// backend's "please file a bug" wording is meant for the
+	// unreachable branch.
+	if args.vcsPushJjBookmarkAutoAdvance && b.Kind() == "git" {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs push: --jj-bookmark-auto-advance is jj-specific; this repo uses git (drop the flag, or run from a jj workspace)"))
+	}
 	// PR-5.1: forward the underlying tool's success-path diagnostic
 	// ("Everything up-to-date" / "Nothing changed" / bookmark moves) by
 	// handing the backend the dispatcher's own stdout/stderr. Quiet
@@ -1413,7 +1442,11 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	// paths the backend skips the passthrough writers and emitVcsErr
 	// surfaces the wrapped error via formatPushError (which already
 	// folds git/jj's stderr into ee.msg).
-	opts := pushOpts{name: args.vcsPushName, remote: remote}
+	opts := pushOpts{
+		name:                  args.vcsPushName,
+		remote:                remote,
+		jjBookmarkAutoAdvance: args.vcsPushJjBookmarkAutoAdvance,
+	}
 	if !args.quietAll && !args.quiet {
 		opts.stdout = stdout
 		opts.stderr = stderr

@@ -3832,33 +3832,38 @@ func TestRun_VcsPush_AutoAdvance_JjForward(t *testing.T) {
 	}
 }
 
-// TestRun_VcsPush_AutoAdvance_JjDirty: dirty working copy → exit 3 with a
-// hint mentioning "clean". The bookmark must NOT move.
+// TestRun_VcsPush_AutoAdvance_JjDirty: dirty working copy → bookmark goes
+// to @ (not @-, kawaz 確定 2026-05-31 — both clean and dirty workflows
+// are first-class; users wanting strict clean-only gate with `vcs is
+// clean` themselves). Push succeeds and the bare receives the @ commit.
 func TestRun_VcsPush_AutoAdvance_JjDirty(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
-	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
 	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
 	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
 		t.Fatal(err)
 	}
+	// The realistic dirty workflow always describes before push (jj
+	// refuses to push undescribed commits). PR-5.2 leaves the describe
+	// step to the user — auto-advance covers the bookmark move, nothing
+	// else.
+	runIn(t, work, "jj", "describe", "-m", "bump to 9.9.9")
 	withCwd(t, work, func() {
-		var stderr bytes.Buffer
 		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
-			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
-		if err == nil {
-			t.Fatal("auto-advance on dirty worktree should fail")
-		}
-		var ee *exitErr
-		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
-			t.Errorf("expected exit %d, got: %v", exitCodeVCSExec, err)
-		}
-		s := stderr.String() + ee.msg
-		if !strings.Contains(s, "clean") {
-			t.Errorf("dirty error should mention 'clean' precondition, got: %q", s)
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("auto-advance on dirty worktree should succeed (bookmark → @): %v", err)
 		}
 	})
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(bareSHA)) == "" {
+		t.Errorf("bare should have main after dirty auto-advance push")
+	}
 }
 
 // TestRun_VcsPush_AutoAdvance_ParserAcceptsFlag: the parser must accept

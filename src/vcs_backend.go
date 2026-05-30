@@ -1046,6 +1046,27 @@ type pushOpts struct {
 	// to the interface.
 	stdout io.Writer
 	stderr io.Writer
+
+	// jjBookmarkAutoAdvance (DR-0020 PR-5.2) is the opt-in
+	// --jj-bookmark-auto-advance flag. When true on the jj backend, Push
+	// first runs a clean → exists → ancestor → forward-move pre-step that
+	// advances the named bookmark to @- before the actual push, so the
+	// jj-慣習-conformant "bookmark sits on the confirmed commit (@-), @ is
+	// the throw-away working copy" layout is reached structurally rather
+	// than by remembering a manual `jj bookmark move` step every bump.
+	//
+	// Always false-in-effect on the git backend — the dispatcher rejects
+	// the flag at exit 2 before Push is called when Kind() == "git". The
+	// git backend keeps a defensive same-exit reject for the unreachable
+	// case (= belt-and-suspenders against future dispatcher refactors).
+	//
+	// Design rationale: opt-in (no implicit advance) because a bookmark
+	// move is a side effect the user should consciously request — silent
+	// movement would surprise users who positioned the bookmark
+	// intentionally. See DR-0020 PR-5.2 implementation notes for the
+	// flag-name selection (`--jj-` prefix names the backend the flag is
+	// scoped to, opt-in default).
+	jjBookmarkAutoAdvance bool
 }
 
 // Fetch (git) refreshes refs from the named remote via `git fetch <remote>`.
@@ -1069,6 +1090,20 @@ func (g *gitBackend) Fetch(remote string) error {
 // Mirrors CurrentBranch's "unknown failure defaults to a safe code"
 // approach.
 func (g *gitBackend) Push(opts pushOpts) error {
+	// Defensive (DR-0020 PR-5.2): the dispatcher rejects
+	// --jj-bookmark-auto-advance on git repos at exit 2 BEFORE reaching
+	// here, so this branch is unreachable through the CLI. We keep it as
+	// belt-and-suspenders against future dispatcher refactors and to
+	// make the "git ignores the flag" semantics structurally impossible
+	// (silent ignore would betray the `--jj-` prefix invariant — the
+	// prefix promises "jj only", a silent no-op on git would let a
+	// future-CLI-typo land an unintended push without complaint).
+	if opts.jjBookmarkAutoAdvance {
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  "git: --jj-bookmark-auto-advance is jj-specific and should be rejected at the dispatcher (this is a defensive backend guard; please file a bug)",
+		}
+	}
 	stdout, stderr, code, err := runBackendCapture("git", "push", opts.remote, opts.name+":"+opts.name)
 	if err != nil {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
@@ -1131,6 +1166,11 @@ var jjGitExportFunc = func() (stderr string, code int, err error) {
 // some bookmarks") are matched in isNonFastForward. Anything else on
 // non-zero exit is a generic VCS error (exit 3).
 func (j *jjBackend) Push(opts pushOpts) error {
+	if opts.jjBookmarkAutoAdvance {
+		if err := j.autoAdvanceBookmark(opts.name); err != nil {
+			return err
+		}
+	}
 	stdout, stderr, code, err := runBackendCapture("jj", "git", "push",
 		"--bookmark", opts.name, "--remote", opts.remote)
 	if err != nil {
@@ -1187,6 +1227,120 @@ func (j *jjBackend) Push(opts pushOpts) error {
 		code: exitCodeVCSExec,
 		msg:  jjGitExportRecoveryMessage(finalStderr),
 	}
+}
+
+// autoAdvanceBookmark implements the DR-0020 PR-5.2 pre-step for
+// `vcs push --jj-bookmark-auto-advance`. The target the bookmark gets
+// advanced to is **conditioned on IsClean**:
+//
+//   - clean (@ empty)     → advance to @-  (kawaz 常用 = jj 慣習: bookmark
+//                           lives on the confirmed parent, @ is the
+//                           throw-away working copy)
+//   - dirty (@ non-empty) → advance to @   (treat the current commit as
+//                           the publishable one — the "immutable 化"
+//                           pattern: after push, the named commit
+//                           becomes immutable and jj auto-creates a new
+//                           working copy above it; described or empty
+//                           description both legal, the user opted in)
+//
+// Preconditions chain (fail-fast, in order — earlier predicates gate
+// later ones):
+//
+//  1. the bookmark exists (`present(NAME)`). Missing → return nil
+//     (skip advance, fall through to the normal push, which surfaces
+//     jj's own "bookmark does not exist" error — same behaviour as PR-5
+//     without the flag). This keeps the flag's responsibility narrow
+//     ("forward-move an existing bookmark"); naming errors stay in the
+//     existing PR-5 lane.
+//  2. the bookmark is on the ancestor line of @ (`NAME & ::@` non-empty).
+//     Sideways/divergent → exit 3 with a hint naming the constraint.
+//     We detect this ourselves (revset emptiness) rather than relying on
+//     jj's own "Refusing to move bookmark backwards or sideways" error
+//     so the message names the bump-semver feature ("auto-advance")
+//     rather than jj's primitive — the user knows which flag to drop.
+//  3. the bookmark is already at the target (@- in clean, @ in dirty) →
+//     return nil, push proceeds with no advance step.
+//  4. else → `jj bookmark move NAME --to <target>`. Forward-only by
+//     jj's default; we deliberately do NOT pass `--allow-backwards` —
+//     that flag would silently neutralise the ancestor check above.
+//     Design rationale: the precondition chain above IS the safety
+//     check; if a future maintainer reads "move" and reaches for
+//     `--allow-backwards` to "make it work", the ancestor precondition
+//     has already rejected the unsafe cases, so the bare forward-only
+//     move is the correct primitive.
+//
+// Note on the IsClean branching (kawaz 確定 2026-05-31): an earlier
+// draft refused the dirty case (exit 3 + "requires clean"). kawaz then
+// noted both clean and dirty are legitimate workflows ("clean 前提" and
+// "dirty + describe して push" の両運用) and the flag should cover both;
+// users wanting strict clean-only can gate with `vcs is clean` themselves
+// (= ツール側で禁止しない、最小ガード方針).
+//
+// Exit code 3 (exitCodeVCSExec) is the established taxonomy slot for
+// "VCS-layer precondition not met" (same as "unknown remote" / "not a
+// repo"). Exit 1 (exitCodeFalse) is reserved for predicate verbs
+// (`compare` / `vcs is`) and would mis-classify a refusal as a query
+// result. Exit 4 (exitCodeAmbiguous) is for "no single answer" queries
+// (`current-branch` with multiple bookmarks), not a precondition fail.
+func (j *jjBackend) autoAdvanceBookmark(name string) error {
+	// 1. existence — `present(NAME)` returns empty if NAME is not a
+	// known bookmark/symbol; without `present()` jj's revset parser
+	// errors on the unknown name. Empty stdout → bookmark absent →
+	// fall through to the normal push so PR-5's existing
+	// "bookmark not found" path stays the single source of truth.
+	presentOut, err := runBackendCmd("jj", "log", "-r", "present("+name+")", "--no-graph", "-T", `change_id ++ "\n"`)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if strings.TrimSpace(string(presentOut)) == "" {
+		return nil // bookmark doesn't exist; let normal push surface the error
+	}
+	// 2. ancestor — `NAME & ::@` is empty when NAME is NOT in ancestors(@).
+	ancestorOut, err := runBackendCmd("jj", "log", "-r", name+" & ::@", "--no-graph", "-T", `change_id ++ "\n"`)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if strings.TrimSpace(string(ancestorOut)) == "" {
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("vcs push --jj-bookmark-auto-advance: bookmark %q is not an ancestor of @ (auto-advance can only move forward, not sideways); rebase or move the bookmark manually then retry", name),
+		}
+	}
+	// 2b. bookmark sits at @ itself → no advance regardless of clean/dirty
+	// (in clean mode, moving to @- would be a backwards move and jj's
+	// forward-only check would surface as a confusing "Refusing to move
+	// bookmark backwards or sideways" — we know we're not advancing here,
+	// just push as-is). The dirty branch's target=@ is also a no-op for
+	// this same case, so the short-circuit is uniform.
+	atWcOut, err := runBackendCmd("jj", "log", "-r", name+" & @", "--no-graph", "-T", `change_id ++ "\n"`)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if strings.TrimSpace(string(atWcOut)) != "" {
+		return nil // bookmark at @ — nothing to advance (clean: don't go backwards; dirty: already at target)
+	}
+	// 3. pick target by clean/dirty.
+	clean, err := j.IsClean()
+	if err != nil {
+		return err
+	}
+	target := "@-"
+	if !clean {
+		target = "@"
+	}
+	// 4. no-op when already at target.
+	atTargetOut, err := runBackendCmd("jj", "log", "-r", name+" & "+target, "--no-graph", "-T", `change_id ++ "\n"`)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if strings.TrimSpace(string(atTargetOut)) != "" {
+		return nil // bookmark already at target, nothing to advance
+	}
+	// 5. forward-move (no --allow-backwards by design).
+	if _, err := runBackendCmd("jj", "bookmark", "move", name, "--to", target); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
 }
 
 // writePushDiagnostic emits the underlying tool's success-path output to

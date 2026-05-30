@@ -2555,6 +2555,47 @@ func TestJjBackend_Push_AutoAdvance_AlreadyAtParent(t *testing.T) {
 	})
 }
 
+// TestJjBackend_Push_AutoAdvance_AtWorkingCopy_Clean: bookmark sits at @
+// itself on a clean working copy. Naively moving to @- would be a backwards
+// move (jj rejects with "Refusing to move bookmark backwards or sideways");
+// auto-advance must short-circuit here so the push proceeds with the
+// bookmark untouched. Per kawaz original spec: "<name> が @ 自身を指す →
+// 通常 push (auto-advance 不要)".
+func TestJjBackend_Push_AutoAdvance_AtWorkingCopy_Clean(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	// Clean @ (empty working copy from setupJjRepoWithRemote) with main
+	// pinned at @ itself.
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@", "--allow-backwards")
+	wcCID, err := runBackendCmdIn(work, "jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+	if err != nil {
+		t.Fatalf("capture @: %v", err)
+	}
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true})
+		// The push itself may fail because @ on a clean fixture is empty/undescribed,
+		// but auto-advance must NOT emit a "backwards or sideways" error — that
+		// would mean the short-circuit is missing. We assert the bookmark stayed
+		// put and that any error is NOT the backwards-move one.
+		if err != nil {
+			var ee *exitErr
+			if errors.As(err, &ee) {
+				if strings.Contains(ee.msg, "backwards or sideways") {
+					t.Fatalf("auto-advance must short-circuit at-@ case (no backwards move attempt), got: %v", err)
+				}
+			}
+		}
+	})
+	bookmarkAfter, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
+	if strings.TrimSpace(string(bookmarkAfter)) != strings.TrimSpace(string(wcCID)) {
+		t.Errorf("bookmark must stay at @ (%q), got %q",
+			strings.TrimSpace(string(wcCID)), strings.TrimSpace(string(bookmarkAfter)))
+	}
+}
+
 // TestJjBackend_Push_AutoAdvance_Divergent: bookmark is on a sibling change
 // (= not in ancestors(@)); auto-advance must refuse with exit 3 and NOT
 // move the bookmark.
@@ -2604,36 +2645,38 @@ func TestJjBackend_Push_AutoAdvance_Divergent(t *testing.T) {
 }
 
 // TestJjBackend_Push_AutoAdvance_Dirty: working copy has uncommitted edits;
-// auto-advance refuses with exit 3 before touching the bookmark or pushing.
+// auto-advance moves the bookmark to @ (not @-) so the dirty commit IS
+// the publishable one (= "immutable 化" pattern, kawaz 確定 2026-05-31).
+// Push then proceeds against the bookmark at @.
 func TestJjBackend_Push_AutoAdvance_Dirty(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
 	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
 	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
-	// Dirty the working copy by writing to VERSION (an existing tracked file).
+	// Dirty the working copy by writing to VERSION (an existing tracked
+	// file) and describing it. The "dirty + describe + push" pattern is
+	// the one PR-5.2 covers — jj refuses to push commits with no
+	// description, so a realistic dirty workflow always describes first.
 	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
 		t.Fatal(err)
 	}
-	bookmarkBefore, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
+	runIn(t, work, "jj", "describe", "-m", "bump to 9.9.9")
+	// Capture @'s change_id (jj will snapshot the edit on next read).
+	wcCID, err := runBackendCmdIn(work, "jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+	if err != nil {
+		t.Fatalf("capture @ change_id: %v", err)
+	}
 	withCwd(t, work, func() {
 		b := &jjBackend{}
-		err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true})
-		if err == nil {
-			t.Fatal("auto-advance with dirty worktree should fail")
-		}
-		var ee *exitErr
-		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
-			t.Errorf("expected exitCodeVCSExec (3), got: %v", err)
-		}
-		if !strings.Contains(ee.msg, "clean") {
-			t.Errorf("expected 'clean' in hint, got: %q", ee.msg)
+		if err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true}); err != nil {
+			t.Fatalf("auto-advance with dirty worktree should succeed (target=@): %v", err)
 		}
 	})
 	bookmarkAfter, _ := runBackendCmdIn(work, "jj", "log", "-r", "main", "--no-graph", "-T", "change_id")
-	if string(bookmarkBefore) != string(bookmarkAfter) {
-		t.Errorf("bookmark must NOT move on dirty refusal: before=%q after=%q",
-			string(bookmarkBefore), string(bookmarkAfter))
+	if strings.TrimSpace(string(bookmarkAfter)) != strings.TrimSpace(string(wcCID)) {
+		t.Errorf("dirty auto-advance: bookmark should be at @ (%q), got %q",
+			strings.TrimSpace(string(wcCID)), strings.TrimSpace(string(bookmarkAfter)))
 	}
 }
 

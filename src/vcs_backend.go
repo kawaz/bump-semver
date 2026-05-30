@@ -1490,11 +1490,25 @@ func shortSHA(s string) string {
 // required for the move case because the remote ref already exists at a
 // different value (plain push is rejected with `(already exists)`).
 //
+// When `dir` is non-empty (= the non-colocated jj path's `git -C <bare>`)
+// we add `--no-verify` to bypass pre-push hooks. Rationale: pre-push
+// hooks are routinely written assuming a worktree (they inspect changed
+// files, run linters, etc.), and many `core.hooksPath`-based global hook
+// setups fail with "this operation must be run in a work tree" when
+// invoked from a bare repo. The tag-push from a bare backing store has
+// nothing useful for a worktree-oriented hook to inspect — it's just
+// "publish this ref" — so `--no-verify` is the right scope here. The
+// colocated path (dir == "") keeps full hook coverage so user
+// release-gating hooks still fire there.
+//
 // Success-path stdout/stderr is forwarded via writePushDiagnostic
 // (matches PR-5.1 Push behaviour). Non-zero exit becomes
 // *exitErr{exitCodeVCSExec} with the underlying stderr folded in.
 func gitTagPushRemote(opts tagPushOpts, force bool, dir string) error {
 	args := []string{"push"}
+	if dir != "" {
+		args = append(args, "--no-verify")
+	}
 	if force {
 		args = append(args, "--force")
 	}
@@ -1531,8 +1545,16 @@ func gitTagPushRemote(opts tagPushOpts, force bool, dir string) error {
 // virtue of git's own behaviour: a missing remote tag yields "warning:
 // deleting a non-existent ref" with exit 0. The only failure path is a
 // genuine remote/network error.
+//
+// Same `--no-verify` rationale as gitTagPushRemote for the bare-context
+// (`dir != ""`) path.
 func gitTagDeleteRemote(opts tagDeleteOpts, dir string) error {
-	cmd := exec.Command("git", "push", opts.Remote, ":refs/tags/"+opts.Name)
+	args := []string{"push"}
+	if dir != "" {
+		args = append(args, "--no-verify")
+	}
+	args = append(args, opts.Remote, ":refs/tags/"+opts.Name)
+	cmd := exec.Command("git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}

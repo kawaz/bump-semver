@@ -4074,12 +4074,22 @@ func TestRun_VcsTagPR6(t *testing.T) {
 
 	// --- vcs tag delete argument errors ------------------------------------
 
-	t.Run("vcs tag delete missing NAME → exit 2", func(t *testing.T) {
+	// Bare `vcs tag delete` (no NAME, no --remote) shows the per-verb
+	// help rather than failing with exit 2 — matches the existing
+	// `vcs push` / `vcs commit` "bare verb = help" convention. The
+	// usage-error path is covered by the `--remote alone (no NAME)`
+	// subtest below.
+	t.Run("vcs tag delete (no args) shows delete help", func(t *testing.T) {
+		var stdout bytes.Buffer
 		err := run([]string{"vcs", "tag", "delete"},
-			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
-		// `vcs tag delete` alone -- our convention shows help (like `vcs push`).
-		// But missing NAME with --remote present should be a usage error.
-		_ = err // bare form may show help; the strong assertion is below.
+			bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs tag delete (no args): %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "delete") || !strings.Contains(out, "NAME") {
+			t.Errorf("vcs tag delete (no args) should show delete help mentioning NAME, got: %q", out)
+		}
 	})
 
 	t.Run("vcs tag delete --remote alone (no NAME) → exit 2", func(t *testing.T) {

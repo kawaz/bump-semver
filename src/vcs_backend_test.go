@@ -2313,6 +2313,69 @@ func TestJjBackend_TagDelete_AbsentIdempotent(t *testing.T) {
 	})
 }
 
+// TestJjBackend_TagPush_NonColocated: exercises the production layout
+// (DR-0020 line 105: git bare backing + jj workspace, no `.git/` in cwd).
+// The colocated fixtures above never hit jjGitPushDir's fall-through to
+// the resolved git_target — this test does.
+func TestJjBackend_TagPush_NonColocated(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, origin := setupJjRepoNonColocatedWithRemote(t, "1.0.0")
+	// Guard against a future refactor accidentally colocating.
+	if _, err := os.Stat(filepath.Join(work, ".git")); err == nil {
+		t.Fatalf("fixture invariant: work/.git must NOT exist in non-colocated layout")
+	}
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "@-", Remote: "origin",
+		}); err != nil {
+			t.Fatalf("TagPush(new, non-colocated): %v", err)
+		}
+	})
+	want := jjResolveRev(t, work, "@-")
+	if got := tagOnBare(t, origin, "v1.0.0"); got != want {
+		t.Errorf("non-colocated origin v1.0.0 = %q, want %q", got, want)
+	}
+}
+
+// TestJjBackend_TagDelete_NonColocated: delete also routes through
+// `git -C <git_target> push origin :refs/tags/NAME` in the non-colocated
+// layout, so it gets a dedicated test for the same reason.
+func TestJjBackend_TagDelete_NonColocated(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, origin := setupJjRepoNonColocatedWithRemote(t, "1.0.0")
+	runIn(t, work, "jj", "tag", "set", "v0.9.0", "-r", "@-")
+	if _, err := runBackendCmdIn(work, "jj", "git", "export"); err != nil {
+		t.Fatalf("setup jj git export: %v", err)
+	}
+	// Push the tag to origin via the backing store so we have something
+	// to delete on the remote half. `--no-verify` mirrors the SUT's
+	// bare-context push (see gitTagPushRemote rationale): the user's
+	// global core.hooksPath may have pre-push hooks that fail in a bare
+	// context; the SUT avoids them and the setup must too.
+	bareGitTarget, _ := os.ReadFile(filepath.Join(work, ".jj/repo/store/git_target"))
+	backing := strings.TrimSpace(string(bareGitTarget))
+	if _, err := runBackendCmdIn(backing, "git", "push", "--no-verify", "origin", "refs/tags/v0.9.0"); err != nil {
+		t.Fatalf("setup remote push: %v", err)
+	}
+	if tagOnBare(t, origin, "v0.9.0") == "" {
+		t.Fatal("setup invariant: origin should have v0.9.0 before delete")
+	}
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagDelete(tagDeleteOpts{Name: "v0.9.0", Remote: "origin"}); err != nil {
+			t.Fatalf("TagDelete (non-colocated): %v", err)
+		}
+	})
+	if got := tagOnBare(t, origin, "v0.9.0"); got != "" {
+		t.Errorf("non-colocated origin should not have v0.9.0 after delete, got %q", got)
+	}
+}
+
 // TestJjBackend_TagDelete_BadRemote: unknown remote → exit 3.
 func TestJjBackend_TagDelete_BadRemote(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {

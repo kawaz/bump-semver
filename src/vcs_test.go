@@ -542,6 +542,80 @@ func setupJjRepoWithRemote(t *testing.T, tags []string, fileVersion string) (wor
 	return workDir, bareDir
 }
 
+// setupJjRepoNonColocatedWithRemote mirrors setupJjRepoWithRemote but for
+// the **non-colocated** layout (= jj's git store is a separate bare repo,
+// not a `.git/` directory inside the work tree). This matches kawaz's
+// production "git bare + jj workspace" setup (DR-0020 line 105) which the
+// default `setupJjRepoWithRemote` (colocated) doesn't exercise.
+//
+// Layout:
+//
+//	root/
+//	  stage/            transient seeding tree (deleted before return)
+//	  backing.git/      bare repo jj uses as its git store
+//	  origin.git/       bare repo configured as `origin` on backing.git
+//	  work/             jj workspace (no `.git/` inside)
+//
+// Two commits ("init" + "bump") are seeded into backing.git via the
+// stage worktree, then stage is removed so the only worktree-shaped
+// directory tests see is `work/`. `git_target` ends up an absolute path
+// to backing.git, exercising the `jjGitPushDir()` branch that returns
+// that path for the `git -C <bare> push` step.
+//
+// Returns the work directory and origin bare path (= the remote tests
+// assert against). backing.git is internal plumbing — tests don't need
+// to know about it.
+func setupJjRepoNonColocatedWithRemote(t *testing.T, fileVersion string) (workDir, originBare string) {
+	t.Helper()
+	root := t.TempDir()
+	stage := filepath.Join(root, "stage")
+	backing := filepath.Join(root, "backing.git")
+	originBare = filepath.Join(root, "origin.git")
+	workDir = filepath.Join(root, "work")
+
+	// Seed two commits via a stage worktree (jj non-colocated init takes
+	// an EXISTING git repo as its store, so we need history first).
+	runIn(t, root, "git", "init", "-q", "-b", "main", "stage")
+	runIn(t, stage, "git", "config", "user.name", "Test")
+	runIn(t, stage, "git", "config", "user.email", "test@example.com")
+	runIn(t, stage, "git", "config", "commit.gpgsign", "false")
+	if err := writeFile(filepath.Join(stage, "VERSION"), "0.0.1\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, stage, "git", "add", "VERSION")
+	runIn(t, stage, "git", "commit", "-qm", "initial")
+	if err := writeFile(filepath.Join(stage, "VERSION"), fileVersion+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, stage, "git", "add", "VERSION")
+	runIn(t, stage, "git", "commit", "-qm", "bump")
+
+	// Create backing.git and push history into it.
+	runIn(t, root, "git", "init", "--bare", "-q", "-b", "main", "backing.git")
+	runIn(t, stage, "git", "remote", "add", "backing", backing)
+	runIn(t, stage, "git", "push", "-q", "backing", "main")
+
+	// Create origin.git and wire it on backing.git (not on work/, since
+	// non-colocated work doesn't have a `.git` to hold remote config —
+	// the remote lives on the backing store).
+	runIn(t, root, "git", "init", "--bare", "-q", "-b", "main", "origin.git")
+	runIn(t, backing, "git", "remote", "add", "origin", originBare)
+
+	// jj init non-colocated.
+	runIn(t, root, "jj", "git", "init", "--git-repo", backing, "work")
+	if err := writeFile(filepath.Join(workDir, ".jj/repo/config.toml"),
+		"[signing]\nbehavior = \"drop\"\n"); err != nil {
+		t.Fatalf("write jj repo-local config: %v", err)
+	}
+
+	// Drop the stage worktree so tests see only the non-colocated layout
+	// (no risk of a test running git from stage by accident).
+	if err := os.RemoveAll(stage); err != nil {
+		t.Fatalf("rm stage: %v", err)
+	}
+	return workDir, originBare
+}
+
 // preloadBareWith pushes the work-dir's main branch to the bare so the
 // bare starts in a "remote already has this history" state. Useful for
 // fetch tests (where we want some refs to fetch) and forward-push tests

@@ -182,6 +182,14 @@ jobs:
         with:
           path: artifacts
 
+      # 今 build した freshly-built バイナリを PATH に入れて使う (= 真の dogfood)。
+      # check-version の latest-release curl 方式と違い、今 release してる版そのものを
+      # 使うので「commit/push サブコマンドの dogfooding が新版の挙動を検証」できる。
+      - name: Install freshly-built bump-semver (dogfood)
+        run: |
+          install -m 0755 artifacts/bump-semver-linux-amd64/bump-semver-linux-amd64 /usr/local/bin/bump-semver
+          bump-semver --version
+
       - name: Calculate checksums
         id: checksums
         run: |
@@ -260,8 +268,14 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
           cd homebrew-tap
+          # git identity は fresh runner には無いため明示設定 (bump-semver は identity を自前設定しない)。
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/bump-semver.rb
-          git diff --staged --quiet || git commit -m "Update bump-semver to ${VERSION}"
-          git push
+          # `vcs diff -q HEAD -- PATH` は差分あり=exit 1 (PR-3.1)。差分があるときだけ commit + push。
+          # commit/push 双方 self-guard (PR-4 empty-no-op gate / PR-5.1 idempotent push) するが、
+          # 旧 `git diff --staged --quiet` のファイルスコープ判定と同じ意味で gate しておくと
+          # logs に意図が残る。
+          if ! bump-semver vcs diff -q HEAD -- Formula/bump-semver.rb; then
+            bump-semver vcs commit -m "Update bump-semver to ${VERSION}" Formula/bump-semver.rb
+            bump-semver vcs push --branch main
+          fi

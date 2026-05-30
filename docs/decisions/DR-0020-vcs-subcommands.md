@@ -111,8 +111,23 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - jj は **v0.35+ を最小サポートバージョン**とする (`jj tag set` 依存)
 - **実機検証推奨マトリクス** (empirical-verification 方針): `jj git init --git-repo=<bare>` → `jj tag set` → native `git push` tag → `jj git import`/`export` の挙動を、対象 jj バージョンで確認
 
+## 実装ノート (PR-1 着手時に確定、2026-05-30)
+
+設計確定後、実装着手時に詰めた運用ガードレール:
+
+- **PR 分割**: 7 PR (PR-1 基盤+`vcs get` / PR-2 `vcs is` / PR-3 `vcs diff` / PR-4 `vcs commit` / PR-5 fetch+push / PR-6 tag / PR-7 移行+docs)。PR-1 で `vcsBackend` interface (`Kind` / `Root` / `CurrentBranch`) と git/jj backend を導入し、後続 PR は同じ pattern を踏襲する
+- **exit code 規約**: `0` 成功 / `1` 偽 (`compare` + 将来の `vcs is`) / `2` usage / `3` VCS 実行エラー / `4` 曖昧 / `5` non-fast-forward push (`vcs push` 用に予約)。`src/exit.go` の定数で 1 箇所管理
+- **`vcs is clean` の untracked 扱い** (PR-2 で実装): **除外** (tracked のみで判定)。`--include-untracked` は interface 引数として予約のみ、当初実装では default false
+- **jj 対応範囲**: **v0.35+** をサポート (`jj tag set` 依存)。CI matrix は `0.35` / `0.41` / `latest` の 3 種を目指す (v0.41 が手元の primary バージョン)
+- **`vcs get current-branch` 一意性**:
+  - git: `git symbolic-ref --short HEAD`。DETACHED HEAD は exit 4 (merge / rebase / cherry-pick 進行中の追加判定は次 PR で `.git/MERGE_HEAD` 等を probe して足す)
+  - jj: `heads(::@ & bookmarks())` の template で名前を集める。0 件 / 複数件 はいずれも exit 4
+- **`vcsKind` (DR-0008/0016) との一本化**: PR-1 は新規 `vcsBackend` interface を**並置追加**にとどめ、既存 `vcs:` 入力モード (`vcsFetchFile` / `vcsListTags` / `vcsLatestTag` / `resolveVcsInput`) の callers を backend に流し込む refactor は別途まとめて行う (現状の TDD/test 群が `vcsKind` 受け取り前提で組まれており、安全な banking のため新規 interface の green 確定が先)。journal の「移行は PR-7」と本 DR 確定方針 (= 一本化) の重みは PR-7 の一括 refactor で両立させる
+- **Cargo workspace.package 補完 (DR-0021)** とのリリース順序: DR-0021 が patch リリース (v0.16.2) で land 済み。本 DR の PR-1 land 時は **minor bump** で次バージョンに乗せ、欠けがちな minor リリースのリズムも揃える
+
 ## 関連
 
 - 上位/関連 DR: DR-0008 (`vcs:` schema 導入)、DR-0016 (`--vcs auto` 一本化)、DR-0019 (`vcs:latest-tag(<arg>)`)
 - 設計議論の経緯 + jj 一次情報調査: `docs/journal/2026-05-30-vcs-subcommands-design.md`
+- 実装着手時の調査 + PR 分割: `docs/journal/2026-05-30-vcs-subcommands-impl-kickoff.md`
 - ROADMAP: `docs/ROADMAP.md` (vcs サブコマンド群の実装項目)

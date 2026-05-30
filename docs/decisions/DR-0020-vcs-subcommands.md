@@ -137,6 +137,18 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - **`runVcsCmdIs` 配線**: `parseArgs` の `isKnownVerb` に `"is"` を追加、`runVcsCmd` の switch に case 追加、`actionHelpTexts["vcs is"]` 登録の 3 点。これで `vcs is` / `vcs is --help` / `vcs is <pred>` がそれぞれ help / dispatch される
 - **PR-1 で導入した helper の再利用**: `emitVcsUsage` (exit 2 + stderr)、`emitVcsErr` (backend 由来 exit を保持しつつ stderr 出力) はそのまま流用。predicate-false だけは「stderr 何も出さない」要件のため helper を通さず `&exitErr{code: exitCodeFalse}` を直接 return
 
+### PR-3 (vcs diff) 実装メモ (2026-05-30 確定)
+
+- **コマンド形**: `vcs diff REV [PATH..]`。`argv[0] = REV`、`argv[1:] = paths`。バックエンド統一: git は `git diff REV [-- paths..]` (one-rev 形 = REV vs working copy、未コミット変更含む)、jj は `jj diff --from REV --to @ [-- paths..]`。両者は同じ「REV vs 作業ツリー」セマンティクスを持つ
+- **two-rev 形を選ばなかった理由**: `git diff REV HEAD` は HEAD 同士の比較になり未コミット変更を見落とす。`vcs diff` は「現状と REV の差を見たい」用途を想定しているため one-rev 形を採用、jj 側 (`--to @`) と統一できる
+- **PATH の宣言的収束ルール**: 存在しない PATH は `os.Stat` でフィルタして黙ってドロップ。kawaz の確定方針 (= 「指定して無くても消えてれば消えた状態に収束」)。`len(paths) > 0 && len(filtered) == 0` のときは backend を呼ばず即 `nil, nil` を返す (この vacuous case を経由しないと `git diff REV --` が「全 path 対象」に broaden して意味が変わる)
+- **PATH の見落とし制約 (意図的)**: `REV` には存在するが working copy で削除済みのファイルを **PATH で明示指定** した場合、`os.Stat` でフィルタ落ちして diff に出ない。PATH 無指定の full diff なら削除も含めて表示される — この非対称は宣言的収束のスコープ内の意図的挙動 (= 「いま無いものを名指しで diff する」と「全体を見る」を区別)。将来要件が出たら別フラグ (`--include-deleted` 等) で opt-in する
+- **エラーマッピング**: `runBackendCmd` (exit code を error 扱いする系) を使う。`git diff` / `jj diff` は plain run では「diff 有無に関わらず exit 0」「実エラー時のみ非 0」なので `--quiet` / `--exit-code` は付けない。実エラー (REV 解決不能、リポではない) は `*exitErr{code: exitCodeVCSExec}` で wrap → exit 3
+- **空 diff と error の区別**: 「diff なし」は空 bytes + nil error、「REV 不能」は exit 3。stdout への書き込みは `len(out) > 0` ガード (空 bytes でも余計な書き込みを避ける)。`-q` / `-qq` は stdout を抑止
+- **配線 3 点 (PR-2 と同パターン)**: `parseArgs` の `isKnownVerb` に `"diff"` 追加、`runVcsCmd` の switch に case 追加、`actionHelpTexts["vcs diff"]` 登録。`vcs diff` (引数なし) は per-verb help にフォールバックする既存仕様に乗る
+- **interface 拡張**: `vcsBackend.Diff(rev string, paths []string) ([]byte, error)` を追加。`filterExistingPaths` は git / jj 共通の helper として `vcs_backend.go` に集約 (両 backend が同じ規則で path をフィルタする)
+- **PR-3 land 日**: 2026-05-30
+
 ## 関連
 
 - 上位/関連 DR: DR-0008 (`vcs:` schema 導入)、DR-0016 (`--vcs auto` 一本化)、DR-0019 (`vcs:latest-tag(<arg>)`)

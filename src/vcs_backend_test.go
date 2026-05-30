@@ -414,6 +414,85 @@ func TestJjBackend_IsClean_NewFileDirty(t *testing.T) {
 	})
 }
 
+// --- DR-0020 PR-2.1: merge-commit handling for IsClean ------------------
+//
+// PR-2 used `jj log -r @ -T 'empty'` alone. That predicate is
+// parent-relative: for a merge commit (parents>1) whose tree equals the
+// merge of its parents, jj reports `empty = true` — which already worked
+// as "clean" by accident, but a merge commit with any tree edit on top
+// (an "evil merge") would be reported as dirty. kawaz's directive is
+// that merge commits are meaningful nodes in the change graph and
+// SHOULD be reported as clean regardless of tree content. PR-2.1
+// formalises this by classifying any commit with parents>1 as clean
+// (i.e. the predicate is "empty OR is-merge").
+
+// jjMergeFixture builds on setupJjRepo to produce a colocated jj repo
+// whose @ is a real merge commit. It creates two side changes (with
+// description "branchA" / "branchB") off the bookmarked HEAD, then
+// `jj new` over both. If extraFile is non-empty, that file is written
+// into @ AFTER the merge so the resulting @ is non-empty (= evil
+// merge); otherwise @ stays empty (= clean merge).
+func jjMergeFixture(t *testing.T, extraFile string) string {
+	t.Helper()
+	dir := setupJjRepo(t, nil, "1.0.0")
+	// Two side changes off the current @-.
+	runIn(t, dir, "jj", "new", "-m", "branchA", "@-")
+	runIn(t, dir, "jj", "bookmark", "create", "side-a", "-r", "@")
+	runIn(t, dir, "jj", "new", "-m", "branchB", "@-")
+	runIn(t, dir, "jj", "bookmark", "create", "side-b", "-r", "@")
+	// Merge them; @ becomes a commit with parents=2.
+	runIn(t, dir, "jj", "new", "-m", "merge AB", "side-a", "side-b")
+	if extraFile != "" {
+		if err := os.WriteFile(filepath.Join(dir, extraFile), []byte("evil\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestJjBackend_IsClean_MergeEmpty: a merge commit whose tree matches
+// the merge of its parents (empty=true on jj's parent-relative
+// template) is clean. This case happens to already pass under the PR-2
+// implementation but is pinned here to lock the invariant.
+func TestJjBackend_IsClean_MergeEmpty(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := jjMergeFixture(t, "")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if !clean {
+			t.Errorf("IsClean = false, want true (merge commit, empty tree)")
+		}
+	})
+}
+
+// TestJjBackend_IsClean_MergeNonEmpty: a merge commit with an
+// additional tree edit ("evil merge", empty=false but parents>1) is
+// also clean — kawaz's directive: "マージコミット自体は意味があるから
+// clean". This is the case the PR-2 narrow rule got wrong; PR-2.1
+// fixes it via the parents>1 short-circuit.
+func TestJjBackend_IsClean_MergeNonEmpty(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := jjMergeFixture(t, "EVIL.txt")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if !clean {
+			t.Errorf("IsClean = false, want true (merge commit is clean even with extra edits)")
+		}
+	})
+}
+
 // --- DR-0020 PR-3: Diff tests --------------------------------------------
 
 // TestGitBackend_Diff_NoPaths_HasDiff: with no path filter, `Diff` returns a

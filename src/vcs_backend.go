@@ -194,10 +194,21 @@ type commitOpts struct {
 	// paths at the parser layer.
 	staged bool
 
-	// amend folds the entire current change into the previous commit
-	// (git: --amend; jj: squash --from @ --into @-). The parser layer
-	// guarantees paths/staged are zero when amend is true (= MVP grammar
-	// `--amend [-m MSG]` only) — see runVcsCmdCommit step 3.5 for why.
+	// amend folds the current change into the previous commit
+	// (git: --amend; jj: squash --from @ --into @-). PR-4.1 made amend
+	// fully symmetric with non-amend in the path selectors it accepts:
+	//
+	//   - amend + paths           → fold only the listed paths into prev
+	//   - amend + staged          → fold the entire staged/dirty set
+	//                              (synonym for bare amend in both
+	//                              backends since the index / @ snapshot
+	//                              IS the absorption source)
+	//   - amend, no paths/staged  → bare amend (ungated explicit rewrite)
+	//
+	// Path-scoped amend follows the same declarative-convergence rule as
+	// non-amend path mode (all-nonexistent or no-change → no-op). Bare
+	// amend bypasses that gate — message-only rewrite is a legal
+	// explicit intent.
 	amend bool
 
 	// noEdit applies only with amend: keep the previous commit's
@@ -643,19 +654,23 @@ func (j *jjBackend) IsClean() (bool, error) {
 // Commit (git) records the requested change set. See the interface comment
 // on `Commit` for the full contract. Implementation notes:
 //
-//   - amend: `git commit --amend` with either `-m MSG` (rewrite) or
-//     `--no-edit` (keep). Pre-stages any worktree changes that overlap
-//     paths (paths arg currently best-effort: MVP folds the entire
-//     change set into HEAD, mirroring git --amend's default).
 //   - paths: `git add -- PATHS` first (handles new files; bare
 //     `git diff --quiet HEAD` would miss them — see DR-0020 PR-4 notes),
 //     then check `git diff --cached --quiet -- PATHS`; commit only if
 //     non-empty.
 //   - staged: `git diff --cached --quiet` (no paths) to gate, then
 //     `git commit -m MSG` (commits whatever is staged).
+//   - amend (PR-4.1): symmetric with non-amend on path selectors. With
+//     paths, runs the same `git add -- PATHS` + gate, then
+//     `git commit --amend [-m|--no-edit] -- PATHS` (pathspec restricts
+//     the rewrite even when the index has unrelated staged content).
+//     With staged-only, same as bare `git commit --amend` since the
+//     index IS what amend folds. Bare amend is an ungated explicit
+//     rewrite (message-only amend is legal).
 //
 // The no-op rule (no real change → nil) is enforced PRE-commit on every
-// non-amend mode so DR-0020 "0 targets → exit 0, no action" holds.
+// non-amend mode AND on amend+paths so DR-0020 "0 targets → exit 0, no
+// action" holds. Bare amend bypasses the gate (explicit rewrite).
 func (g *gitBackend) Commit(opts commitOpts) error {
 	if opts.amend {
 		return g.commitAmend(opts)
@@ -702,11 +717,57 @@ func (g *gitBackend) Commit(opts commitOpts) error {
 	return nil
 }
 
-// commitAmend handles git's --amend mode (rewrite or no-edit). amend is
-// explicit rewrite intent → we do NOT apply the empty-no-op gate (a
-// message-only amend with a clean index is legal). git's `--amend
-// --no-edit` is well-defined for empty deltas too.
+// commitAmend handles git's --amend mode. PR-4.1 made it accept the
+// same path selectors as non-amend mode (commit/amend symmetry):
+//
+//   - bare amend (no paths, no staged): explicit rewrite, ungated.
+//     `git commit --amend [-m MSG | --no-edit]`. Message-only amend
+//     with a clean index is a legal explicit intent.
+//   - amend + staged: same as bare amend — the index is what `--amend`
+//     folds. Treated as an explicit synonym for clarity at the verb
+//     surface; `staged` does not change the underlying git command.
+//   - amend + paths: `git add -- PATHS` (so untracked files become
+//     eligible — mirrors non-amend path mode), gate via
+//     `git diff --cached --quiet -- PATHS`, then
+//     `git commit --amend [-m MSG | --no-edit] -- PATHS`. The pathspec
+//     restricts the rewrite to those paths even when the index has
+//     unrelated staged content (verified empirically against git 2.x).
 func (g *gitBackend) commitAmend(opts commitOpts) error {
+	// Path-scoped amend: pre-stage and gate, mirroring non-amend path
+	// mode so all-nonexistent / no-change is a no-op.
+	if len(opts.paths) > 0 {
+		existing := filterExistingPaths(opts.paths)
+		if len(existing) == 0 {
+			return nil // all-nonexistent → no-op success
+		}
+		addArgs := append([]string{"add", "--"}, existing...)
+		if _, err := runBackendCmd("git", addArgs...); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		gateArgs := append([]string{"diff", "--cached", "--quiet", "--"}, existing...)
+		code, err := runBackendExitCode("git", gateArgs...)
+		if err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if code == 0 {
+			return nil // nothing to fold for these paths → no-op
+		}
+		args := []string{"commit", "--amend"}
+		if opts.noEdit || opts.message == "" {
+			args = append(args, "--no-edit")
+		} else {
+			args = append(args, "-m", opts.message)
+		}
+		args = append(args, "--")
+		args = append(args, existing...)
+		if _, err := runBackendCmd("git", args...); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		return nil
+	}
+	// Bare amend (no paths). `--staged` is an accepted synonym here:
+	// git's `--amend` already folds the index, which is exactly what
+	// `--staged` names.
 	args := []string{"commit", "--amend"}
 	if opts.noEdit || opts.message == "" {
 		args = append(args, "--no-edit")
@@ -729,9 +790,15 @@ func (g *gitBackend) commitAmend(opts commitOpts) error {
 //     wants no empty commits — jj would otherwise happily create one).
 //   - staged: `jj commit -m MSG` (no paths) commits the entire @ snapshot.
 //     Pre-gated by the `empty` template (same predicate as IsClean).
-//   - amend: `jj squash --from @ --into @-` folds @ into @-. With -m,
-//     `--into @-` gets a new description; without, the existing
-//     description is preserved (no-edit). jj squash on empty @ is benign.
+//   - amend (PR-4.1): symmetric with non-amend. With paths,
+//     `jj squash --from @ --into @- [-m MSG | -u] -- PATHS` folds only
+//     those paths from @ into @-, leaving the rest in @. With staged or
+//     bare, drops the `-- PATHS` tail and folds all of @. The no-edit
+//     path uses `--use-destination-message` rather than the squash
+//     default (which would prompt for a combined description when @ and
+//     @- both carry descriptions — observed on jj 0.41 in non-
+//     interactive callers and confirmed as the cause of editor-spawn
+//     hangs).
 func (j *jjBackend) Commit(opts commitOpts) error {
 	if opts.amend {
 		return j.commitAmend(opts)
@@ -772,14 +839,63 @@ func (j *jjBackend) Commit(opts commitOpts) error {
 	return nil
 }
 
-// commitAmend handles jj's amend mode by squashing @ into @-. Like git,
-// amend is explicit rewrite intent — we do NOT gate it on emptiness (a
-// message-only amend with empty @ just updates @-'s description). jj
-// `squash --from @ --into @-` is also a safe no-op when there's nothing
-// to move (verified in DR-0020 PR-4 fixture probing).
+// commitAmend handles jj's amend mode by squashing @ into @-. PR-4.1
+// added path / staged symmetry:
+//
+//   - bare amend (no paths, no staged): explicit rewrite, ungated.
+//     `jj squash --from @ --into @- [-m MSG | -u]`. Safe on empty @
+//     (message-only amend = description update on @-).
+//   - amend + staged: same as bare amend — jj has no separate staging
+//     area, the entire @ snapshot IS the absorption source. Accepted
+//     as an explicit synonym.
+//   - amend + paths: gate via `jj diff --summary --from @- --to @ --
+//     PATHS` (same predicate as non-amend path mode), then `jj squash
+//     --from @ --into @- [-m MSG | -u] -- PATHS` folds only those
+//     paths.
+//
+// Design rationale (no-edit ⇒ --use-destination-message): when @ has a
+// description and ends up empty after squash, bare `jj squash` writes a
+// combined description and opens an editor for confirmation. In non-
+// interactive callers (bump-semver scripted use) this surfaces as
+// "Failed to edit description / Editor 'false' exited with exit
+// status: 1" (verified on jj 0.41). `-u` keeps @-'s description
+// verbatim — exactly the no-edit semantic — and removes the prompt
+// path entirely.
 func (j *jjBackend) commitAmend(opts commitOpts) error {
+	// Path-scoped amend: gate first so all-nonexistent / no-change is
+	// a no-op (declarative convergence, mirrors non-amend path mode).
+	if len(opts.paths) > 0 {
+		existing := filterExistingPaths(opts.paths)
+		if len(existing) == 0 {
+			return nil
+		}
+		gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, existing...)
+		gateOut, err := runBackendCmd("jj", gateArgs...)
+		if err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if strings.TrimSpace(string(gateOut)) == "" {
+			return nil
+		}
+		args := []string{"squash", "--from", "@", "--into", "@-"}
+		if opts.noEdit || opts.message == "" {
+			args = append(args, "--use-destination-message")
+		} else {
+			args = append(args, "-m", opts.message)
+		}
+		args = append(args, "--")
+		args = append(args, existing...)
+		if _, err := runBackendCmd("jj", args...); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		return nil
+	}
+	// Bare amend (and amend + staged, which is the same operation in
+	// jj's auto-staged model).
 	args := []string{"squash", "--from", "@", "--into", "@-"}
-	if !opts.noEdit && opts.message != "" {
+	if opts.noEdit || opts.message == "" {
+		args = append(args, "--use-destination-message")
+	} else {
 		args = append(args, "-m", opts.message)
 	}
 	if _, err := runBackendCmd("jj", args...); err != nil {

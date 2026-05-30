@@ -1109,13 +1109,18 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	return nil
 }
 
-// runVcsCmdCommit implements `vcs commit` (DR-0020 PR-4).
+// runVcsCmdCommit implements `vcs commit` (DR-0020 PR-4, PR-4.1).
 //
-// Three modes:
+// The verb is fully symmetric with `--amend`: the only difference
+// between `commit` and `commit --amend` is "create a new commit" vs
+// "fold into the previous one". Both forms accept identical path
+// selectors (PR-4.1):
 //
-//   - `vcs commit -m MSG PATH..`         — commit listed paths' content
-//   - `vcs commit -m MSG --staged`       — commit all staged/dirty changes
-//   - `vcs commit --amend [-m MSG]`      — fold current change into prev
+//   - `vcs commit -m MSG PATH..`               — new commit, listed paths
+//   - `vcs commit -m MSG --staged`             — new commit, all staged
+//   - `vcs commit --amend [-m MSG]`            — fold all current into prev
+//   - `vcs commit --amend [-m MSG] PATH..`     — fold listed paths into prev
+//   - `vcs commit --amend [-m MSG] --staged`   — fold all staged into prev
 //
 // `-a` / `--all` is intentionally not provided (DR-0020 safety: kawaz
 // CLI design + jj's auto-staged worldview). It's parsed only so we can
@@ -1125,7 +1130,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 // Argument-error ordering (advisor #3):
 //
 //  1. -a   → exit 2 with hint (backend-independent, before resolve)
-//  2. path + --staged → exit 2 (backend-independent, before resolve)
+//  2. path + --staged → exit 2 (amend-agnostic mutex; before resolve)
 //  3. !amend && !message → exit 2 (backend-independent, before resolve)
 //  4. Resolve backend (exit 3 if not a vcs repo)
 //  5. no PATH && no --staged && !amend → exit 2 with backend-Kind() hint
@@ -1153,20 +1158,15 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs commit: -m MSG is required (unless --amend)"))
 	}
-	// Step 3.5: amend + PATH / --staged reject (advisor catch).
-	//
-	// The MVP --amend grammar is `--amend [-m MSG]` only — it folds the
-	// entire current change into the previous commit. Path-restricted
-	// amend ("only fold these paths into @-") is a valid future feature
-	// but trivially implementable only on jj (`jj squash ... -- PATHS`);
-	// git --amend has no clean path-restriction semantic. Accepting +
-	// silently ignoring would be the worst outcome — it's the exact
-	// 巻き込み事故 the DR's "path 必須" philosophy guards against.
-	// `--staged` falls under the same rule for symmetry / clarity.
-	if args.vcsCommitAmend && (len(args.vcsArgs) > 0 || args.vcsCommitStaged) {
-		return emitVcsUsage(stderr, args,
-			fmt.Errorf("vcs commit: --amend folds all current changes; PATH.. / --staged are not supported with --amend (to commit specific paths as a NEW commit, drop --amend)"))
-	}
+	// PR-4.1: the PR-4 step-3.5 reject (`--amend PATH..` / `--amend
+	// --staged`) was removed. Commit and amend are now fully symmetric
+	// in which path selectors they accept; the only difference is "new
+	// commit vs absorb into previous". The PATH / --staged exclusivity
+	// from step 2 still guards the `--amend PATH.. --staged` triple-
+	// combo (both modes mutually exclude each other regardless of
+	// amend), and the dispatch into backend.Commit fans the four
+	// accepted shapes (paths / --staged / bare / amend-of-each) into
+	// the backend implementations.
 	// Step 4: resolve backend.
 	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)

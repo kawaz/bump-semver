@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -254,6 +255,159 @@ func TestJjBackend_CurrentBranch_NoBookmark(t *testing.T) {
 		}
 		if code := exitCodeOf(err); code != exitCodeAmbiguous {
 			t.Errorf("exit code = %d, want %d (ambiguous)", code, exitCodeAmbiguous)
+		}
+	})
+}
+
+// --- DR-0020 PR-2: IsClean tests ------------------------------------------
+
+// TestGitBackend_IsClean_Clean: a freshly-committed git fixture is clean
+// (tracked files all match HEAD, no staged changes).
+func TestGitBackend_IsClean_Clean(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if !clean {
+			t.Errorf("IsClean = false, want true (fresh checkout)")
+		}
+	})
+}
+
+// TestGitBackend_IsClean_TrackedDirty: modifying a tracked file (without
+// staging) makes the worktree dirty.
+func TestGitBackend_IsClean_TrackedDirty(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if clean {
+			t.Errorf("IsClean = true, want false (tracked file modified)")
+		}
+	})
+}
+
+// TestGitBackend_IsClean_StagedDirty: a `git add`-ed change makes the
+// worktree dirty (even though the workdir matches the index after the add).
+func TestGitBackend_IsClean_StagedDirty(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "VERSION")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if clean {
+			t.Errorf("IsClean = true, want false (staged change)")
+		}
+	})
+}
+
+// TestGitBackend_IsClean_UntrackedIgnored: an untracked file does NOT
+// make the worktree dirty (PR-2 contract: untracked excluded; future
+// --include-untracked is an additive extension).
+func TestGitBackend_IsClean_UntrackedIgnored(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := os.WriteFile(filepath.Join(dir, "NEWFILE.txt"), []byte("hi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if !clean {
+			t.Errorf("IsClean = false, want true (untracked file ignored)")
+		}
+	})
+}
+
+// TestJjBackend_IsClean_Clean: fresh colocated jj repo has an empty `@`
+// (jj puts a new empty change on top of HEAD at init).
+func TestJjBackend_IsClean_Clean(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if !clean {
+			t.Errorf("IsClean = false, want true (fresh jj @ is empty)")
+		}
+	})
+}
+
+// TestJjBackend_IsClean_TrackedDirty: editing a tracked file is picked up
+// by jj's automatic snapshot — `@` becomes non-empty → dirty.
+func TestJjBackend_IsClean_TrackedDirty(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if clean {
+			t.Errorf("IsClean = true, want false (tracked file modified, jj snapshot)")
+		}
+	})
+}
+
+// TestJjBackend_IsClean_NewFileDirty: jj snapshots new files automatically
+// (unlike git, where untracked files are excluded). This is jj's design
+// — the contrast vs git is intentional and documented in DR-0020 PR-2.
+func TestJjBackend_IsClean_NewFileDirty(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := os.WriteFile(filepath.Join(dir, "NEWFILE.txt"), []byte("hi\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if clean {
+			t.Errorf("IsClean = true, want false (jj snapshots new files)")
 		}
 	})
 }

@@ -88,7 +88,7 @@ bump-semver vcs commit -m MSG PATH..
 bump-semver vcs commit -m MSG --staged
 bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 bump-semver vcs fetch [REMOTE]
-bump-semver vcs push --branch NAME [--remote REMOTE]   # --bookmark is an alias
+bump-semver vcs push --branch NAME [--remote REMOTE]   # jj users: --bookmark also accepted
 ```
 
 A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5). The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
@@ -143,7 +143,7 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
 |---|---|
 | `-m MSG PATH..` | Stage + commit each existing path's working-tree content. Nonexistent paths silently dropped (declarative convergence). All-nonexistent / no real change → exit 0 with no commit (idempotent) |
 | `-m MSG --staged` | Commit every staged/dirty change in one shot. **git**: commits the index. **jj**: commits the whole `@` snapshot (jj auto-stages). No content → exit 0, idempotent |
-| `--amend [-m MSG] [PATH.. \| --staged]` | Fold the current change into the previous commit instead of creating a new one. Fully symmetric with the two modes above — `--amend` accepts the same `PATH..` / `--staged` selectors. Bare `--amend` folds everything (explicit rewrite, ungated; message-only amend with no change is legal). `--amend PATH..` folds only those paths (same all-nonexistent / no-change → no-op rule as plain path mode). `--amend --staged` is an explicit synonym for bare amend (the index / `@` snapshot IS amend's absorption source). With `-m`: rewrite the previous commit's message; without: preserve it. Equivalences: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`; jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
+| `--amend [-m MSG] [PATH.. \| --staged]` | Fold the current change into the previous commit instead of creating a new one. Fully symmetric with the two modes above — `--amend` accepts the same `PATH..` / `--staged` selectors. Bare `--amend` is an explicit rewrite (ungated; message-only amend with no change is legal); the absorbed scope follows the backend — **git**: folds the staged index into HEAD (unstaged worktree changes are NOT included); **jj**: folds the entire `@` snapshot into `@-` (jj auto-stages, so this IS every current change). `--amend PATH..` folds only those paths (same all-nonexistent / no-change → no-op rule as plain path mode). `--amend --staged` is an explicit synonym for bare amend (the index / `@` snapshot IS amend's absorption source). With `-m`: rewrite the previous commit's message; without: preserve it. Equivalences: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`; jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
 
 **`-a` / `--all` is intentionally not provided** (DR-0020 safety). jj's auto-staged worldview makes `-a`'s unstaged-grab semantic too easy to trip on; use `--staged` (commit all current changes) or pass `PATH..` explicitly. Calling `-a` exits 2 with a hint pointing at `--staged` / `PATH..`.
 
@@ -159,7 +159,7 @@ Exit codes for `vcs commit`: `0` success or idempotent no-op; `2` usage error (m
 ```bash
 bump-semver vcs commit -m "bump 1.2.3" VERSION         # commit just VERSION
 bump-semver vcs commit --staged -m "release: 1.2.3"     # commit everything staged
-bump-semver vcs commit --amend                          # absorb all into previous, keep msg
+bump-semver vcs commit --amend                          # absorb (git: index; jj: @) into previous, keep msg
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # rewrite previous msg
 bump-semver vcs commit --amend VERSION                  # fold ONLY VERSION into previous
 bump-semver vcs commit --amend --staged -m "fixup"      # fold all staged into previous
@@ -172,14 +172,14 @@ bump-semver vcs commit --amend --staged -m "fixup"      # fold all staged into p
 
 REMOTE may be passed as a positional or via `--remote NAME` — supplying both at once is a usage error to avoid silent precedence surprises. Refspec scoping, prune, and tag flags intentionally pass through the underlying tool (= drop down to plain `git fetch ...` / `jj git fetch ...` for those).
 
-**`vcs push --branch NAME [--remote REMOTE]`** — upload `NAME` to `REMOTE` (default `origin`). `--bookmark` is an alias of `--branch` for jj users; the two flags share one slot, so supplying both is a usage error.
+**`vcs push --branch NAME [--remote REMOTE]`** — upload `NAME` to `REMOTE` (default `origin`). `--branch` is canonical; jj users may also write `--bookmark` (= the jj-native term for the same thing). The two spellings share one slot, so supplying both is a usage error.
 
 | Aspect | Behaviour |
 |---|---|
-| Mode | **git**: `git push <remote> <name>:<name>` (explicit refspec avoids `push.default` surprises). **jj**: `jj git push --bookmark <name> --remote <remote>` followed by `jj git export` (colocated `.git` stays in sync; export errors are NOT swallowed) |
+| Mode | **git**: `git push <remote> <name>:<name>` (explicit refspec avoids `push.default` surprises). **jj**: `jj git push --bookmark <name> --remote <remote>` followed by `jj git export` (colocated `.git` stays in sync). Export failure is retried once (transient packed-refs / HEAD races usually clear); persistent failure → exit 3 with a recovery hint pointing at the matching [jj-vcs/jj issue](https://github.com/jj-vcs/jj/issues) (`#493` ref-hierarchy, `#6098` HEAD race, `#6203` packed-refs) |
 | Name required | No auto-detection from current branch / bookmark. Naming it explicitly removes the "wait, which ref did I just push?" surprise — typos and stale state can't lead to the wrong ref going out |
-| Idempotency | "Remote already has it" → exit 0 (git: `Everything up-to-date`; jj: `Nothing changed`). DR-0020's 0-targets-no-op rule applies |
-| Non-fast-forward | Remote has diverged → **exit 5** + hint advising `fetch + reconcile, then retry`. Force push is intentionally **not** supported — `--force` exits 2 |
+| Idempotency | "Remote already has it" → exit 0; git/jj's own `Everything up-to-date` / `Nothing changed` line is forwarded to stderr so the user can confirm the convergence happened. DR-0020's 0-targets-no-op rule applies |
+| Non-fast-forward | Remote rejected the push → **exit 5**; the underlying git/jj stderr is passed through verbatim (no editorial `remote has diverged` paraphrase). Recovery is the user's call — `git fetch` + reconcile, or `git push --force-with-lease` directly if you genuinely mean to rewrite remote history. `--force` is intentionally not exposed (exits 2) |
 | `--force` / `--tags` | Not provided. Force push rewrites remote history (out of scope for a SemVer helper); tag pushing belongs to release automation (`gh release create`), not to this verb |
 
 ```bash
@@ -187,7 +187,6 @@ bump-semver vcs fetch                      # fetch origin
 bump-semver vcs fetch upstream             # fetch a specific remote
 
 bump-semver vcs push --branch main         # push main to origin
-bump-semver vcs push --bookmark main       # jj-flavoured form, same effect
 bump-semver vcs push --branch main --remote upstream
 
 # Common pre-release gate (Taskfile pattern):
@@ -196,7 +195,7 @@ bump-semver vcs is clean \
   && bump-semver vcs push --branch main
 ```
 
-Exit codes for `vcs push`: `0` success / no-op; `2` usage (`--branch`/`--bookmark` missing, both supplied, `--force` passed, positional args, unknown flag); `3` VCS subprocess error (unknown remote, network, jj export failure); `5` non-fast-forward.
+Exit codes for `vcs push`: `0` success / no-op; `2` usage (`--branch`/`--bookmark` missing, both supplied, `--force` passed, positional args, unknown flag); `3` VCS subprocess error (unknown remote, network, jj export failure that persisted across the retry); `5` non-fast-forward — read git/jj's stderr for the recovery path.
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.
 

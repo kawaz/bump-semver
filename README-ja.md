@@ -88,7 +88,7 @@ bump-semver vcs commit -m MSG PATH..
 bump-semver vcs commit -m MSG --staged
 bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 bump-semver vcs fetch [REMOTE]
-bump-semver vcs push --branch NAME [--remote REMOTE]   # --bookmark はエイリアス
+bump-semver vcs push --branch NAME [--remote REMOTE]   # jj users: --bookmark も同義で受理
 ```
 
 git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md))。PR-1 で `vcs get` (read-only) が land、PR-2 で `vcs is` (述語) が加わり、PR-3 で `vcs diff` (patch 出力) が追加され、PR-3.1 で `vcs diff` に `-s/--name-status` (M/A/D サマリ) と `-q/--quiet` (差分有無を終了コードで返す、`git diff --quiet` 相当) が拡張、PR-4 で `vcs commit` (path 必須を基本としつつ `--staged` / `--amend` を持つ安全な commit) が land、PR-5 で `vcs fetch` / `vcs push` (ネットワーク側の counterpart。`--force` は意図的に非提供、non-ff は exit 5 で検出) が land。動機: Taskfile / justfile で git と jj を毎回手書き分岐する板挟みの解消。`bump-semver` は既に `vcs:` で VCS read を吸収しているので、その自然な拡張として `vcs` サブコマンド群を同居させる。
@@ -143,7 +143,7 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION 変更なし"
 |---|---|
 | `-m MSG PATH..` | 指定 path の working-tree 内容だけを stage + commit。存在しない path は黙ってスキップ (宣言的収束)。全 path 不在 / 全部変更なし → exit 0 (commit せず冪等成功) |
 | `-m MSG --staged` | staged / dirty な変更を一括 commit。**git**: index を commit。**jj**: `@` 全体を commit (jj は自動 stage)。内容なし → exit 0 (冪等) |
-| `--amend [-m MSG] [PATH.. \| --staged]` | 新規 commit を作る代わりに直前 commit へ吸収する。上 2 モードと**完全対称** — `--amend` でも `PATH..` / `--staged` 同じ selector を受理する。素の `--amend` は全変更を吸収 (明示 rewrite 意図のため gate なし。変更なし + `-m` の message-only amend も合法)。`--amend PATH..` は指定 path のみを吸収 (path モードと同じ「全 path 不在 / 全変更なし → no-op」ルールが効く)。`--amend --staged` は素の `--amend` の明示的シノニム (= 吸収元は index / `@` snapshot そのもの)。`-m` ありで直前メッセージを上書き、なしで保持。等価コマンド: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`、jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
+| `--amend [-m MSG] [PATH.. \| --staged]` | 新規 commit を作る代わりに直前 commit へ吸収する。上 2 モードと**完全対称** — `--amend` でも `PATH..` / `--staged` 同じ selector を受理する。素の `--amend` は明示 rewrite (gate なし、message-only amend も合法)。吸収範囲は backend で異なる — **git**: staged の index を HEAD に吸収 (未 stage の worktree 変更は **含まない**、`--staged` と同じスコープ)。**jj**: `@` snapshot 全体を `@-` に吸収 (jj は自動 stage なので全変更が吸収対象)。`--amend PATH..` は指定 path のみを吸収 (path モードと同じ「全 path 不在 / 全変更なし → no-op」ルールが効く)。`--amend --staged` は素の `--amend` の明示的シノニム (= 吸収元は index / `@` snapshot そのもの)。`-m` ありで直前メッセージを上書き、なしで保持。等価コマンド: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`、jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
 
 **`-a` / `--all` は意図的に非提供** (DR-0020 安全設計)。jj の「カレントコミット=自動 stage」世界観だと `-a` の unstaged 巻き込み挙動は事故を招きやすいため、`--staged` (全変更を commit) または `PATH..` を明示する形に絞っている。`-a` を渡すと exit 2 + `--staged` / `PATH..` への誘導 hint を返す。
 
@@ -159,7 +159,7 @@ bump-semver vcs commit -m "bump version" VERSION Cargo.toml package.json pyproje
 ```bash
 bump-semver vcs commit -m "bump 1.2.3" VERSION         # VERSION のみ commit
 bump-semver vcs commit --staged -m "release: 1.2.3"     # staged を一括 commit
-bump-semver vcs commit --amend                          # 全変更を直前に吸収、メッセージ維持
+bump-semver vcs commit --amend                          # 直前に吸収 (git: index、jj: @)、メッセージ維持
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # 直前のメッセージを更新
 bump-semver vcs commit --amend VERSION                  # VERSION だけを直前に吸収
 bump-semver vcs commit --amend --staged -m "fixup"      # staged を一括で直前に吸収
@@ -172,14 +172,14 @@ bump-semver vcs commit --amend --staged -m "fixup"      # staged を一括で直
 
 `REMOTE` は positional または `--remote NAME` のいずれかで渡す — 両方同時に指定すると usage error (暗黙の優先順位サプライズを避けるため)。Refspec scope / prune / tag 制御は意図的にラップしていない (= 必要なら素の `git fetch ...` / `jj git fetch ...` を直接使う)。
 
-**`vcs push --branch NAME [--remote REMOTE]`** — `NAME` を `REMOTE` (省略時 `origin`) に push。`--bookmark` は jj 向けの `--branch` エイリアスで、同じスロットを共有する (両方同時指定は usage error)。
+**`vcs push --branch NAME [--remote REMOTE]`** — `NAME` を `REMOTE` (省略時 `origin`) に push。`--branch` が canonical。jj users は `--bookmark` でも書ける (jj のネイティブ用語で同義)。同じスロットを共有するため両方同時指定は usage error。
 
 | 観点 | 動作 |
 |---|---|
-| 実行 | **git**: `git push <remote> <name>:<name>` (明示 refspec で `push.default` の副作用を排除)。**jj**: `jj git push --bookmark <name> --remote <remote>` の後に `jj git export` を実行 (colocated `.git` の ref 同期。export 失敗は握りつぶさず exit 3 で surface) |
+| 実行 | **git**: `git push <remote> <name>:<name>` (明示 refspec で `push.default` の副作用を排除)。**jj**: `jj git push --bookmark <name> --remote <remote>` の後に `jj git export` を実行 (colocated `.git` の ref 同期)。export 失敗時は 1 回だけ再試行 (一時的な packed-refs lock / HEAD race などはこれで解消する)。再試行も失敗したら exit 3 + 該当 [jj-vcs/jj issue](https://github.com/jj-vcs/jj/issues) (`#493` ref 階層衝突、`#6098` HEAD race、`#6203` packed-refs) を示す復旧 hint を出す |
 | NAME 必須 | 現在の branch / bookmark からの自動推測はしない。明示することで「あれ、結局どの ref を push した?」という事故を構造的に防ぐ |
-| 冪等 | 「remote が既に最新」→ exit 0 (git: `Everything up-to-date`、jj: `Nothing changed`)。DR-0020 の 0-targets-no-op ルール |
-| non-ff | remote が divergent → **exit 5** + `fetch + reconcile してから retry` の hint。`--force` は意図的に非提供 — 指定すると exit 2 |
+| 冪等 | 「remote が既に最新」→ exit 0。git/jj 自身の `Everything up-to-date` / `Nothing changed` 行は stderr に素通しするので、収束が起きたことをユーザが確認できる。DR-0020 の 0-targets-no-op ルール |
+| non-ff | remote が拒否 → **exit 5**。bump-semver は editorial な hint を被せず、git/jj の素 stderr をそのまま流す (kawaz 確定: 復旧 = ユーザ責務)。`fetch` + reconcile で進めるか、本気で remote history を rewrite するなら素の `git push --force-with-lease` を直接叩く。`--force` は非提供 (指定すると exit 2) |
 | `--force` / `--tags` | 非提供。force push は remote history の rewrite で SemVer ヘルパの責務外、tag push は release 自動化 (`gh release create`) 側の仕事 |
 
 ```bash
@@ -187,7 +187,6 @@ bump-semver vcs fetch                      # origin を fetch
 bump-semver vcs fetch upstream             # 特定の remote を fetch
 
 bump-semver vcs push --branch main         # main を origin へ
-bump-semver vcs push --bookmark main       # jj 流の同等表現
 bump-semver vcs push --branch main --remote upstream
 
 # よく使う release 前 gate (Taskfile パターン):
@@ -196,7 +195,7 @@ bump-semver vcs is clean \
   && bump-semver vcs push --branch main
 ```
 
-`vcs push` の終了コード: `0` 成功 / no-op; `2` usage (`--branch` / `--bookmark` 欠如・両指定、`--force` 指定、positional 引数、未知フラグ); `3` VCS 実行エラー (unknown remote / network / jj export 失敗); `5` non-fast-forward。
+`vcs push` の終了コード: `0` 成功 / no-op; `2` usage (`--branch` / `--bookmark` 欠如・両指定、`--force` 指定、positional 引数、未知フラグ); `3` VCS 実行エラー (unknown remote / network / 再試行しても解消しない jj export 失敗); `5` non-fast-forward — 復旧経路は git/jj の stderr を参照。
 
 `--vcs jj|git|auto` は引き続き有効。colocated 構成で git 側を見たい場合は `bump-semver vcs get backend --vcs git` (または `vcs is git --vcs git`) で強制できる。
 

@@ -83,6 +83,26 @@ type vcsBackend interface {
 	// *exitErr{code: exitCodeVCSExec} so callers preserve the exit-code
 	// contract.
 	Diff(rev string, paths []string) ([]byte, error)
+
+	// DiffNameStatus returns one line per changed file between `rev` and
+	// the working copy, formatted as `<CODE>\t<path>\n` (git's native
+	// `--name-status` format). CODE is M/A/D (modify / add / delete).
+	//
+	// Cross-backend uniformity: the git backend forwards
+	// `git diff --name-status REV`. The jj backend runs
+	// `jj diff --summary --from REV --to @`, whose native format is
+	// `<CODE> <path>` (space separator) — the implementation normalizes
+	// the first space to a tab so callers get the git form regardless
+	// of the underlying backend.
+	//
+	// Same path-filtering rule as Diff: nonexistent paths are silently
+	// dropped, and an all-filtered list returns empty bytes (must not
+	// widen back to "all paths").
+	//
+	// Used by `vcs diff -s/--name-status` for display and by
+	// `vcs diff -q/--quiet` to derive presence (len > 0 → diff present).
+	// Returning a single shape lets both options share one code path.
+	DiffNameStatus(rev string, paths []string) ([]byte, error)
 }
 
 // newVcsBackend resolves the `--vcs` override (or auto-probe) into a
@@ -397,6 +417,76 @@ func (j *jjBackend) Diff(rev string, paths []string) ([]byte, error) {
 		return nil, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
 	return out, nil
+}
+
+// DiffNameStatus on git forwards `git diff --name-status REV [-- PATHS]`.
+// git's output is already the contract format (`<CODE>\t<path>\n`), so no
+// normalization is needed. Same declarative-convergence path filtering as
+// Diff: all-filtered → empty bytes, no git invocation.
+func (g *gitBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
+	args := []string{"diff", "--name-status", rev}
+	if len(paths) > 0 {
+		existing := filterExistingPaths(paths)
+		if len(existing) == 0 {
+			return nil, nil
+		}
+		args = append(args, "--")
+		args = append(args, existing...)
+	}
+	out, err := runBackendCmd("git", args...)
+	if err != nil {
+		return nil, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return out, nil
+}
+
+// DiffNameStatus on jj runs `jj diff --summary --from REV --to @
+// [-- PATHS]` and normalizes the native space separator to a tab so the
+// output matches git's `--name-status` shape exactly.
+//
+// jj summary format: `<CODE> <path>` (single space). We split on the FIRST
+// space only — paths with embedded spaces stay intact in the right half.
+// Lines that don't match the `<CODE> <path>` shape are passed through
+// unchanged (defensive: jj could introduce new prefix forms; we don't want
+// to silently mangle them).
+//
+// Rename / copy codes (R/C) are best-effort: jj and git may differ in how
+// they render them, but M/A/D — the cases that matter for the kawaz
+// "version bumped?" check — are identical.
+func (j *jjBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
+	args := []string{"diff", "--summary", "--from", rev, "--to", "@"}
+	if len(paths) > 0 {
+		existing := filterExistingPaths(paths)
+		if len(existing) == 0 {
+			return nil, nil
+		}
+		args = append(args, "--")
+		args = append(args, existing...)
+	}
+	out, err := runBackendCmd("jj", args...)
+	if err != nil {
+		return nil, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return normalizeJjNameStatus(out), nil
+}
+
+// normalizeJjNameStatus converts jj's `<CODE> <path>\n` lines into git's
+// `<CODE>\t<path>\n` form. The first space on each line becomes a tab; the
+// rest of the line is left untouched so paths-with-spaces survive intact.
+// Trailing newlines are preserved.
+func normalizeJjNameStatus(in []byte) []byte {
+	if len(in) == 0 {
+		return in
+	}
+	lines := strings.Split(string(in), "\n")
+	for i, line := range lines {
+		// SplitN with n=2 takes only the first space — paths-with-spaces stay whole.
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 && len(parts[0]) > 0 {
+			lines[i] = parts[0] + "\t" + parts[1]
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 // filterExistingPaths returns the subset of `paths` that os.Stat resolves.

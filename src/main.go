@@ -93,6 +93,13 @@ type cliArgs struct {
 	// "jj" / "git" / "auto" (auto and "" both fall through to probing).
 	vcs    string // --vcs value (validated in parseArgs)
 	vcsSet bool   // whether --vcs was supplied at all
+
+	// vcsDiffNameStatus enables `vcs diff -s/--name-status`: instead of a
+	// raw patch, emit one `<CODE>\t<path>` line per changed file (git
+	// --name-status shape). When combined with -q/--quiet, -q wins (stdout
+	// suppressed; exit code still reflects diff presence). Verb-local —
+	// parsed in the vcs branch and only consumed by runVcsCmdDiff.
+	vcsDiffNameStatus bool
 }
 
 var bumpActions = map[string]bool{
@@ -217,6 +224,13 @@ func parseArgs(argv []string) (cliArgs, error) {
 				out.quiet = true
 			case a == "-qq", a == "--quiet-all":
 				out.quietAll = true
+			case a == "-s", a == "--name-status":
+				// Verb-local to `vcs diff` — accepted in the shared parser
+				// for simplicity. runVcsCmdGet / runVcsCmdIs never read this
+				// flag, so passing it to those verbs is a silent no-op
+				// (rejecting per-verb would need verb-aware dispatch the
+				// current structure lacks; not a correctness issue).
+				out.vcsDiffNameStatus = true
 			case a == "--no-hint":
 				out.noHint = true
 			case a == "--":
@@ -876,19 +890,39 @@ func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
 	return &exitErr{code: exitCodeFalse}
 }
 
-// runVcsCmdDiff implements `vcs diff REV [PATH..]` (DR-0020 PR-3).
+// runVcsCmdDiff implements `vcs diff REV [PATH..]` (DR-0020 PR-3, PR-3.1).
 //
 // Exit codes (DR-0020):
 //
-//   - 0  on success (patch written to stdout — may be empty when no diff)
-//   - 2  usage error (the parser surfaces "no REV" as help; reserved for
+//   - 0  success: with -q, "no diff"; otherwise patch written to stdout
+//     (which may legitimately be empty)
+//   - 1  with -q only: "diff present" (predicate-false, mirrors
+//     `git diff --quiet`'s --exit-code semantic)
+//   - 2  usage error (parser surfaces "no REV" as help; reserved for
 //     future verb-level usage problems)
 //   - 3  VCS subprocess error or "not a vcs repo"
+//
+// Design rationale (-q overload):
+//
+//	`-q/--quiet` on `vcs diff` overloads the global "suppress stdout"
+//	meaning to ALSO reflect diff presence in the exit code. This is
+//	consistency with `git diff --quiet` (which implies --exit-code:
+//	0 = clean, 1 = differs), the right mental model for a diff command.
+//	Other vcs verbs (`get`/`is`) keep the pure stdout-suppression
+//	meaning — diff is the only verb whose "is there anything?" question
+//	is well-posed.
+//
+// `-s/--name-status` switches the output to one `<CODE>\t<path>\n` line
+// per changed file (git's --name-status shape, normalized in the jj
+// backend). `-s -q` collapses to `-q` (stdout empty, exit reflects
+// presence) — one code path feeds both views: name-status output's
+// emptiness == diff absence.
 //
 // Path-handling rule (kawaz's declarative-convergence): nonexistent paths
 // are silently ignored. When every supplied path is filtered out we emit
 // nothing — `vcs diff REV nope.txt` deliberately does NOT widen back to
-// "diff everything" the way `git diff REV --` would.
+// "diff everything" the way `git diff REV --` would. Under -q this yields
+// exit 0 (= "no diff to report").
 func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	if len(args.vcsArgs) == 0 {
 		// The parseArgs layer normally short-circuits "vcs diff" with no
@@ -906,14 +940,39 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsErr(stderr, args, err)
 	}
 
+	// -q (and -qq) trigger the predicate-only path: derive presence from
+	// name-status output (cheap; same shape feeds -s display). Doing this
+	// before -s keeps `-q` strictly authoritative when both are set.
+	if args.quiet || args.quietAll {
+		ns, err := b.DiffNameStatus(rev, paths)
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		if len(ns) == 0 {
+			return nil
+		}
+		// Silent predicate-false (matches runVcsCmdIs / compare).
+		return &exitErr{code: exitCodeFalse}
+	}
+
+	// -s: name-status display (no quiet → stdout gets the codes).
+	if args.vcsDiffNameStatus {
+		out, err := b.DiffNameStatus(rev, paths)
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		if len(out) > 0 {
+			if _, werr := stdout.Write(out); werr != nil {
+				return werr
+			}
+		}
+		return nil
+	}
+
+	// Default: raw patch.
 	out, err := b.Diff(rev, paths)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
-	}
-	// -q / -qq suppress the stdout payload (the exit code is what scripts
-	// usually want, mirroring `vcs get`).
-	if args.quiet || args.quietAll {
-		return nil
 	}
 	if len(out) > 0 {
 		if _, werr := stdout.Write(out); werr != nil {

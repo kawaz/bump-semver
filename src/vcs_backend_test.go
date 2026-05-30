@@ -799,6 +799,404 @@ func TestJjBackend_DiffNameStatus_BadRev(t *testing.T) {
 	})
 }
 
+// --- DR-0020 PR-4: Commit backend tests -----------------------------------
+//
+// The backend contract for Commit (defined on the interface) is:
+//
+//   - opts.paths != nil      → snapshot the working-tree content of each
+//                              listed path that exists, commit only those.
+//                              Nonexistent paths silently dropped
+//                              (declarative convergence, same rule as Diff).
+//                              All-filtered or no-real-change → no-op, nil.
+//   - opts.staged            → commit every dirty/staged change at once
+//                              (git: --cached, jj: @ snapshot).
+//                              No change at all → no-op, nil.
+//   - opts.amend             → fold the current change set into @- (jj) or
+//                              the last commit (git --amend). Allowed with
+//                              no path / no message (no-edit). amend bypasses
+//                              the empty-no-op rule — message-only amend is
+//                              a legal explicit rewrite.
+//   - opts.message=="" with !amend → caller-side guarantee (parser rejects
+//                              earlier); the backend assumes a message is
+//                              present whenever !amend.
+//
+// These tests build temp fixtures so jj's commit-signing path is fully
+// shadowed (HOME=tempdir via runIn + repo-local signing.behavior="drop"
+// via setupJjRepo).
+
+// TestGitBackend_Commit_Paths: path-mode commit picks up exactly the
+// listed (tracked-modified) files; others remain dirty.
+func TestGitBackend_Commit_Paths(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Make "other.txt" tracked first so we don't conflate this with the
+	// untracked-file case (TestGitBackend_Commit_Paths_NewFile covers that).
+	runIn(t, dir, "git", "add", "other.txt")
+	runIn(t, dir, "git", "-c", "user.name=T", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "stage other.txt")
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edited2\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"VERSION"}, message: "bump version"}); err != nil {
+			t.Fatalf("Commit paths: %v", err)
+		}
+		// VERSION committed; other.txt still dirty.
+		out, err := runBackendCmd("git", "diff", "--name-only")
+		if err != nil {
+			t.Fatalf("post-commit diff: %v", err)
+		}
+		if got := strings.TrimSpace(string(out)); got != "other.txt" {
+			t.Errorf("expected only other.txt dirty after path-commit, got: %q", got)
+		}
+		msg, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if got := strings.TrimSpace(string(msg)); got != "bump version" {
+			t.Errorf("HEAD message = %q, want 'bump version'", got)
+		}
+	})
+}
+
+// TestGitBackend_Commit_Paths_NewFile: a brand-new (untracked) file
+// supplied as PATH must be picked up and committed. Naive
+// `git diff --quiet` would skip it (untracked files are ignored by git
+// diff) — the backend must `git add -- PATHS` before checking presence.
+func TestGitBackend_Commit_Paths_NewFile(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "NEW.txt"), "fresh\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"NEW.txt"}, message: "add NEW"}); err != nil {
+			t.Fatalf("Commit new path: %v", err)
+		}
+		// HEAD now contains NEW.txt, worktree is clean.
+		out, _ := runBackendCmd("git", "log", "-1", "--name-only", "--pretty=")
+		if !strings.Contains(string(out), "NEW.txt") {
+			t.Errorf("expected NEW.txt in HEAD commit, got: %q", string(out))
+		}
+		clean, err := b.IsClean()
+		if err != nil {
+			t.Fatalf("IsClean: %v", err)
+		}
+		if !clean {
+			t.Errorf("worktree should be clean after committing untracked file")
+		}
+	})
+}
+
+// TestGitBackend_Commit_Paths_NonexistentOnly: every supplied path is
+// nonexistent → no commit, no error (declarative convergence).
+func TestGitBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		// Capture pre-state.
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost"}); err != nil {
+			t.Errorf("nonexistent-only Commit should succeed (idempotent), got: %v", err)
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("expected no new commit, HEAD before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Paths_PartialExist: a mix of existing and
+// nonexistent paths commits only the existing ones (no error).
+func TestGitBackend_Commit_Paths_PartialExist(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"VERSION", "no-such.txt"}, message: "bump+ghost"}); err != nil {
+			t.Fatalf("Commit partial: %v", err)
+		}
+		out, _ := runBackendCmd("git", "log", "-1", "--name-only", "--pretty=")
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("expected VERSION in HEAD, got: %q", string(out))
+		}
+		if strings.Contains(string(out), "no-such.txt") {
+			t.Errorf("HEAD should not mention nonexistent path: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Staged: --staged commits the index (any pending
+// `git add`-ed paths in one go), leaves unstaged worktree edits alone.
+func TestGitBackend_Commit_Staged(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "VERSION")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{staged: true, message: "staged commit"}); err != nil {
+			t.Fatalf("Commit --staged: %v", err)
+		}
+		// VERSION committed, other.txt remains untracked.
+		out, _ := runBackendCmd("git", "log", "-1", "--name-only", "--pretty=")
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("expected VERSION in HEAD, got: %q", string(out))
+		}
+		stat, _ := runBackendCmd("git", "status", "--short")
+		if !strings.Contains(string(stat), "other.txt") {
+			t.Errorf("other.txt should still be untracked after --staged commit, status=%q", string(stat))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Staged_Nothing: --staged with empty index → no-op.
+func TestGitBackend_Commit_Staged_Nothing(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{staged: true, message: "nothing"}); err != nil {
+			t.Errorf("Commit --staged on empty index should succeed (idempotent), got: %v", err)
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("expected no new commit, HEAD before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_NoEdit: --amend without -m folds working
+// state into HEAD and preserves the existing commit message.
+func TestGitBackend_Commit_Amend_NoEdit(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	prevMsg, _ := runBackendCmd("git", "-C", dir, "log", "-1", "--pretty=%s")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "VERSION")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, noEdit: true}); err != nil {
+			t.Fatalf("Commit --amend: %v", err)
+		}
+		msg, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if strings.TrimSpace(string(msg)) != strings.TrimSpace(string(prevMsg)) {
+			t.Errorf("amend --no-edit should preserve message, got %q want %q",
+				strings.TrimSpace(string(msg)), strings.TrimSpace(string(prevMsg)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_WithMessage: --amend -m rewrites the
+// last commit's message.
+func TestGitBackend_Commit_Amend_WithMessage(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "VERSION")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "rewritten"}); err != nil {
+			t.Fatalf("Commit --amend -m: %v", err)
+		}
+		msg, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if got := strings.TrimSpace(string(msg)); got != "rewritten" {
+			t.Errorf("amend message = %q, want 'rewritten'", got)
+		}
+	})
+}
+
+// --- jj backend Commit tests ----------------------------------------------
+
+// TestJjBackend_Commit_Paths: only the listed path's changes land in the
+// committed change, others remain in the next (new) working copy.
+func TestJjBackend_Commit_Paths(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"VERSION"}, message: "bump"}); err != nil {
+			t.Fatalf("Commit paths: %v", err)
+		}
+		// @- now describes 'bump' and contains only VERSION; @ is the
+		// new working copy still carrying other.txt.
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description.first_line()")
+		if got := strings.TrimSpace(string(desc)); got != "bump" {
+			t.Errorf("@- description = %q, want 'bump'", got)
+		}
+		summary, _ := runBackendCmd("jj", "diff", "--summary", "--from", "@--", "--to", "@-")
+		if !strings.Contains(string(summary), "VERSION") {
+			t.Errorf("@- should include VERSION, got summary=%q", string(summary))
+		}
+		if strings.Contains(string(summary), "other.txt") {
+			t.Errorf("@- should not include other.txt, got summary=%q", string(summary))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Paths_NonexistentOnly: every supplied path is
+// nonexistent → no commit, no error (declarative convergence). The @ id
+// must stay the same (no new change created).
+func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost"}); err != nil {
+			t.Errorf("nonexistent-only Commit should succeed (idempotent), got: %v", err)
+		}
+		after, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		if string(before) != string(after) {
+			t.Errorf("expected @ unchanged, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Staged: --staged commits all current @ changes.
+func TestJjBackend_Commit_Staged(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{staged: true, message: "all"}); err != nil {
+			t.Fatalf("Commit --staged: %v", err)
+		}
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description.first_line()")
+		if got := strings.TrimSpace(string(desc)); got != "all" {
+			t.Errorf("@- description = %q, want 'all'", got)
+		}
+		summary, _ := runBackendCmd("jj", "diff", "--summary", "--from", "@--", "--to", "@-")
+		if !strings.Contains(string(summary), "VERSION") || !strings.Contains(string(summary), "other.txt") {
+			t.Errorf("@- should include both, got summary=%q", string(summary))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Staged_Nothing: --staged on an empty @ → no-op
+// (advisor #1 — DR-0020 explicitly excludes empty commits).
+func TestJjBackend_Commit_Staged_Nothing(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{staged: true, message: "nothing"}); err != nil {
+			t.Errorf("Commit --staged on empty @ should succeed (idempotent), got: %v", err)
+		}
+		after, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		if string(before) != string(after) {
+			t.Errorf("expected @ unchanged, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_NoEdit: --amend (no -m) folds @ into @-,
+// preserving @-'s description.
+func TestJjBackend_Commit_Amend_NoEdit(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	// Give @- a known description first (the jj fixture leaves it as
+	// the git commit message "bump"). Read it via template.
+	prevDesc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, noEdit: true}); err != nil {
+			t.Fatalf("Commit --amend: %v", err)
+		}
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
+		if strings.TrimSpace(string(desc)) != strings.TrimSpace(string(prevDesc)) {
+			t.Errorf("amend --no-edit should preserve description, got %q want %q",
+				strings.TrimSpace(string(desc)), strings.TrimSpace(string(prevDesc)))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_WithMessage: --amend -m rewrites @-'s
+// description while absorbing @ into it.
+func TestJjBackend_Commit_Amend_WithMessage(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "rewritten"}); err != nil {
+			t.Fatalf("Commit --amend -m: %v", err)
+		}
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description.first_line()")
+		if got := strings.TrimSpace(string(desc)); got != "rewritten" {
+			t.Errorf("amend description = %q, want 'rewritten'", got)
+		}
+	})
+}
+
 // exitCodeOf extracts the carried exit code from an *exitErr (or returns
 // -1 if err is not an *exitErr). Test-local helper.
 func exitCodeOf(err error) int {

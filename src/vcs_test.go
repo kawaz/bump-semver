@@ -420,6 +420,17 @@ func setupJjRepo(t *testing.T, tags []string, fileVersion string) string {
 	// `--git-repo .git` so jj reads the colocated git data without
 	// trying to take ownership of the working copy.
 	runIn(t, dir, "jj", "git", "init", "--git-repo", ".git")
+	// DR-0020 PR-4: backend Commit goes through `runBackendCmd` which
+	// inherits the test process env (= user's $HOME), so a user with
+	// `signing.key` set globally would have every `jj commit` attempt to
+	// sign through ssh-agent / 1Password. Drop signing at the repo-config
+	// layer (`.jj/repo/config.toml`); jj's config-precedence has repo-local
+	// override the user file, so `signing.behavior = "drop"` here wins for
+	// THIS repo regardless of the host's global signing.key.
+	if err := writeFile(filepath.Join(dir, ".jj/repo/config.toml"),
+		"[signing]\nbehavior = \"drop\"\n"); err != nil {
+		t.Fatalf("write jj repo-local config: %v", err)
+	}
 	return dir
 }
 

@@ -107,7 +107,7 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 ## Consequences
 
 - 利用側 (Taskfile / justfile) は `is-jj`/`is-git` 分岐や jj/git の dirty 判定・diff の差を手書きする必要がなくなる。`check-version-bumped` の pathspec エラーや origin 比較の fetch 漏れも `vcs` 側で吸収できる
-- 未実装。実装着手時は `vcs get` / `vcs is` / `vcs diff` (read 系、leaky 少) から、続いて commit/push、最後に tag (jj export・immutability 連動) の順が無難
+- PR-1〜PR-4 land 済 (`vcs get` / `vcs is` / `vcs diff` (+ `-s`/`-q`) / `vcs commit`)。残りは PR-5 (fetch+push) / PR-6 (tag) / PR-7 (移行+docs)
 - jj は **v0.35+ を最小サポートバージョン**とする (`jj tag set` 依存)
 - **実機検証推奨マトリクス** (empirical-verification 方針): `jj git init --git-repo=<bare>` → `jj tag set` → native `git push` tag → `jj git import`/`export` の挙動を、対象 jj バージョンで確認
 
@@ -161,6 +161,26 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - **parser 配置**: `-s` / `--name-status` は vcs サブコマンドの共通 flag loop で受理する。**v0.20.2 で訂正**: 当初は `runVcsCmdGet` / `runVcsCmdIs` がこのフラグを参照しないため `vcs get root -s` 等は silent no-op (scope 外と判断) としていたが、kawaz CLI 設計 (`rules/cli-design-preferences.md`: 未知 flag は exit 2 + usage hint) と整合せず typo 検出が効かないため、v0.20.2 (バグ修正) で verb-aware reject を実装。`-s` / `--name-status` の case を `out.vcsVerb == "diff"` で gate し、他 verb は generic catch-all で `unknown flag for 'vcs <verb>': <flag>` を返して exit 2 で reject する。verb-local flag が 1 つしかないため verb→flags table ではなく inline gate を採用 (詳細: code の Design rationale comment)
 - **PR-3.1 land 日**: 2026-05-30
 - **v0.20.2 verb-aware reject 修正日**: 2026-05-30
+
+### PR-4 (vcs commit) 実装メモ (2026-05-30 確定)
+
+PR-4 は read 系 (PR-1〜3.1) に続く最初の **write 系** verb。3 モード (path 必須 / `--staged` / `--amend`) を持ち、それぞれに「empty-no-op」の冪等規律と「`-a` 非提供」の安全装置を組み込む。
+
+- **コマンド形 (3 モード)**: `vcs commit -m MSG PATH..` (path 必須が基本)、`vcs commit -m MSG --staged` (一括)、`vcs commit --amend [-m MSG]` (直前に吸収)。`PATH..` と `--staged` は parser 段階で相互排他 (= exit 2)。`-m` は `--amend` 以外で必須 (amend 時のみ no-edit 許容)
+- **jj の path 指定 commit (採用案: jj 0.41 native `jj commit [FILESETS]...`)**: 当初の advisor 入力では (A) `jj split` / (B) `jj squash --from @ --into @-` / (C) 自前 snapshot 制御の 3 案を検討したが、実機 (`jj 0.41`) で `jj help commit` を確認したところ **`jj commit [FILESETS]... -m MSG`** が「指定 path だけ commit、残りは新規 working copy に残す」をそのまま実現することが判明。advisor も「A/B/C は moot、`jj commit` を使え」と確定。`--staged` も `jj commit -m MSG` (filesets なし = 全 @ snapshot) で同じ subcommand で表現できる。よって path / `--staged` 両モードとも 1 系統 (`jj commit ...`)、`--amend` だけ `jj squash --from @ --into @-` で別系統
+- **empty-no-op の事前 gate (advisor #1, jj/git 両方)**: jj は **空 commit を許す** ため、nonexistent-only / 変更なしのケースでそのまま実行すると空 change が生成されてしまい DR-0020 (「0 件 → 操作なし」) と矛盾する。両 backend とも commit 実行前に「実際に変更があるか」を確認:
+  - jj path: `jj diff --summary --from @- --to @ -- PATHS` の出力が空なら no-op
+  - jj `--staged`: `jj log -r @ --no-graph -T empty` (= IsClean と同じ predicate)
+  - git path: `git add -- PATHS` を**先に**実行してから `git diff --cached --quiet -- PATHS`
+  - git `--staged`: `git diff --cached --quiet` (no paths) で gate
+- **git の untracked path 取り扱い (advisor #2)**: ナイーブに `git diff --quiet HEAD -- PATHS` で gate すると、**未追跡の新規ファイル** (`untracked`) が「変更なし」と判定されて静かに no-op で終わる (= ユーザの新規ファイルが永遠に commit されない bug)。対策: path mode では **`git add -- PATHS` を最初に実行**し、index に取り込んでから `git diff --cached --quiet -- PATHS` で gate する。これにより未追跡ファイルも commit 対象に含まれる。red test (`TestGitBackend_Commit_Paths_NewFile`) でこの経路を pin
+- **`-a` / `--all` 非提供 (DR-0020 安全装置)**: kawaz CLI 設計 + jj の auto-stage 世界観 (= unstaged 概念がない) から、`commit -a` 的な「unstaged を巻き込む」モードを意図的に提供しない。ただし「unknown flag」の generic reject ではなく、`-a` を **parser で明示的に拾って exit 2 + tailored hint** (= 「`--staged` か PATH.. を使え」) を返す。これにより git ユーザが習慣で `-a` を打った時の usability 損失を最小化
+- **dynamic hint (path / `--staged` / `--amend` どれも未指定の場合)**: backend.Kind() を resolve した後に分岐。git なら 「use --staged to commit staged changes, or specify PATH」、jj なら 「specify PATH.. (commit -a is not supported by design); or use --staged for the entire @ change」。advisor #3 の指摘どおり、backend-independent な usage error (-a, --staged+PATH, missing -m) は `newVcsBackend` の前にチェックして exit 2 を返し、dynamic hint だけ resolve 後 (= 非リポなら exit 3)
+- **--amend の挙動 (git/jj の差分)**: git は `git commit --amend` で直前の commit に index を吸収、`-m` 指定で message 書き換え、無指定なら `--no-edit`。jj は `jj squash --from @ --into @-` で @ を @- に吸収、`-m` 指定で @- の description を更新、無指定なら preserve。**両 backend とも empty 状態の amend を許容する** (= message-only amend = 「変更なしで message だけ更新」は明示的 rewrite 意図として正当)。よって amend モードは empty-no-op gate を**かけない**
+- **interface 拡張**: `Commit(opts commitOpts) error` を `vcsBackend` に追加。`commitOpts` struct で paths / message / staged / amend / noEdit を保持。「method per mode」(`CommitPaths` / `CommitStaged` / `CommitAmend`) ではなく 1 method + struct を選んだ理由は、(1) 既存 interface (Diff / DiffNameStatus 等) と同じ「verb 1 つ = method 1 つ」の対応、(2) 将来 flag が増えた時に struct 追加だけで済む、(3) 共通の前処理 (filterExistingPaths) を呼びやすい
+- **test 環境の hermeticity (advisor #4)**: PR-4 は最初の write 系 verb なので、kawaz の global `signing.key` を持つ環境では `runBackendCmd("jj", "commit", ...)` が `ssh-keygen -Y sign` 経由で 1Password を叩く可能性がある。対策: `setupJjRepo` が `.jj/repo/config.toml` に `[signing] behavior = "drop"` を**直接書く** (`jj config set --repo` は jj 0.41 では受理しても永続しないため。実機で確認済)。repo-local config は user config を override するので、kawaz の host でも CI のクリーン env でも同じ動作になる
+- **配線 4 点 (既存パターン踏襲)**: parser の `isKnownVerb` に `commit` 追加、verb-local flag (`-m` / `--message` / `--staged` / `--amend` / `-a` (= reject 用)) を vcs flag loop に追加、`runVcsCmd` の switch に case 追加、`actionHelpTexts["vcs commit"]` 登録 + `helpVcs` の verbs 一覧に追記
+- **PR-4 land 日**: 2026-05-30
 
 ## 関連
 

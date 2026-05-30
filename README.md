@@ -87,9 +87,11 @@ bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 bump-semver vcs commit -m MSG PATH..
 bump-semver vcs commit -m MSG --staged
 bump-semver vcs commit --amend [-m MSG]
+bump-semver vcs fetch [REMOTE]
+bump-semver vcs push --branch NAME [--remote REMOTE]   # --bookmark is an alias
 ```
 
-A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults). Further verbs (`vcs push`, `vcs tag`) will follow as the design rolls out. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5). The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
 
 **`vcs get <key>`** — emit a value on stdout:
 
@@ -115,7 +117,7 @@ A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vc
 
 Path filter rule (**declarative convergence**): nonexistent `PATH` arguments are silently ignored. When every supplied `PATH` is filtered out the command exits `0` with empty stdout — it does **NOT** widen back to "diff everything". A path present in `REV` but deleted in the worktree is not shown when named explicitly (the full diff with no `PATH` still shows the deletion). Under `-q`, all-filtered yields exit 0 (= "no diff to report").
 
-Exit codes (also see below): `0` success / predicate true (incl. `vcs diff -q` with no diff); `1` predicate false (`vcs is`, and `vcs diff -q` when diff is present); `2` usage error; `3` VCS subprocess error (incl. "not a repo", unresolvable REV); `4` ambiguous answer (`5` is reserved for `vcs push` non-ff in a future PR).
+Exit codes (also see below): `0` success / predicate true (incl. `vcs diff -q` with no diff); `1` predicate false (`vcs is`, and `vcs diff -q` when diff is present); `2` usage error; `3` VCS subprocess error (incl. "not a repo", unresolvable REV); `4` ambiguous answer; `5` non-fast-forward push (`vcs push` only).
 
 ```bash
 bump-semver vcs get backend                  # git
@@ -160,6 +162,39 @@ bump-semver vcs commit --staged -m "release: 1.2.3"     # commit everything stag
 bump-semver vcs commit --amend                          # absorb into previous, keep msg
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # rewrite previous msg
 ```
+
+**`vcs fetch [REMOTE]`** — refresh refs from the named remote (default `origin`).
+
+- **git**: `git fetch <remote>`
+- **jj**: `jj git fetch --remote <remote>`
+
+REMOTE may be passed as a positional or via `--remote NAME` — supplying both at once is a usage error to avoid silent precedence surprises. Refspec scoping, prune, and tag flags intentionally pass through the underlying tool (= drop down to plain `git fetch ...` / `jj git fetch ...` for those).
+
+**`vcs push --branch NAME [--remote REMOTE]`** — upload `NAME` to `REMOTE` (default `origin`). `--bookmark` is an alias of `--branch` for jj users; the two flags share one slot, so supplying both is a usage error.
+
+| Aspect | Behaviour |
+|---|---|
+| Mode | **git**: `git push <remote> <name>:<name>` (explicit refspec avoids `push.default` surprises). **jj**: `jj git push --bookmark <name> --remote <remote>` followed by `jj git export` (colocated `.git` stays in sync; export errors are NOT swallowed) |
+| Name required | No auto-detection from current branch / bookmark. Naming it explicitly removes the "wait, which ref did I just push?" surprise — typos and stale state can't lead to the wrong ref going out |
+| Idempotency | "Remote already has it" → exit 0 (git: `Everything up-to-date`; jj: `Nothing changed`). DR-0020's 0-targets-no-op rule applies |
+| Non-fast-forward | Remote has diverged → **exit 5** + hint advising `fetch + reconcile, then retry`. Force push is intentionally **not** supported — `--force` exits 2 |
+| `--force` / `--tags` | Not provided. Force push rewrites remote history (out of scope for a SemVer helper); tag pushing belongs to release automation (`gh release create`), not to this verb |
+
+```bash
+bump-semver vcs fetch                      # fetch origin
+bump-semver vcs fetch upstream             # fetch a specific remote
+
+bump-semver vcs push --branch main         # push main to origin
+bump-semver vcs push --bookmark main       # jj-flavoured form, same effect
+bump-semver vcs push --branch main --remote upstream
+
+# Common pre-release gate (Taskfile pattern):
+bump-semver vcs is clean \
+  && bump-semver vcs fetch \
+  && bump-semver vcs push --branch main
+```
+
+Exit codes for `vcs push`: `0` success / no-op; `2` usage (`--branch`/`--bookmark` missing, both supplied, `--force` passed, positional args, unknown flag); `3` VCS subprocess error (unknown remote, network, jj export failure); `5` non-fast-forward.
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.
 
@@ -494,7 +529,7 @@ Origin labels: `<file>:<path>` (FILE origin) / `<argv>` or `<argv:N>` (positiona
 - `2` — error (parse failure, mismatch, unsupported file, exclusivity violation, IO error, unknown verb/key for `vcs`, etc.)
 - `3` — VCS subprocess error (`vcs` subcommands only: not in a repo, git/jj invocation failed)
 - `4` — ambiguous answer (`vcs` subcommands only: detached HEAD, multiple bookmarks at the same head)
-- `5` — non-fast-forward push (reserved for `vcs push` in a future PR)
+- `5` — non-fast-forward push (`vcs push` only; remote has diverged — fetch + reconcile, then retry)
 
 ## Migrating from v0.4.x
 

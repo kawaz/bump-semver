@@ -87,9 +87,11 @@ bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 bump-semver vcs commit -m MSG PATH..
 bump-semver vcs commit -m MSG --staged
 bump-semver vcs commit --amend [-m MSG]
+bump-semver vcs fetch [REMOTE]
+bump-semver vcs push --branch NAME [--remote REMOTE]   # --bookmark はエイリアス
 ```
 
-git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md))。PR-1 で `vcs get` (read-only) が land、PR-2 で `vcs is` (述語) が加わり、PR-3 で `vcs diff` (patch 出力) が追加され、PR-3.1 で `vcs diff` に `-s/--name-status` (M/A/D サマリ) と `-q/--quiet` (差分有無を終了コードで返す、`git diff --quiet` 相当) が拡張、PR-4 で `vcs commit` (path 必須を基本としつつ `--staged` / `--amend` を持つ安全な commit) が land。残りの verb (`vcs push` / `vcs tag`) は段階的に追加予定。動機: Taskfile / justfile で git と jj を毎回手書き分岐する板挟みの解消。`bump-semver` は既に `vcs:` で VCS read を吸収しているので、その自然な拡張として `vcs` サブコマンド群を同居させる。
+git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md))。PR-1 で `vcs get` (read-only) が land、PR-2 で `vcs is` (述語) が加わり、PR-3 で `vcs diff` (patch 出力) が追加され、PR-3.1 で `vcs diff` に `-s/--name-status` (M/A/D サマリ) と `-q/--quiet` (差分有無を終了コードで返す、`git diff --quiet` 相当) が拡張、PR-4 で `vcs commit` (path 必須を基本としつつ `--staged` / `--amend` を持つ安全な commit) が land、PR-5 で `vcs fetch` / `vcs push` (ネットワーク側の counterpart。`--force` は意図的に非提供、non-ff は exit 5 で検出) が land。動機: Taskfile / justfile で git と jj を毎回手書き分岐する板挟みの解消。`bump-semver` は既に `vcs:` で VCS read を吸収しているので、その自然な拡張として `vcs` サブコマンド群を同居させる。
 
 **`vcs get <key>`** — 値を stdout に出力:
 
@@ -115,7 +117,7 @@ git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR
 
 PATH フィルタ規則 (**宣言的収束**): 存在しない `PATH` 引数は黙ってスキップされる。全 `PATH` が filter で 0 件になった場合は exit `0` + 空 stdout で終わる — `git diff REV --` のような「全ファイル diff」への broaden は **しない**。`REV` には存在するが working copy で削除済みのファイルを明示的に `PATH` 指定した場合、その削除は表示されない (PATH 無指定の full diff なら表示される)。`-q` 時に全 PATH が filter で消えた場合は exit 0 (= 「報告すべき差分なし」)。
 
-終了コード (詳細は後述): `0` 成功 / 述語が真 (`vcs diff -q` で差分なしも含む); `1` 述語が偽 (`vcs is`、および `vcs diff -q` で差分ありの場合); `2` usage エラー; `3` VCS 実行エラー (= 「リポではない」「REV 解決不能」を含む); `4` 曖昧 (`5` は将来の `vcs push` non-ff 用に予約)。
+終了コード (詳細は後述): `0` 成功 / 述語が真 (`vcs diff -q` で差分なしも含む); `1` 述語が偽 (`vcs is`、および `vcs diff -q` で差分ありの場合); `2` usage エラー; `3` VCS 実行エラー (= 「リポではない」「REV 解決不能」を含む); `4` 曖昧; `5` non-fast-forward push (`vcs push` のみ)。
 
 ```bash
 bump-semver vcs get backend                  # git
@@ -160,6 +162,39 @@ bump-semver vcs commit --staged -m "release: 1.2.3"     # staged を一括 commi
 bump-semver vcs commit --amend                          # 直前に吸収、メッセージ維持
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # 直前のメッセージを更新
 ```
+
+**`vcs fetch [REMOTE]`** — 指定 remote (省略時 `origin`) から refs を refresh する。
+
+- **git**: `git fetch <remote>`
+- **jj**: `jj git fetch --remote <remote>`
+
+`REMOTE` は positional または `--remote NAME` のいずれかで渡す — 両方同時に指定すると usage error (暗黙の優先順位サプライズを避けるため)。Refspec scope / prune / tag 制御は意図的にラップしていない (= 必要なら素の `git fetch ...` / `jj git fetch ...` を直接使う)。
+
+**`vcs push --branch NAME [--remote REMOTE]`** — `NAME` を `REMOTE` (省略時 `origin`) に push。`--bookmark` は jj 向けの `--branch` エイリアスで、同じスロットを共有する (両方同時指定は usage error)。
+
+| 観点 | 動作 |
+|---|---|
+| 実行 | **git**: `git push <remote> <name>:<name>` (明示 refspec で `push.default` の副作用を排除)。**jj**: `jj git push --bookmark <name> --remote <remote>` の後に `jj git export` を実行 (colocated `.git` の ref 同期。export 失敗は握りつぶさず exit 3 で surface) |
+| NAME 必須 | 現在の branch / bookmark からの自動推測はしない。明示することで「あれ、結局どの ref を push した?」という事故を構造的に防ぐ |
+| 冪等 | 「remote が既に最新」→ exit 0 (git: `Everything up-to-date`、jj: `Nothing changed`)。DR-0020 の 0-targets-no-op ルール |
+| non-ff | remote が divergent → **exit 5** + `fetch + reconcile してから retry` の hint。`--force` は意図的に非提供 — 指定すると exit 2 |
+| `--force` / `--tags` | 非提供。force push は remote history の rewrite で SemVer ヘルパの責務外、tag push は release 自動化 (`gh release create`) 側の仕事 |
+
+```bash
+bump-semver vcs fetch                      # origin を fetch
+bump-semver vcs fetch upstream             # 特定の remote を fetch
+
+bump-semver vcs push --branch main         # main を origin へ
+bump-semver vcs push --bookmark main       # jj 流の同等表現
+bump-semver vcs push --branch main --remote upstream
+
+# よく使う release 前 gate (Taskfile パターン):
+bump-semver vcs is clean \
+  && bump-semver vcs fetch \
+  && bump-semver vcs push --branch main
+```
+
+`vcs push` の終了コード: `0` 成功 / no-op; `2` usage (`--branch` / `--bookmark` 欠如・両指定、`--force` 指定、positional 引数、未知フラグ); `3` VCS 実行エラー (unknown remote / network / jj export 失敗); `5` non-fast-forward。
 
 `--vcs jj|git|auto` は引き続き有効。colocated 構成で git 側を見たい場合は `bump-semver vcs get backend --vcs git` (または `vcs is git --vcs git`) で強制できる。
 
@@ -494,7 +529,7 @@ bump-semver: version mismatch:
 - `2` — エラー (パース失敗、整合性 NG、未対応ファイル、排他オプション違反、IO エラー、`vcs` の未知 verb/key 等)
 - `3` — VCS 実行エラー (`vcs` サブコマンドのみ: リポ外、git/jj 実行失敗)
 - `4` — 曖昧 (`vcs` サブコマンドのみ: DETACHED HEAD、同じ head に bookmark が複数)
-- `5` — non-fast-forward push (将来の `vcs push` 用に予約)
+- `5` — non-fast-forward push (`vcs push` のみ; remote が divergent — fetch + reconcile してから retry)
 
 ## v0.4.x からの移行
 

@@ -1470,8 +1470,8 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 //   - 2  usage error (sub-verb missing/unknown, NAME missing, bad shape)
 //   - 3  VCS subprocess error (unknown remote, bad REV, network failure)
 //   - 4  integrity violation: tag exists at a different REV without
-//        --allow-move (distinct from 3 so callers can detect "your tag
-//        has drifted" vs "git/jj broke")
+//     --allow-move (distinct from 3 so callers can detect "your tag
+//     has drifted" vs "git/jj broke")
 func runVcsCmdTag(args cliArgs, stdout, stderr io.Writer) error {
 	switch args.vcsTagSubVerb {
 	case "push":

@@ -1234,14 +1234,14 @@ func (j *jjBackend) Push(opts pushOpts) error {
 // advanced to is **conditioned on IsClean**:
 //
 //   - clean (@ empty)     → advance to @-  (kawaz 常用 = jj 慣習: bookmark
-//                           lives on the confirmed parent, @ is the
-//                           throw-away working copy)
+//     lives on the confirmed parent, @ is the
+//     throw-away working copy)
 //   - dirty (@ non-empty) → advance to @   (treat the current commit as
-//                           the publishable one — the "immutable 化"
-//                           pattern: after push, the named commit
-//                           becomes immutable and jj auto-creates a new
-//                           working copy above it; described or empty
-//                           description both legal, the user opted in)
+//     the publishable one — the "immutable 化"
+//     pattern: after push, the named commit
+//     becomes immutable and jj auto-creates a new
+//     working copy above it; described or empty
+//     description both legal, the user opted in)
 //
 // Preconditions chain (fail-fast, in order — earlier predicates gate
 // later ones):
@@ -1726,7 +1726,7 @@ func gitTagDeleteRemote(opts tagDeleteOpts, dir string) error {
 	if err := cmd.Run(); err != nil {
 		return &exitErr{
 			code: exitCodeVCSExec,
-			msg:  formatPushError("git",
+			msg: formatPushError("git",
 				stderrBuf.String(), stdoutBuf.String()),
 		}
 	}

@@ -158,8 +158,9 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - **`-s` と `-q` の併用**: `-q` 優先 (stdout 空 + 差分有無 exit code)。**code path は 1 つ** — `-q` ブランチも `DiffNameStatus()` の出力長で差分有無を判定する (= name-status の出力が「表示用」と「presence 判定用」を兼ねる)。これにより display と predicate の経路が乖離しない (advisor 提案を採用)
 - **interface 拡張方針**: 既存 `Diff(rev, paths) ([]byte, error)` には options を追加せず、新メソッド `DiffNameStatus(rev string, paths []string) ([]byte, error)` を追加する。理由: (1) 既存 `Diff` の caller / test を変更しない (churn 回避)、(2) `HasChanges` 述語を別途設けると `DiffNameStatus` と同じ subprocess を 2 回走らせる懸念 — 出力長で代用すれば 1 回で済む、(3) interface comment にある "grown incrementally as PRs land verbs" の方針に整合
 - **path フィルタ**: `Diff` と同じ宣言的収束ルールを `DiffNameStatus` にも適用。全 path filter で 0 件 → backend 呼ばずに empty bytes (= `-q` 経由なら exit 0、`-s` 経由でも stdout 空)
-- **parser 配置**: `-s` / `--name-status` は vcs サブコマンドの共通 flag loop で受理する。`runVcsCmdGet` / `runVcsCmdIs` はこのフラグを参照しないため、たとえば `vcs get root -s` のように渡しても silent no-op。verb-aware rejection は現構造に手を入れる必要があり、本 PR の scope 外 (correctness 問題ではないので妥協)
+- **parser 配置**: `-s` / `--name-status` は vcs サブコマンドの共通 flag loop で受理する。**v0.20.2 で訂正**: 当初は `runVcsCmdGet` / `runVcsCmdIs` がこのフラグを参照しないため `vcs get root -s` 等は silent no-op (scope 外と判断) としていたが、kawaz CLI 設計 (`rules/cli-design-preferences.md`: 未知 flag は exit 2 + usage hint) と整合せず typo 検出が効かないため、v0.20.2 (バグ修正) で verb-aware reject を実装。`-s` / `--name-status` の case を `out.vcsVerb == "diff"` で gate し、他 verb は generic catch-all で `unknown flag for 'vcs <verb>': <flag>` を返して exit 2 で reject する。verb-local flag が 1 つしかないため verb→flags table ではなく inline gate を採用 (詳細: code の Design rationale comment)
 - **PR-3.1 land 日**: 2026-05-30
+- **v0.20.2 verb-aware reject 修正日**: 2026-05-30
 
 ## 関連
 

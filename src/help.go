@@ -122,7 +122,7 @@ VCS helpers (DR-0020):
   vcs diff REV [PATH..]     Print the patch between REV and the working copy
   vcs commit -m MSG ...     Commit (PATH.. | --staged | --amend); -a is rejected
   vcs fetch [REMOTE]        Refresh refs from a remote (default origin)
-  vcs push --branch NAME    Push to remote (--bookmark alias; --force not provided)
+  vcs push --branch NAME    Push to remote (jj users: bookmark; --force not provided)
   (See: bump-semver vcs --help)
 
 Exit codes:
@@ -374,7 +374,8 @@ Verbs:
                               (symmetric with -m PATH.. / -m --staged above).
   fetch [REMOTE]              Fetch refs from REMOTE (default: origin).
   push --branch NAME [--remote REMOTE]
-                              Push NAME to REMOTE (default: origin). --bookmark is an alias.
+                              Push NAME to REMOTE (default: origin).
+                              (jj users: "branch" = bookmark; --bookmark also accepted.)
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -580,10 +581,20 @@ Modes:
                 No staged/dirty content → exit 0, no commit (idempotent).
   --amend       Fold the current change into the previous commit (instead
                 of creating a new one). Fully symmetric with non-amend:
-                  --amend                  fold ALL current changes (bare)
-                  --amend PATH..           fold only those paths
-                  --amend --staged         synonym for bare amend (the
-                                           staged index IS amend's source)
+                  --amend                  bare amend (no path selector):
+                                             git: folds the staged index
+                                                  into HEAD (unstaged
+                                                  worktree changes are NOT
+                                                  included — same scope as
+                                                  --staged).
+                                             jj:  folds the entire @
+                                                  snapshot into @- (jj
+                                                  auto-stages, so this IS
+                                                  every current change).
+                  --amend PATH..           fold only those paths.
+                  --amend --staged         explicit synonym for bare amend
+                                           (the index / @ snapshot IS the
+                                           absorption source).
                 With -m: rewrite the previous commit's message.
                 Without -m: preserve the previous commit's message.
                 Equivalences:
@@ -692,25 +703,26 @@ const helpVcsPush = `bump-semver vcs push — upload refs to a remote (git/jj-ag
 
 Usage:
   bump-semver vcs push --branch NAME [--remote REMOTE]
-  bump-semver vcs push --bookmark NAME [--remote REMOTE]    # alias
 
 Arguments:
-  --branch NAME    Push the named branch/bookmark. Required (no auto-
-                   detection by design — name it explicitly).
-  --bookmark NAME  Alias of --branch. (jj users may also write --bookmark.)
-                   --branch and --bookmark are mutually exclusive (one
-                   value field; double-set is a usage error).
+  --branch NAME    Branch to push (jj users: bookmark). Required — no
+                   auto-detection. --bookmark accepted as a synonym.
   --remote REMOTE  Target remote name. Defaults to "origin" when omitted.
 
 Notes:
   - git: runs 'git push <remote> <name>:<name>'. The explicit refspec
     avoids surprises from local push.default / tracking config.
   - jj:  runs 'jj git push --bookmark <name> --remote <remote>' followed
-    by 'jj git export' so colocated .git refs stay in sync. Export errors
-    are NOT swallowed — they surface as exit 3 with jj's native message.
-  - Idempotent: "remote already has it" → exit 0, no error.
-  - Non-fast-forward (remote has diverged) → exit 5 + hint advising
-    fetch + reconcile. Force push is intentionally not supported.
+    by 'jj git export' so colocated .git refs stay in sync. Export is
+    retried once on failure; persistent failures surface as exit 3 with
+    a recovery hint (see jj-vcs/jj issues #493, #6098, #6203).
+  - Idempotent: "remote already has it" → exit 0; git/jj's own
+    "Everything up-to-date" / "Nothing changed" line is forwarded to
+    stderr so the user can see the convergence happened.
+  - Non-fast-forward (remote rejected the push) → exit 5; the underlying
+    git/jj stderr is passed through verbatim. Recovery (fetch + reconcile,
+    or force push if you really mean it) is your call — bump-semver does
+    not paraphrase the tool's diagnostic.
 
 Not provided by design:
   --force / --force-with-lease   Rewriting remote history is out of
@@ -726,19 +738,17 @@ Global Options:
   -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
 
 Exit codes:
-  0   success (push completed, or idempotent no-op)
+  0   success (push completed, or idempotent up-to-date)
   2   usage error (--branch/--bookmark missing or specified twice,
                    --force passed, positional args supplied, unknown flag)
   3   VCS subprocess error (unknown remote, network failure, not a repo,
-                            jj git export failure)
-  5   non-fast-forward rejection (remote has diverged — fetch and
-                                  reconcile, then retry)
+                            jj git export failure persisted across retry)
+  5   non-fast-forward rejection — read git/jj's stderr for details
 
 Examples:
-  bump-semver vcs push --branch main
-                                    # push main to origin
-  bump-semver vcs push --bookmark main --remote upstream
-                                    # jj-flavoured form, custom remote
+  bump-semver vcs push --branch main         # push main to origin
+  bump-semver vcs push --branch main --remote upstream
+                                             # custom remote
   bump-semver vcs push --branch release-1.2  # push a feature/release branch
 `
 

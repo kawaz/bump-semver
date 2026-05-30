@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -921,6 +922,27 @@ type pushOpts struct {
 	// remote is the named remote to push to. Defaults to "origin" at the
 	// dispatcher layer; required to be non-empty here.
 	remote string
+
+	// stdout / stderr receive the underlying tool's success-path
+	// diagnostic output (DR-0020 PR-5.1). When non-nil and the push
+	// succeeds, the backend writes git/jj's own stdout / stderr to
+	// these writers so the caller can surface them (e.g. "Everything
+	// up-to-date" / "Nothing changed"). nil writers are silently
+	// ignored — backend-level tests that only care about exit semantics
+	// can leave them unset without leaking diagnostic state across
+	// tests (the package previously kept the diagnostic on globals,
+	// which made test ordering load-bearing — see DR-0020 PR-5.1
+	// implementation notes for the discarded approach).
+	//
+	// Design rationale: threading io.Writer through pushOpts is the
+	// minimal surface change that lets backends emit diagnostic output
+	// without growing the vcsBackend method signatures. Push is the
+	// only verb today where the underlying tool's success-path output
+	// is informational rather than purely structural; if a future verb
+	// needs the same treatment, copy this field rather than promoting
+	// to the interface.
+	stdout io.Writer
+	stderr io.Writer
 }
 
 // Fetch (git) refreshes refs from the named remote via `git fetch <remote>`.
@@ -949,6 +971,14 @@ func (g *gitBackend) Push(opts pushOpts) error {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
 	if code == 0 {
+		// PR-5.1: forward git's own success-path diagnostic so the user
+		// sees "Everything up-to-date" / "* [new branch] main -> main"
+		// instead of silent success. On error paths the dispatcher
+		// already surfaces stderr via emitVcsErr (formatPushError folds
+		// it into ee.msg), so we deliberately skip passthrough there to
+		// avoid duplicating the message.
+		writePushDiagnostic(opts.stdout, stdout)
+		writePushDiagnostic(opts.stderr, stderr)
 		return nil
 	}
 	if isNonFastForward(stderr) {
@@ -1003,6 +1033,14 @@ func (j *jjBackend) Push(opts pushOpts) error {
 	if err != nil {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
+	if code == 0 {
+		// PR-5.1: forward jj's success-path diagnostic (e.g. "Nothing
+		// changed" / "Changes to push to <remote>" / bookmark moves) so
+		// the user sees what jj actually said. Error paths skip
+		// passthrough — emitVcsErr already folds stderr into ee.msg.
+		writePushDiagnostic(opts.stdout, stdout)
+		writePushDiagnostic(opts.stderr, stderr)
+	}
 	if code != 0 {
 		if isNonFastForward(stderr) {
 			return &exitErr{
@@ -1015,18 +1053,88 @@ func (j *jjBackend) Push(opts pushOpts) error {
 			msg:  formatPushError("jj", stderr, stdout),
 		}
 	}
-	// Push succeeded; sync colocated git refs. We don't swallow export
-	// failures (DR-0020 PR-5: surface jj's native error so the user can
-	// resolve underlying issues like ref-hierarchy clashes).
-	if _, exErr, exCode, exExecErr := runBackendCapture("jj", "git", "export"); exExecErr != nil {
-		return &exitErr{code: exitCodeVCSExec, msg: exExecErr.Error()}
-	} else if exCode != 0 {
-		return &exitErr{
-			code: exitCodeVCSExec,
-			msg:  fmt.Sprintf("jj git export failed after push: %s", strings.TrimSpace(exErr)),
-		}
+	// Push succeeded; sync colocated git refs via `jj git export`.
+	// PR-5.1: retry once on failure (the common cases — transient
+	// packed-refs lock, HEAD races — are cleared on the second attempt),
+	// then escalate to exit 3 with a recovery hint pointing at jj's
+	// upstream issues. We don't swallow the underlying jj stderr —
+	// kawaz's directive is "公式は無視するなで終わりってことないよね"
+	// = give the user an actionable next step instead of a bare wrap.
+	exStderr1, exCode1, exErr1 := jjGitExportFunc()
+	if exErr1 == nil && exCode1 == 0 {
+		return nil
 	}
-	return nil
+	// First attempt failed; try once more (covers the
+	// transient-lock-clears class).
+	exStderr2, exCode2, exErr2 := jjGitExportFunc()
+	if exErr2 == nil && exCode2 == 0 {
+		return nil
+	}
+	// Both attempts failed — pick the most informative stderr (prefer
+	// the second attempt's, which reflects the persistent state) and
+	// build a recovery hint.
+	finalStderr := strings.TrimSpace(exStderr2)
+	if finalStderr == "" {
+		finalStderr = strings.TrimSpace(exStderr1)
+	}
+	if exErr2 != nil {
+		finalStderr = strings.TrimSpace(finalStderr + "\n" + exErr2.Error())
+	}
+	return &exitErr{
+		code: exitCodeVCSExec,
+		msg:  jjGitExportRecoveryMessage(finalStderr),
+	}
+}
+
+// writePushDiagnostic emits the underlying tool's success-path output to
+// the caller-supplied writer, normalising trailing whitespace and adding
+// a single newline. Nil writer is a silent no-op so unit tests at the
+// backend layer (which only assert exit semantics) need not wire stub
+// writers. Empty input is also a no-op — git/jj sometimes succeed with
+// no stderr (e.g. `--quiet` push), and a bare newline would be noise.
+func writePushDiagnostic(w io.Writer, s string) {
+	if w == nil {
+		return
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(w, s)
+}
+
+// jjGitExportRecoveryMessage builds an actionable error message for a
+// persistent `jj git export` failure (PR-5.1). The message folds in the
+// raw jj stderr (no paraphrase) and appends pattern-specific remedies
+// derived from jj-vcs/jj upstream issues. Unmatched stderr falls back to
+// a generic "raw stderr + upstream issue list" body so the user always
+// gets a starting point, never a bare wrap.
+func jjGitExportRecoveryMessage(jjStderr string) string {
+	var hint string
+	switch {
+	// Ref-hierarchy clash (jj-vcs/jj #493): git's filesystem refs can't
+	// hold both `refs/heads/foo` and `refs/heads/foo/bar`.
+	case strings.Contains(jjStderr, "there are refs beneath that folder"),
+		strings.Contains(jjStderr, "cannot lock ref"):
+		hint = "ref-hierarchy clash (jj-vcs/jj #493): " +
+			"inspect with 'git for-each-ref refs/heads/', then rename or delete " +
+			"the conflicting refs and retry."
+	// packed-refs lock not released (jj-vcs/jj #6203).
+	case strings.Contains(jjStderr, "packed-refs"):
+		hint = "packed-refs lock contention (jj-vcs/jj #6203): " +
+			"ensure no other git/jj process is running, remove " +
+			"'.git/packed-refs.lock' if stale, then retry."
+	// HEAD reference race (jj-vcs/jj #6098).
+	case strings.Contains(jjStderr, `reference "HEAD"`),
+		strings.Contains(jjStderr, "HEAD\" should have content"):
+		hint = "HEAD reference race (jj-vcs/jj #6098): " +
+			"run 'jj git import' to resync the working copy with the underlying " +
+			"git store, then retry."
+	default:
+		hint = "see https://github.com/jj-vcs/jj/issues " +
+			"(known patterns: #493 ref-hierarchy, #6098 HEAD race, #6203 packed-refs)."
+	}
+	return fmt.Sprintf("jj git export failed twice after push: %s\nrecovery: %s", jjStderr, hint)
 }
 
 // runBackendCapture is the variant of runBackendCmd we need for push:

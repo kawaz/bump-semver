@@ -1298,18 +1298,27 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
-	if err := b.Push(pushOpts{name: args.vcsPushName, remote: remote}); err != nil {
-		// On non-ff, augment the error with a shared remediation hint so
-		// the user immediately sees the recovery flow (fetch + reconcile)
-		// and is reminded that force push is intentionally not exposed.
-		var ee *exitErr
-		if errors.As(err, &ee) && ee.code == exitCodeNonFastForward {
-			if !args.quietAll {
-				fmt.Fprintln(stderr,
-					"bump-semver: vcs push: remote has diverged. fetch and reconcile, then retry. (force push is intentionally not supported)")
-			}
-			return ee
-		}
+	// PR-5.1: forward the underlying tool's success-path diagnostic
+	// ("Everything up-to-date" / "Nothing changed" / bookmark moves) by
+	// handing the backend the dispatcher's own stdout/stderr. Quiet
+	// rules:
+	//   - default          : show both stdout + stderr from git/jj
+	//   - -q  (quiet)      : suppress informational diagnostic (the
+	//                        success-path output is informational, not
+	//                        error-class; treating it as a hint matches
+	//                        the rest of the bump-semver --quiet contract)
+	//   - -qq (quiet-all)  : suppress everything (existing contract)
+	//
+	// kawaz (PR-5.1) confirmed: no editorial hint on non-ff. On error
+	// paths the backend skips the passthrough writers and emitVcsErr
+	// surfaces the wrapped error via formatPushError (which already
+	// folds git/jj's stderr into ee.msg).
+	opts := pushOpts{name: args.vcsPushName, remote: remote}
+	if !args.quietAll && !args.quiet {
+		opts.stdout = stdout
+		opts.stderr = stderr
+	}
+	if err := b.Push(opts); err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
 	return nil

@@ -3456,8 +3456,9 @@ func TestRun_VcsPush_NothingToPush(t *testing.T) {
 }
 
 // TestRun_VcsPush_NothingToPush_Quiet: with -q, the success-path
-// diagnostic is suppressed (matches the existing --quiet contract for
-// hints).
+// diagnostic is informational (not error-class) and gets suppressed on
+// BOTH stdout and stderr. This matches the bump-semver --quiet contract
+// where hint-class output goes away under -q.
 func TestRun_VcsPush_NothingToPush_Quiet(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -3471,8 +3472,9 @@ func TestRun_VcsPush_NothingToPush_Quiet(t *testing.T) {
 		if err != nil {
 			t.Errorf("idempotent push with -q should succeed, got: %v", err)
 		}
-		if strings.Contains(stdout.String(), "Everything up-to-date") {
-			t.Errorf("-q should suppress success diagnostic on stdout, got: %q", stdout.String())
+		combined := stdout.String() + stderr.String()
+		if strings.Contains(combined, "Everything up-to-date") {
+			t.Errorf("-q should suppress success diagnostic on both channels, got: %q", combined)
 		}
 	})
 }
@@ -3569,7 +3571,10 @@ func TestRun_VcsPushHelp(t *testing.T) {
 // TestHelpVcsPush_BookmarkIsBrief: the help body must NOT carry the
 // verbose `--bookmark NAME  Alias of --branch...` line introduced by
 // PR-5; PR-5.1 keeps `--branch` canonical and reduces the bookmark
-// mention to a single inline parenthetical for jj users.
+// mention to a single inline parenthetical for jj users. kawaz's
+// directive: 一行注釈に圧縮 — the test also caps how many bookmark
+// occurrences may appear (= one inline mention, not a re-explanation
+// of the mutual-exclusion rule).
 func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
 	body := helpVcsPush
 	// Old verbose lines that PR-5.1 deletes.
@@ -3577,6 +3582,8 @@ func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
 		"--bookmark NAME  Alias of --branch",
 		"--bookmark NAME  Alias of `--branch`",
 		"# alias",
+		"may appear per invocation",
+		"mutually exclusive",
 	} {
 		if strings.Contains(body, banned) {
 			t.Errorf("PR-5.1 should remove %q from helpVcsPush, but it is still present", banned)

@@ -149,6 +149,18 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - **interface 拡張**: `vcsBackend.Diff(rev string, paths []string) ([]byte, error)` を追加。`filterExistingPaths` は git / jj 共通の helper として `vcs_backend.go` に集約 (両 backend が同じ規則で path をフィルタする)
 - **PR-3 land 日**: 2026-05-30
 
+### PR-3.1 (vcs diff -s/-q) 実装メモ (2026-05-30 確定)
+
+`check-version-bumped` 等のユースケース (claude-plugin-reference の survey から派生) で「`vcs diff` の素の patch を毎回パースするのは重い、もう少し軽い差分有無判定が欲しい」という要求が浮上。当初は新 verb (`vcs is changed REV [PATH..]`) を増やす案も検討されたが、kawaz の確定で **`vcs diff` の verb-local オプション 2 つ (`-s`, `-q`)** に集約。
+
+- **`-s` / `--name-status`**: 出力を 1 ファイル 1 行の `<CODE>\t<path>` 形式 (M/A/D) に切替。git は `git diff --name-status REV [-- PATHS]` をそのまま使う。jj は `jj diff --summary --from REV --to @ [-- PATHS]` の native 出力が `<CODE> <path>` (space 区切り) なので、最初の space のみを tab に置換して git の形式に正規化する (paths-with-spaces は SplitN(_, 2) で右側を保持)。Rename/Copy (R/C) は best-effort — git/jj 間で形式が微妙に違う可能性があるが、kawaz が想定する用途 (M/A/D 判定) はカバー
+- **`-q` / `--quiet` の overload**: グローバル `-q` は他 verb で「stdout 抑止」のみだが、`vcs diff` では `git diff --quiet` (= `--exit-code`) と同じ意味に拡張する: **差分なし → exit 0、差分あり → exit 1** (`exitCodeFalse`、`vcs is` と同じ predicate-false コード)、エラーは exit 3 (= `exitCodeVCSExec`)。意図的な overload で、Design rationale は「`diff` は『何か違いがあるか?』が well-posed な唯一の verb」「`git diff --quiet` の mental model を踏襲するのが scripting 観点で自然」(`document-design-rationale.md` ルールに従い code に明記)。他 verb (`get` / `is`) の `-q` 意味は不変
+- **`-s` と `-q` の併用**: `-q` 優先 (stdout 空 + 差分有無 exit code)。**code path は 1 つ** — `-q` ブランチも `DiffNameStatus()` の出力長で差分有無を判定する (= name-status の出力が「表示用」と「presence 判定用」を兼ねる)。これにより display と predicate の経路が乖離しない (advisor 提案を採用)
+- **interface 拡張方針**: 既存 `Diff(rev, paths) ([]byte, error)` には options を追加せず、新メソッド `DiffNameStatus(rev string, paths []string) ([]byte, error)` を追加する。理由: (1) 既存 `Diff` の caller / test を変更しない (churn 回避)、(2) `HasChanges` 述語を別途設けると `DiffNameStatus` と同じ subprocess を 2 回走らせる懸念 — 出力長で代用すれば 1 回で済む、(3) interface comment にある "grown incrementally as PRs land verbs" の方針に整合
+- **path フィルタ**: `Diff` と同じ宣言的収束ルールを `DiffNameStatus` にも適用。全 path filter で 0 件 → backend 呼ばずに empty bytes (= `-q` 経由なら exit 0、`-s` 経由でも stdout 空)
+- **parser 配置**: `-s` / `--name-status` は vcs サブコマンドの共通 flag loop で受理する。`runVcsCmdGet` / `runVcsCmdIs` はこのフラグを参照しないため、たとえば `vcs get root -s` のように渡しても silent no-op。verb-aware rejection は現構造に手を入れる必要があり、本 PR の scope 外 (correctness 問題ではないので妥協)
+- **PR-3.1 land 日**: 2026-05-30
+
 ## 関連
 
 - 上位/関連 DR: DR-0008 (`vcs:` schema 導入)、DR-0016 (`--vcs auto` 一本化)、DR-0019 (`vcs:latest-tag(<arg>)`)

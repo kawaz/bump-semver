@@ -178,7 +178,7 @@ bump-semver vcs commit --amend --staged -m "fixup"      # staged を一括で直
 
 `REMOTE` は positional または `--remote NAME` のいずれかで渡す — 両方同時に指定すると usage error (暗黙の優先順位サプライズを避けるため)。Refspec scope / prune / tag 制御は意図的にラップしていない (= 必要なら素の `git fetch ...` / `jj git fetch ...` を直接使う)。
 
-**`vcs push --branch NAME [--remote REMOTE]`** — `NAME` を `REMOTE` (省略時 `origin`) に push。`--branch` が canonical。jj users は `--bookmark` でも書ける (jj のネイティブ用語で同義)。同じスロットを共有するため両方同時指定は usage error。
+**`vcs push --branch NAME [--remote REMOTE] [--jj-bookmark-auto-advance]`** — `NAME` を `REMOTE` (省略時 `origin`) に push。`--branch` が canonical。jj users は `--bookmark` でも書ける (jj のネイティブ用語で同義)。同じスロットを共有するため両方同時指定は usage error。
 
 | 観点 | 動作 |
 |---|---|
@@ -187,6 +187,7 @@ bump-semver vcs commit --amend --staged -m "fixup"      # staged を一括で直
 | 冪等 | 「remote が既に最新」→ exit 0。git/jj 自身の `Everything up-to-date` / `Nothing changed` 行は stderr に素通しするので、収束が起きたことをユーザが確認できる。DR-0020 の 0-targets-no-op ルール |
 | non-ff | remote が拒否 → **exit 5**。bump-semver は editorial な hint を被せず、git/jj の素 stderr をそのまま流す (kawaz 確定: 復旧 = ユーザ責務)。`fetch` + reconcile で進めるか、本気で remote history を rewrite するなら素の `git push --force-with-lease` を直接叩く。`--force` は非提供 (指定すると exit 2) |
 | `--force` / `--tags` | 非提供。force push は remote history の rewrite で SemVer ヘルパの責務外、tag push は release 自動化 (`gh release create`) 側の仕事 |
+| `--jj-bookmark-auto-advance` | **jj 専用の opt-in (PR-5.2)**。push 前に bookmark を「公開すべき commit」に自動で進める。clean な `@` (空 working copy) → bookmark を `@-` に。dirty な `@` (非空、通常は describe 済) → bookmark を `@` に。bookmark が存在しない場合は何もせず通常 push に委ね、`ancestors(@)` に居ない (sideways / divergent) 場合は exit 3 + hint で停止する (移動しない)。移動自体は forward-only (`--allow-backwards` は付けない)。git リポで指定すると usage error (exit 2)。**Why**: jj 慣習では bookmark は確定 commit (`@-`) に置き、`@` は使い捨ての working copy。bump のたびに `jj bookmark move` を手で打つ摩擦を構造的に解消するためのフラグ |
 
 ```bash
 bump-semver vcs fetch                      # origin を fetch
@@ -199,9 +200,12 @@ bump-semver vcs push --branch main --remote upstream
 bump-semver vcs is clean \
   && bump-semver vcs fetch \
   && bump-semver vcs push --branch main
+
+# jj: bookmark を自動で進めてから push (手動の `jj bookmark move` 不要)
+bump-semver vcs push --branch main --jj-bookmark-auto-advance
 ```
 
-`vcs push` の終了コード: `0` 成功 / no-op; `2` usage (`--branch` / `--bookmark` 欠如・両指定、`--force` 指定、positional 引数、未知フラグ); `3` VCS 実行エラー (unknown remote / network / 再試行しても解消しない jj export 失敗); `5` non-fast-forward — 復旧経路は git/jj の stderr を参照。
+`vcs push` の終了コード: `0` 成功 / no-op; `2` usage (`--branch` / `--bookmark` 欠如・両指定、`--force` 指定、positional 引数、未知フラグ、git リポでの `--jj-bookmark-auto-advance`); `3` VCS 実行エラー (unknown remote / network / 再試行しても解消しない jj export 失敗 / `--jj-bookmark-auto-advance` が bookmark を `ancestors(@)` に見出せず拒否); `5` non-fast-forward — 復旧経路は git/jj の stderr を参照。
 
 **`vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]`** — `NAME` を `REV` で create / move し、`REMOTE` (省略時 `origin`) に push するまでをアトミックな 1 ステップで実行する。動詞の契約は「return 時点で tag が remote 上で `REV` を指している」。local 作成は手段であって成果物ではないため、tag の lifecycle は remote 上の存在と 1-1 になる (orphan local tag を作らない)。
 

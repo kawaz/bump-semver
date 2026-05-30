@@ -178,7 +178,7 @@ bump-semver vcs commit --amend --staged -m "fixup"      # fold all staged into p
 
 REMOTE may be passed as a positional or via `--remote NAME` — supplying both at once is a usage error to avoid silent precedence surprises. Refspec scoping, prune, and tag flags intentionally pass through the underlying tool (= drop down to plain `git fetch ...` / `jj git fetch ...` for those).
 
-**`vcs push --branch NAME [--remote REMOTE]`** — upload `NAME` to `REMOTE` (default `origin`). `--branch` is canonical; jj users may also write `--bookmark` (= the jj-native term for the same thing). The two spellings share one slot, so supplying both is a usage error.
+**`vcs push --branch NAME [--remote REMOTE] [--jj-bookmark-auto-advance]`** — upload `NAME` to `REMOTE` (default `origin`). `--branch` is canonical; jj users may also write `--bookmark` (= the jj-native term for the same thing). The two spellings share one slot, so supplying both is a usage error.
 
 | Aspect | Behaviour |
 |---|---|
@@ -187,6 +187,7 @@ REMOTE may be passed as a positional or via `--remote NAME` — supplying both a
 | Idempotency | "Remote already has it" → exit 0; git/jj's own `Everything up-to-date` / `Nothing changed` line is forwarded to stderr so the user can confirm the convergence happened. DR-0020's 0-targets-no-op rule applies |
 | Non-fast-forward | Remote rejected the push → **exit 5**; the underlying git/jj stderr is passed through verbatim (no editorial `remote has diverged` paraphrase). Recovery is the user's call — `git fetch` + reconcile, or `git push --force-with-lease` directly if you genuinely mean to rewrite remote history. `--force` is intentionally not exposed (exits 2) |
 | `--force` / `--tags` | Not provided. Force push rewrites remote history (out of scope for a SemVer helper); tag pushing belongs to release automation (`gh release create`), not to this verb |
+| `--jj-bookmark-auto-advance` | **jj-only opt-in (PR-5.2)**. Before pushing, move the bookmark to the publishable commit: clean `@` (empty working copy) → bookmark to `@-`; dirty `@` (non-empty, typically described) → bookmark to `@`. The bookmark must exist (otherwise the normal push reports it) AND must be in `ancestors(@)` — sideways/divergent positioning → exit 3 with a hint, no move. The move itself is forward-only (no `--allow-backwards`). Running this on a git repo is a usage error (exit 2). Why: jj 慣習 places bookmarks on confirmed commits (`@-`), not on the throw-away working copy (`@`). Manually running `jj bookmark move` every bump is friction — this flag automates the move while keeping the safety checks explicit |
 
 ```bash
 bump-semver vcs fetch                      # fetch origin
@@ -199,9 +200,12 @@ bump-semver vcs push --branch main --remote upstream
 bump-semver vcs is clean \
   && bump-semver vcs fetch \
   && bump-semver vcs push --branch main
+
+# jj: auto-advance the bookmark before pushing (no manual `jj bookmark move`)
+bump-semver vcs push --branch main --jj-bookmark-auto-advance
 ```
 
-Exit codes for `vcs push`: `0` success / no-op; `2` usage (`--branch`/`--bookmark` missing, both supplied, `--force` passed, positional args, unknown flag); `3` VCS subprocess error (unknown remote, network, jj export failure that persisted across the retry); `5` non-fast-forward — read git/jj's stderr for the recovery path.
+Exit codes for `vcs push`: `0` success / no-op; `2` usage (`--branch`/`--bookmark` missing, both supplied, `--force` passed, positional args, unknown flag, `--jj-bookmark-auto-advance` on a git repo); `3` VCS subprocess error (unknown remote, network, jj export failure that persisted across the retry, `--jj-bookmark-auto-advance` refused because the bookmark is not in `ancestors(@)`); `5` non-fast-forward — read git/jj's stderr for the recovery path.
 
 **`vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]`** — create / move the tag `NAME` at `REV` and push it to `REMOTE` (default `origin`) in a single atomic intent. The verb's contract is "the tag points to `REV` on the remote when this returns" — the local create is the means, not the deliverable, so the tag lifecycle stays 1-1 with its remote presence (no orphan local tags).
 

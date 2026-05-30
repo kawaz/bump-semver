@@ -1409,7 +1409,10 @@ func TestJjBackend_Push_NewBookmark(t *testing.T) {
 	}
 	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
 	// Create a bookmark named "main" pointing at @- (the second commit).
-	runIn(t, work, "jj", "bookmark", "create", "main", "-r", "@-")
+	// jj's colocated import already brings the git `main` branch in as a
+	// bookmark, so we `set` (move/refresh) rather than `create` (which
+	// errors on already-existing names).
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
 	withCwd(t, work, func() {
 		b := &jjBackend{}
 		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
@@ -1432,7 +1435,10 @@ func TestJjBackend_Push_NothingToPush(t *testing.T) {
 		t.Skip("git+jj fixture requires both binaries")
 	}
 	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
-	runIn(t, work, "jj", "bookmark", "create", "main", "-r", "@-")
+	// jj's colocated import already brings the git `main` branch in as a
+	// bookmark, so we `set` (move/refresh) rather than `create` (which
+	// errors on already-existing names).
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
 	withCwd(t, work, func() {
 		b := &jjBackend{}
 		// First push gets it onto the remote.
@@ -1454,7 +1460,10 @@ func TestJjBackend_Push_NonFastForward(t *testing.T) {
 		t.Skip("git+jj fixture requires both binaries")
 	}
 	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
-	runIn(t, work, "jj", "bookmark", "create", "main", "-r", "@-")
+	// jj's colocated import already brings the git `main` branch in as a
+	// bookmark, so we `set` (move/refresh) rather than `create` (which
+	// errors on already-existing names).
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
 	// First push to register the bookmark on the remote.
 	withCwd(t, work, func() {
 		b := &jjBackend{}

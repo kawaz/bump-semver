@@ -3269,15 +3269,31 @@ func TestRun_VcsPush_BookmarkAlias(t *testing.T) {
 	})
 }
 
-// TestRun_VcsPush_MissingName: `vcs push` with no --branch/--bookmark is
-// a usage error (NAME required, no auto-detection by design).
+// TestRun_VcsPush_NoArgs: `vcs push` with no args shows the per-verb help
+// (matches the existing `vcs commit` / `vcs diff` convention — bare verb
+// = help, partial verb = error).
+func TestRun_VcsPush_NoArgs(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"vcs", "push"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("vcs push (no args): %v", err)
+	}
+	if !strings.Contains(stdout.String(), "push") || !strings.Contains(stdout.String(), "--branch") {
+		t.Errorf("expected vcs push help mentioning push/--branch, got: %q", stdout.String())
+	}
+}
+
+// TestRun_VcsPush_MissingName: `vcs push --remote origin` (no
+// --branch/--bookmark) is a usage error — NAME is required (no auto-
+// detection by design).
 func TestRun_VcsPush_MissingName(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
 	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
 	withCwd(t, work, func() {
-		err := run([]string{"vcs", "push"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		err := run([]string{"vcs", "push", "--remote", "origin"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil {
 			t.Fatal("expected usage error for missing --branch/--bookmark")
 		}

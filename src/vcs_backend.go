@@ -104,6 +104,44 @@ type vcsBackend interface {
 	// Returning a single shape lets both options share one code path.
 	DiffNameStatus(rev string, paths []string) ([]byte, error)
 
+	// Fetch refreshes refs from the named remote (DR-0020 PR-5). Empty
+	// remote is a caller bug — the dispatcher always supplies a value
+	// (defaulting to "origin" when the user omits one).
+	//
+	//   - git: `git fetch <remote>`
+	//   - jj:  `jj git fetch --remote <remote>`
+	//
+	// Errors (unknown remote, network failure) are wrapped as
+	// *exitErr{code: exitCodeVCSExec} so the dispatcher preserves the
+	// exit-code contract.
+	Fetch(remote string) error
+
+	// Push uploads opts.name to opts.remote (DR-0020 PR-5). Both fields
+	// are required; the dispatcher validates the user supplied a NAME
+	// before reaching here (no auto-detection, by design: the human
+	// always names the branch / bookmark explicitly so a forgotten
+	// `--branch` doesn't push an unintended ref).
+	//
+	//   - git: `git push <remote> <name>:<name>`. New branches and forward
+	//     moves both succeed; divergence yields *exitErr{code:
+	//     exitCodeNonFastForward}.
+	//   - jj:  `jj git push --bookmark <name> --remote <remote>`. jj 0.41
+	//     handles new bookmarks without `--allow-new`. Followed by `jj git
+	//     export` so the colocated `.git` refs reflect the push (and the
+	//     export's own exit code is propagated, not swallowed). Divergence
+	//     ("stale info" / "Failed to push some bookmarks") yields
+	//     *exitErr{code: exitCodeNonFastForward}.
+	//
+	// Force push is intentionally NOT exposed (DR-0020 PR-5 safety):
+	// rewriting the remote ref is a separate authoring concern that
+	// belongs in the underlying tool, not in a SemVer release helper.
+	// The non-ff hint surfaced to the user spells this out.
+	//
+	// Idempotency: "remote already has it" → nil (DR-0020 0-targets-no-op
+	// rule). git emits "Everything up-to-date" with exit 0; jj emits
+	// "Nothing changed" with exit 0; both pass through as success.
+	Push(opts pushOpts) error
+
 	// Commit records the requested change set into the VCS (DR-0020 PR-4).
 	// Modes are encoded in commitOpts; the contract is:
 	//
@@ -748,4 +786,186 @@ func (j *jjBackend) commitAmend(opts commitOpts) error {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
 	return nil
+}
+
+// --- Fetch / Push implementations (DR-0020 PR-5) --------------------------
+
+// pushOpts collects the per-call inputs to Push. Kept as a struct (vs a
+// pair of positional strings) so future extensions (e.g. a `--push-options
+// KEY=VALUE` pass-through) plug in without changing existing callers.
+//
+// Force push is intentionally not modelled here: the verb does not expose
+// `--force` and adding the field invites accidental wiring. See DR-0020
+// PR-5 implementation notes for the rationale.
+type pushOpts struct {
+	// name is the branch (git) / bookmark (jj) name to push. Required;
+	// the dispatcher rejects empty names with exit 2.
+	name string
+
+	// remote is the named remote to push to. Defaults to "origin" at the
+	// dispatcher layer; required to be non-empty here.
+	remote string
+}
+
+// Fetch (git) refreshes refs from the named remote via `git fetch <remote>`.
+// Network / unknown-remote failures surface as *exitErr{exitCodeVCSExec}.
+func (g *gitBackend) Fetch(remote string) error {
+	if _, err := runBackendCmd("git", "fetch", remote); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
+}
+
+// Push (git) uploads opts.name to opts.remote. We use the explicit
+// `<src>:<dst>` refspec form (`name:name`) so the result is unaffected by
+// any locally-configured push.default or tracking config — both new
+// branches and forward moves go to the same-named ref on the remote.
+//
+// Non-ff detection: git's rejection stderr matches one of a few well-known
+// strings (`(fetch first)`, `(non-fast-forward)`, `[rejected]`). When we
+// see any of them on a non-zero exit, we return *exitErr{
+// exitCodeNonFastForward}. Anything else is a generic VCS error (exit 3).
+// Mirrors CurrentBranch's "unknown failure defaults to a safe code"
+// approach.
+func (g *gitBackend) Push(opts pushOpts) error {
+	stdout, stderr, code, err := runBackendCapture("git", "push", opts.remote, opts.name+":"+opts.name)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if code == 0 {
+		return nil
+	}
+	if isNonFastForward(stderr) {
+		return &exitErr{
+			code: exitCodeNonFastForward,
+			msg:  formatPushError("git", stderr, stdout),
+		}
+	}
+	return &exitErr{
+		code: exitCodeVCSExec,
+		msg:  formatPushError("git", stderr, stdout),
+	}
+}
+
+// Fetch (jj) refreshes refs from the named remote via `jj git fetch
+// --remote <remote>`. Same wrapping as the git variant.
+func (j *jjBackend) Fetch(remote string) error {
+	if _, err := runBackendCmd("jj", "git", "fetch", "--remote", remote); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
+}
+
+// Push (jj) uploads opts.name to opts.remote via `jj git push --bookmark
+// <name> --remote <remote>`. After a successful push we run `jj git
+// export` and propagate its exit code — this keeps the colocated `.git`
+// refs in sync and surfaces edge cases (ref-hierarchy conflicts, HEAD
+// races) the DR explicitly asks us NOT to swallow.
+//
+// `--allow-new` is intentionally omitted: jj 0.41 deprecated it in favour
+// of remote auto-track configuration, and new bookmarks push fine without
+// it in our default config. Future jj versions may flip the default; if
+// new-bookmark push starts erroring on a supported version, the fix is
+// to switch to `--allow-new` (kept simple here — see DR-0020 PR-5 notes).
+//
+// Non-ff detection: jj's rejection markers ("stale info", "Failed to push
+// some bookmarks") are matched in isNonFastForward. Anything else on
+// non-zero exit is a generic VCS error (exit 3).
+func (j *jjBackend) Push(opts pushOpts) error {
+	stdout, stderr, code, err := runBackendCapture("jj", "git", "push",
+		"--bookmark", opts.name, "--remote", opts.remote)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if code != 0 {
+		if isNonFastForward(stderr) {
+			return &exitErr{
+				code: exitCodeNonFastForward,
+				msg:  formatPushError("jj", stderr, stdout),
+			}
+		}
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  formatPushError("jj", stderr, stdout),
+		}
+	}
+	// Push succeeded; sync colocated git refs. We don't swallow export
+	// failures (DR-0020 PR-5: surface jj's native error so the user can
+	// resolve underlying issues like ref-hierarchy clashes).
+	if _, exErr, exCode, exExecErr := runBackendCapture("jj", "git", "export"); exExecErr != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: exExecErr.Error()}
+	} else if exCode != 0 {
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("jj git export failed after push: %s", strings.TrimSpace(exErr)),
+		}
+	}
+	return nil
+}
+
+// runBackendCapture is the variant of runBackendCmd we need for push:
+// the child's exit code is a real signal (= success / non-ff / other), so
+// we must read stdout AND stderr AND the code without treating non-zero
+// as a Go error. Real exec failures (binary missing, signal) are still
+// surfaced via the err return.
+func runBackendCapture(name string, args ...string) (stdout, stderr string, code int, err error) {
+	cmd := exec.Command(name, args...)
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	runErr := cmd.Run()
+	stdout = outBuf.String()
+	stderr = errBuf.String()
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			return stdout, stderr, ee.ExitCode(), nil
+		}
+		return stdout, stderr, -1,
+			fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), runErr)
+	}
+	return stdout, stderr, 0, nil
+}
+
+// nonFfMarkers are substrings observed in real git / jj rejection output
+// that uniquely identify a non-fast-forward refusal. Locale-fragile (git's
+// hint text can be translated), but the parenthesized markers
+// `(fetch first)` / `(non-fast-forward)` and jj's `stale info` /
+// `Failed to push some bookmarks` are stable across locales.
+//
+// Conservative match: anything that doesn't hit one of these falls back
+// to exit 3 (generic VCS error). Better to mis-classify a non-ff as a
+// generic failure than to mis-classify some other failure (a bad URL, a
+// signing error) as non-ff and steer the user toward the wrong remedy.
+var nonFfMarkers = []string{
+	"(fetch first)",                 // git
+	"(non-fast-forward)",            // git
+	"stale info",                    // jj
+	"Failed to push some bookmarks", // jj
+}
+
+// isNonFastForward returns true when stderr contains any of the known
+// non-ff markers. Case-sensitive — every marker observed in fixtures
+// preserves the original casing.
+func isNonFastForward(stderr string) bool {
+	for _, m := range nonFfMarkers {
+		if strings.Contains(stderr, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// formatPushError builds the error message body for a failed push, folding
+// the underlying tool's stderr in. The caller wraps it in an *exitErr with
+// the right code; this helper just keeps the formatting uniform.
+func formatPushError(tool, stderr, stdout string) string {
+	s := strings.TrimSpace(stderr)
+	if s == "" {
+		s = strings.TrimSpace(stdout)
+	}
+	if s == "" {
+		return fmt.Sprintf("%s push failed", tool)
+	}
+	return fmt.Sprintf("%s push failed: %s", tool, s)
 }

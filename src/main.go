@@ -111,6 +111,21 @@ type cliArgs struct {
 	vcsCommitStaged     bool
 	vcsCommitAmend      bool
 	vcsCommitDashA      bool
+
+	// vcsPushName / vcsPushNameSet / vcsPushRemote / vcsPushRemoteSet:
+	// DR-0020 PR-5. Verb-local to `vcs push` (vcsPushRemote is also used
+	// by `vcs fetch` — both verbs accept `--remote`).
+	//
+	// vcsPushName carries the value of --branch OR --bookmark; the two
+	// flags are aliases of one field (DR-0020 命名規律: common-vocabulary
+	// "branch" is canonical, "bookmark" is the jj-flavoured alias). The
+	// parser treats them as one slot: specifying both → "already set"
+	// usage error. The "what the user typed" distinction is not needed
+	// downstream — only the name value matters to backend.Push.
+	vcsPushName      string
+	vcsPushNameSet   bool
+	vcsPushRemote    string
+	vcsPushRemoteSet bool
 }
 
 var bumpActions = map[string]bool{
@@ -193,7 +208,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 		// Per-verb help only for known verbs — unknown verbs must
 		// surface as an exit-2 error, not as a silent help fallthrough.
 		// We route them to runVcsCmd which emits the proper usage error.
-		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit"
+		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push"
 		if len(argv) == 2 {
 			if isKnownVerb {
 				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
@@ -291,6 +306,52 @@ func parseArgs(argv []string) (cliArgs, error) {
 				// non-provided to prevent unstaged-grab accidents in
 				// jj's auto-staged world.
 				out.vcsCommitDashA = true
+			// --- DR-0020 PR-5: vcs fetch / vcs push flags --------------
+			//
+			// --branch and --bookmark are aliases of one field for `vcs
+			// push`. We don't track which spelling the user typed
+			// (downstream only cares about the value), but we DO reject
+			// "both spellings supplied" via the same already-set rule
+			// applied to every other value-taking flag — surprising the
+			// user with "your --branch was overwritten by --bookmark"
+			// would be worse than a sharp usage error.
+			//
+			// --remote is shared between fetch and push (both verbs
+			// accept it). Anything else is the parser's generic
+			// unknown-flag catch-all.
+			case (a == "--branch" || a == "--bookmark") && out.vcsVerb == "push":
+				if out.vcsPushNameSet {
+					return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
+				}
+				if i+1 >= len(rest) {
+					return cliArgs{}, fmt.Errorf("%s requires a value (the branch/bookmark name)", a)
+				}
+				out.vcsPushName = rest[i+1]
+				out.vcsPushNameSet = true
+				i++
+			case (strings.HasPrefix(a, "--branch=") || strings.HasPrefix(a, "--bookmark=")) && out.vcsVerb == "push":
+				if out.vcsPushNameSet {
+					return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
+				}
+				eq := strings.IndexByte(a, '=')
+				out.vcsPushName = a[eq+1:]
+				out.vcsPushNameSet = true
+			case a == "--remote" && (out.vcsVerb == "fetch" || out.vcsVerb == "push"):
+				if out.vcsPushRemoteSet {
+					return cliArgs{}, fmt.Errorf("--remote specified twice")
+				}
+				if i+1 >= len(rest) {
+					return cliArgs{}, fmt.Errorf("--remote requires a value")
+				}
+				out.vcsPushRemote = rest[i+1]
+				out.vcsPushRemoteSet = true
+				i++
+			case strings.HasPrefix(a, "--remote=") && (out.vcsVerb == "fetch" || out.vcsVerb == "push"):
+				if out.vcsPushRemoteSet {
+					return cliArgs{}, fmt.Errorf("--remote specified twice")
+				}
+				out.vcsPushRemote = strings.TrimPrefix(a, "--remote=")
+				out.vcsPushRemoteSet = true
 			case a == "--no-hint":
 				out.noHint = true
 			case a == "--":
@@ -787,9 +848,13 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdDiff(args, stdout, stderr)
 	case "commit":
 		return runVcsCmdCommit(args, stdout, stderr)
+	case "fetch":
+		return runVcsCmdFetch(args, stdout, stderr)
+	case "push":
+		return runVcsCmdPush(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push)", args.vcsVerb))
 	}
 }
 
@@ -1141,6 +1206,112 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 	// stderr from the subprocess but we don't echo on stdout). The
 	// stdout writer is therefore unused — kept in the signature for
 	// dispatcher uniformity with the other vcs verbs.
+	return nil
+}
+
+// runVcsCmdFetch implements `vcs fetch [REMOTE]` (DR-0020 PR-5).
+//
+// Grammar:
+//
+//   - 0 positional → fetch the default remote ("origin", or the value of
+//     `--remote NAME` if supplied)
+//   - 1 positional → fetch that remote (positional and `--remote NAME`
+//     are mutually exclusive; double-source is rejected)
+//   - 2+ positionals → usage error
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success
+//   - 2  usage error
+//   - 3  VCS subprocess error (unknown remote, network failure, not a repo)
+func runVcsCmdFetch(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) > 1 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs fetch takes at most one remote name, got %d", len(args.vcsArgs)))
+	}
+	// Resolve REMOTE precedence: positional > --remote > "origin".
+	remote := "origin"
+	if args.vcsPushRemoteSet {
+		remote = args.vcsPushRemote
+	}
+	if len(args.vcsArgs) == 1 {
+		// Positional and --remote together is over-specification; reject
+		// to avoid silent precedence surprises.
+		if args.vcsPushRemoteSet {
+			return emitVcsUsage(stderr, args,
+				fmt.Errorf("vcs fetch: REMOTE positional and --remote are mutually exclusive"))
+		}
+		remote = args.vcsArgs[0]
+	}
+	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	if err := b.Fetch(remote); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	return nil
+}
+
+// runVcsCmdPush implements `vcs push --branch|--bookmark NAME [--remote
+// REMOTE]` (DR-0020 PR-5).
+//
+// Grammar requirements:
+//
+//   - NAME is required (no auto-detection — the user always names the
+//     branch / bookmark explicitly so a typo in the verb cannot lead to
+//     "wait, which ref did that just push?")
+//   - REMOTE defaults to "origin"
+//   - No positional args accepted (NAME comes via --branch/--bookmark)
+//   - --force / --tags / friends are intentionally NOT provided
+//     (DR-0020 PR-5 safety: divergent remotes require a fetch +
+//     reconcile, not a force push)
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success (incl. idempotent no-op "remote already has it")
+//   - 2  usage error (NAME missing, positional args supplied, unknown flag)
+//   - 3  VCS subprocess error (unknown remote, network failure, not a repo)
+//   - 5  non-fast-forward rejection — the remote has commits we don't
+//     have. Hint mentions fetch+reconcile and that force push is
+//     intentionally unsupported.
+func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) > 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs push does not accept positional arguments (use --branch/--bookmark NAME)"))
+	}
+	if !args.vcsPushNameSet {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs push: --branch (or --bookmark) NAME is required"))
+	}
+	if args.vcsPushName == "" {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs push: --branch/--bookmark value must not be empty"))
+	}
+	remote := "origin"
+	if args.vcsPushRemoteSet {
+		remote = args.vcsPushRemote
+	}
+	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	if err := b.Push(pushOpts{name: args.vcsPushName, remote: remote}); err != nil {
+		// On non-ff, augment the error with a shared remediation hint so
+		// the user immediately sees the recovery flow (fetch + reconcile)
+		// and is reminded that force push is intentionally not exposed.
+		var ee *exitErr
+		if errors.As(err, &ee) && ee.code == exitCodeNonFastForward {
+			if !args.quietAll {
+				fmt.Fprintln(stderr,
+					"bump-semver: vcs push: remote has diverged. fetch and reconcile, then retry. (force push is intentionally not supported)")
+			}
+			return ee
+		}
+		return emitVcsErr(stderr, args, err)
+	}
 	return nil
 }
 

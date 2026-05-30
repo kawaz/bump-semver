@@ -114,12 +114,15 @@ and value. With --write, only FILE-origin inputs are written back (vcs: and
 cmd: are read-only).
 
 VCS helpers (DR-0020):
-  vcs get root             Print the repository root
-  vcs get backend          Print "git" or "jj"
-  vcs get current-branch   Print the unambiguous branch (git) / bookmark (jj)
-  vcs is clean|dirty       Test worktree cleanliness (untracked ignored on git)
-  vcs is git|jj            Test the detected backend
-  vcs diff REV [PATH..]    Print the patch between REV and the working copy
+  vcs get root              Print the repository root
+  vcs get backend           Print "git" or "jj"
+  vcs get current-branch    Print the unambiguous branch (git) / bookmark (jj)
+  vcs is clean|dirty        Test worktree cleanliness (untracked ignored on git)
+  vcs is git|jj             Test the detected backend
+  vcs diff REV [PATH..]     Print the patch between REV and the working copy
+  vcs commit -m MSG ...     Commit (PATH.. | --staged | --amend); -a is rejected
+  vcs fetch [REMOTE]        Refresh refs from a remote (default origin)
+  vcs push --branch NAME    Push to remote (--bookmark alias; --force not provided)
   (See: bump-semver vcs --help)
 
 Exit codes:
@@ -128,7 +131,7 @@ Exit codes:
   2   usage error (parse failure, mismatch, missing input, unknown verb/key, etc.)
   3   VCS subprocess error (vcs subcommands only — e.g. not in a repo)
   4   ambiguous answer (vcs subcommands only — e.g. detached HEAD)
-  5   non-fast-forward push (vcs push in future PRs)
+  5   non-fast-forward push (vcs push — remote has diverged)
 
 Examples:
   bump-semver get VERSION
@@ -367,6 +370,9 @@ Verbs:
   commit -m MSG PATH..        Commit listed paths' working-tree content (safe default).
   commit -m MSG --staged      Commit all staged/dirty changes at once.
   commit --amend [-m MSG]     Fold current changes into the previous commit.
+  fetch [REMOTE]              Fetch refs from REMOTE (default: origin).
+  push --branch NAME [--remote REMOTE]
+                              Push NAME to REMOTE (default: origin). --bookmark is an alias.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -380,6 +386,7 @@ Exit codes:
   2   usage error (unknown verb / unknown key / wrong number of args)
   3   VCS subprocess error (not a repo, command failed)
   4   ambiguous answer (e.g. detached HEAD, multiple bookmarks)
+  5   non-fast-forward rejection (vcs push — remote has diverged)
 `
 
 // helpVcsGet documents `vcs get <key>`.
@@ -606,6 +613,124 @@ Examples:
                                                 # rewrite previous message
 `
 
+// helpVcsFetch documents `vcs fetch [REMOTE]` (DR-0020 PR-5).
+//
+// The verb is a thin, opinionated wrapper over each backend's native
+// fetch:
+//
+//   - git: `git fetch <remote>`
+//   - jj:  `jj git fetch --remote <remote>`
+//
+// Single positional arg for REMOTE keeps the surface minimal — refspec
+// scoping, prune flags, and tag controls intentionally pass through the
+// underlying tool unchanged (= use plain `git fetch ...` / `jj git fetch
+// ...` for those).
+const helpVcsFetch = `bump-semver vcs fetch — refresh refs from a remote (git/jj-agnostic) [DR-0020]
+
+Usage:
+  bump-semver vcs fetch [REMOTE]
+  bump-semver vcs fetch --remote REMOTE
+
+Arguments:
+  REMOTE       The named remote to fetch from. Defaults to "origin" when
+               omitted. Pass either as a positional or via --remote (the
+               two are mutually exclusive — over-specifying is a usage error).
+
+Notes:
+  - git: runs 'git fetch <remote>'.
+  - jj:  runs 'jj git fetch --remote <remote>'.
+  - Network errors / unknown remote names surface as exit 3 with the
+    underlying tool's stderr folded in.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+
+Exit codes:
+  0   success (refs refreshed; no-op if remote unchanged)
+  2   usage error (too many positionals, unknown flag)
+  3   VCS subprocess error (unknown remote, network failure, not a repo)
+
+Examples:
+  bump-semver vcs fetch                 # fetch origin
+  bump-semver vcs fetch upstream        # fetch a specific remote
+  bump-semver vcs fetch --remote origin # same as the bare form
+`
+
+// helpVcsPush documents `vcs push --branch|--bookmark NAME [--remote
+// REMOTE]` (DR-0020 PR-5).
+//
+// The verb deliberately requires NAME (no auto-detection from
+// current-branch / heads(::@)) and does NOT expose --force or --tags.
+// Both restrictions are kawaz CLI safety stances:
+//
+//   - Auto-NAME would be silently wrong when the user is on the wrong
+//     branch / bookmark. Better to fail with "what would you like to
+//     push?" than to push the wrong ref.
+//   - Force push is a rewrite of remote history. bump-semver is a SemVer
+//     helper, not a publishing tool — the user has the underlying
+//     `git push --force-with-lease` / `jj git push --force-with-lease`
+//     available when they actually need that capability.
+//
+// --branch is the canonical name (matches the cross-VCS vocabulary
+// already used by `vcs get current-branch`). --bookmark is an alias for
+// jj users who think in bookmarks; the flags are interchangeable but
+// supplying both at once is a usage error.
+const helpVcsPush = `bump-semver vcs push — upload refs to a remote (git/jj-agnostic) [DR-0020]
+
+Usage:
+  bump-semver vcs push --branch NAME [--remote REMOTE]
+  bump-semver vcs push --bookmark NAME [--remote REMOTE]    # alias
+
+Arguments:
+  --branch NAME    Push the named branch/bookmark. Required (no auto-
+                   detection by design — name it explicitly).
+  --bookmark NAME  Alias of --branch. (jj users may also write --bookmark.)
+                   --branch and --bookmark are mutually exclusive (one
+                   value field; double-set is a usage error).
+  --remote REMOTE  Target remote name. Defaults to "origin" when omitted.
+
+Notes:
+  - git: runs 'git push <remote> <name>:<name>'. The explicit refspec
+    avoids surprises from local push.default / tracking config.
+  - jj:  runs 'jj git push --bookmark <name> --remote <remote>' followed
+    by 'jj git export' so colocated .git refs stay in sync. Export errors
+    are NOT swallowed — they surface as exit 3 with jj's native message.
+  - Idempotent: "remote already has it" → exit 0, no error.
+  - Non-fast-forward (remote has diverged) → exit 5 + hint advising
+    fetch + reconcile. Force push is intentionally not supported.
+
+Not provided by design:
+  --force / --force-with-lease   Rewriting remote history is out of
+                                 scope. Use the underlying git/jj tool
+                                 directly when you genuinely need it.
+  --tags / --all                 Tag and bulk pushes are out of scope.
+                                 The bump-semver release flow puts each
+                                 tag/ref through CI/CD, not a manual push.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+
+Exit codes:
+  0   success (push completed, or idempotent no-op)
+  2   usage error (--branch/--bookmark missing or specified twice,
+                   --force passed, positional args supplied, unknown flag)
+  3   VCS subprocess error (unknown remote, network failure, not a repo,
+                            jj git export failure)
+  5   non-fast-forward rejection (remote has diverged — fetch and
+                                  reconcile, then retry)
+
+Examples:
+  bump-semver vcs push --branch main
+                                    # push main to origin
+  bump-semver vcs push --bookmark main --remote upstream
+                                    # jj-flavoured form, custom remote
+  bump-semver vcs push --branch release-1.2  # push a feature/release branch
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
@@ -613,15 +738,17 @@ Examples:
 // Two-tier verbs use space-separated keys ("vcs get"). The parent verb
 // ("vcs") gets the parent help; per-verb keys map to the per-verb help.
 var actionHelpTexts = map[string]string{
-	"major":    helpBump,
-	"minor":    helpBump,
-	"patch":    helpBump,
-	"pre":      helpPre,
-	"get":      helpGet,
-	"compare":  helpCompare,
+	"major":      helpBump,
+	"minor":      helpBump,
+	"patch":      helpBump,
+	"pre":        helpPre,
+	"get":        helpGet,
+	"compare":    helpCompare,
 	"vcs":        helpVcs,
 	"vcs get":    helpVcsGet,
 	"vcs is":     helpVcsIs,
 	"vcs diff":   helpVcsDiff,
 	"vcs commit": helpVcsCommit,
+	"vcs fetch":  helpVcsFetch,
+	"vcs push":   helpVcsPush,
 }

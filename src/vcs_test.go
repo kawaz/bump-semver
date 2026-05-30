@@ -515,7 +515,11 @@ func setupGitRepoWithRemote(t *testing.T, tags []string, fileVersion string) (wo
 	// parent (t.TempDir creates a per-test root for setupGitRepo; we add
 	// the bare under that same parent so cleanup is automatic).
 	bareDir = filepath.Join(filepath.Dir(workDir), "bare.git")
-	runIn(t, filepath.Dir(workDir), "git", "init", "--bare", "-q", "bare.git")
+	// Use -b main so the bare's HEAD matches the work-dir's default
+	// branch — otherwise the bare defaults to master under runIn's
+	// GIT_CONFIG_GLOBAL=/dev/null env, and `git clone bare.git` would
+	// fail to check out main when an attacker fixture tries to diverge.
+	runIn(t, filepath.Dir(workDir), "git", "init", "--bare", "-q", "-b", "main", "bare.git")
 	runIn(t, workDir, "git", "remote", "add", "origin", bareDir)
 	return workDir, bareDir
 }
@@ -529,7 +533,11 @@ func setupJjRepoWithRemote(t *testing.T, tags []string, fileVersion string) (wor
 	t.Helper()
 	workDir = setupJjRepo(t, tags, fileVersion)
 	bareDir = filepath.Join(filepath.Dir(workDir), "bare.git")
-	runIn(t, filepath.Dir(workDir), "git", "init", "--bare", "-q", "bare.git")
+	// Use -b main so the bare's HEAD matches the work-dir's default
+	// branch — otherwise the bare defaults to master under runIn's
+	// GIT_CONFIG_GLOBAL=/dev/null env, and `git clone bare.git` would
+	// fail to check out main when an attacker fixture tries to diverge.
+	runIn(t, filepath.Dir(workDir), "git", "init", "--bare", "-q", "-b", "main", "bare.git")
 	runIn(t, workDir, "git", "remote", "add", "origin", bareDir)
 	return workDir, bareDir
 }

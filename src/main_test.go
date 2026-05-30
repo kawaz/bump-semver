@@ -2376,3 +2376,154 @@ func TestRun_VcsIs_TooManyArgs(t *testing.T) {
 		}
 	})
 }
+
+// --- DR-0020 PR-3: `vcs diff` integration tests ---------------------------
+
+// TestRun_VcsDiff_NoArgs: `vcs diff` with no REV shows the vcs-diff help
+// (matches the no-args convention used by `vcs get` and `vcs is`).
+func TestRun_VcsDiff_NoArgs(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "diff"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs diff (no args): %v", err)
+		}
+		if !strings.Contains(stdout.String(), "REV") {
+			t.Errorf("expected vcs diff help mentioning REV, got: %q", stdout.String())
+		}
+	})
+}
+
+// TestRun_VcsDiff_Git_HasDiff: `vcs diff HEAD~1` on the fixture prints a
+// patch covering VERSION on stdout and exits 0.
+func TestRun_VcsDiff_Git_HasDiff(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD~1"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs diff HEAD~1: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "VERSION") {
+			t.Errorf("expected stdout to include VERSION patch, got: %q", stdout.String())
+		}
+	})
+}
+
+// TestRun_VcsDiff_Git_NoDiff: `vcs diff HEAD` on a clean fixture produces
+// no stdout, exits 0.
+func TestRun_VcsDiff_Git_NoDiff(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs diff HEAD: %v", err)
+		}
+		if got := stdout.String(); got != "" {
+			t.Errorf("stdout should be empty (no diff), got: %q", got)
+		}
+	})
+}
+
+// TestRun_VcsDiff_Git_PathFilter: `vcs diff REV VERSION nope.txt` returns
+// the VERSION diff and silently ignores the nonexistent path.
+func TestRun_VcsDiff_Git_PathFilter(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD~1", "VERSION", "nope.txt"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs diff HEAD~1 VERSION nope.txt: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "VERSION") {
+			t.Errorf("expected VERSION in diff, got: %q", stdout.String())
+		}
+	})
+}
+
+// TestRun_VcsDiff_Git_AllPathsNonexistent: every path filtered out → empty
+// stdout, exit 0. Must NOT fall through to "diff everything".
+func TestRun_VcsDiff_Git_AllPathsNonexistent(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD~1", "nope.txt", "alsonope.txt"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs diff (all-nonexistent): %v", err)
+		}
+		if got := stdout.String(); got != "" {
+			t.Errorf("stdout should be empty (all paths filtered), got: %q", got)
+		}
+	})
+}
+
+// TestRun_VcsDiff_Git_BadRev: unresolvable REV → exit 3 (VCS exec).
+func TestRun_VcsDiff_Git_BadRev(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "diff", "doesnotexist"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error for nonexistent rev")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exit %d (vcs exec), got: %v", exitCodeVCSExec, err)
+		}
+	})
+}
+
+// TestRun_VcsDiff_Jj_HasDiff: `vcs diff @--` on a jj fixture prints the
+// bump diff (VERSION) and exits 0.
+func TestRun_VcsDiff_Jj_HasDiff(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "diff", "@--"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs diff @--: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "VERSION") {
+			t.Errorf("expected stdout to include VERSION patch, got: %q", stdout.String())
+		}
+	})
+}
+
+// TestRun_VcsDiff_NoRepo: outside a vcs repo → exit 3.
+func TestRun_VcsDiff_NoRepo(t *testing.T) {
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error outside a vcs repo")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exit %d (vcs exec), got: %v", exitCodeVCSExec, err)
+		}
+	})
+}

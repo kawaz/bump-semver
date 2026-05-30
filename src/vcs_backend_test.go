@@ -412,6 +412,213 @@ func TestJjBackend_IsClean_NewFileDirty(t *testing.T) {
 	})
 }
 
+// --- DR-0020 PR-3: Diff tests --------------------------------------------
+
+// TestGitBackend_Diff_NoPaths_HasDiff: with no path filter, `Diff` returns a
+// non-empty patch when the workdir differs from REV. The fixture's bump
+// commit is HEAD; comparing against HEAD~1 (= initial) gives a VERSION diff.
+func TestGitBackend_Diff_NoPaths_HasDiff(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.Diff("HEAD~1", nil)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if len(out) == 0 {
+			t.Errorf("Diff = empty, want non-empty patch")
+		}
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("Diff should mention VERSION, got: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Diff_NoDiff_EmptyBytes: diffing the worktree against
+// HEAD (clean fixture) produces no patch text and no error.
+func TestGitBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.Diff("HEAD", nil)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("Diff = %q, want empty (clean workdir vs HEAD)", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Diff_NonexistentPath_Ignored: a path the user names that
+// doesn't exist in the worktree is silently filtered out (kawaz's
+// "declarative convergence"). When the path list survives to git, the
+// result is whatever exists in that path scope.
+func TestGitBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		// VERSION exists, doesnotexist.txt does not. We expect the call
+		// to succeed and the diff to cover VERSION (vs HEAD~1).
+		out, err := b.Diff("HEAD~1", []string{"VERSION", "doesnotexist.txt"})
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("Diff should include VERSION, got: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Diff_AllPathsNonexistent_EmptyVacuous: when every path
+// supplied is filtered out (none exist), `Diff` short-circuits to empty
+// bytes / nil error. It must NOT call `git diff REV --` with an empty
+// path list (which would mean "diff everything").
+func TestGitBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.Diff("HEAD~1", []string{"nope.txt", "alsonope.txt"})
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("Diff = %q, want empty (all paths filtered)", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Diff_BadRev: an unresolvable REV is reported as a VCS-exec
+// error (exit code 3 via *exitErr).
+func TestGitBackend_Diff_BadRev(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		_, err := b.Diff("doesnotexist", nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent rev")
+		}
+		if code := exitCodeOf(err); code != exitCodeVCSExec {
+			t.Errorf("exit code = %d, want %d (vcs exec)", code, exitCodeVCSExec)
+		}
+	})
+}
+
+// TestJjBackend_Diff_NoPaths_HasDiff: jj fixture against @-- (= initial)
+// returns the bump-commit diff (VERSION change).
+func TestJjBackend_Diff_NoPaths_HasDiff(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.Diff("@--", nil)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if len(out) == 0 {
+			t.Errorf("Diff = empty, want non-empty patch")
+		}
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("Diff should mention VERSION, got: %q", string(out))
+		}
+	})
+}
+
+// TestJjBackend_Diff_NoDiff_EmptyBytes: diffing @ against @ yields no
+// patch and no error.
+func TestJjBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.Diff("@", nil)
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("Diff = %q, want empty (same rev to @)", string(out))
+		}
+	})
+}
+
+// TestJjBackend_Diff_NonexistentPath_Ignored: same declarative-convergence
+// rule as git — a nonexistent path doesn't error, and existing paths still
+// produce their diff.
+func TestJjBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.Diff("@--", []string{"VERSION", "doesnotexist.txt"})
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("Diff should include VERSION, got: %q", string(out))
+		}
+	})
+}
+
+// TestJjBackend_Diff_AllPathsNonexistent_EmptyVacuous: empty bytes,
+// no error, and (critically) we must not call jj with no paths and let
+// it return the full diff.
+func TestJjBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.Diff("@--", []string{"nope.txt", "alsonope.txt"})
+		if err != nil {
+			t.Fatalf("Diff: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("Diff = %q, want empty (all paths filtered)", string(out))
+		}
+	})
+}
+
+// TestJjBackend_Diff_BadRev: an unresolvable REV is reported as a VCS-exec
+// error (exit 3 via *exitErr).
+func TestJjBackend_Diff_BadRev(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		_, err := b.Diff("doesnotexist", nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent rev")
+		}
+		if code := exitCodeOf(err); code != exitCodeVCSExec {
+			t.Errorf("exit code = %d, want %d (vcs exec)", code, exitCodeVCSExec)
+		}
+	})
+}
+
 // exitCodeOf extracts the carried exit code from an *exitErr (or returns
 // -1 if err is not an *exitErr). Test-local helper.
 func exitCodeOf(err error) int {

@@ -544,12 +544,12 @@ Examples:
 // Two-tier verbs use space-separated keys ("vcs get"). The parent verb
 // ("vcs") gets the parent help; per-verb keys map to the per-verb help.
 var actionHelpTexts = map[string]string{
-	"major":   helpBump,
-	"minor":   helpBump,
-	"patch":   helpBump,
-	"pre":     helpPre,
-	"get":     helpGet,
-	"compare": helpCompare,
+	"major":    helpBump,
+	"minor":    helpBump,
+	"patch":    helpBump,
+	"pre":      helpPre,
+	"get":      helpGet,
+	"compare":  helpCompare,
 	"vcs":      helpVcs,
 	"vcs get":  helpVcsGet,
 	"vcs is":   helpVcsIs,

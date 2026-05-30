@@ -117,11 +117,24 @@ local checkVersionsAligned: Task = versions.checkAligned
 
 // ---------- release flow ----------
 
+// bump-semver 自身の `vcs is clean` をドッグフードしてワーキングツリー dirty チェック。
+// pkf-tasks の `vcs.ensureClean` を置き換えることで外部依存削減 + セルフ検証。
+// 前提: PATH 上に bump-semver v0.20.0 以降 (= `vcs is clean` サブコマンド対応版)。
+local localEnsureClean: Task = new {
+  name = "vcs:ensure-clean"
+  description = "working copy is clean (dogfood: bump-semver vcs is clean)"
+  cache = false
+  cmd =
+    #"""
+    bump-semver vcs is clean || { echo "working tree is dirty" >&2; exit 1; }
+    """#
+}
+
 local bumpVersion: Task = new {
   name = "bump-version"
   description = "bump version file(s) for Release"
   cache = false
-  deps { kawaz.vcs.ensureClean }
+  deps { localEnsureClean }
   params {
     new Param {
       name = "level"
@@ -224,7 +237,13 @@ tasks {
   lintPkl
   testWorkflow
   // push 内部 gate (visibility は pkf-tasks 側で設定済 or 本リポ local の internal 設定)
-  ...kawaz.vcs.tasks
+  // vcs:ensure-clean は pkf-tasks 版の代わりに localEnsureClean (bump-semver dogfood) を登録、
+  // 残り 4 task (commit/push/fetch/fetch-tags) は pkf-tasks をそのまま採用。
+  localEnsureClean
+  kawaz.vcs.commit
+  kawaz.vcs.push
+  kawaz.vcs.fetch
+  kawaz.vcs.fetchTags
   ...kawaz.docs.tasks
   checkVersionBumped
   checkAgainstLatestRelease

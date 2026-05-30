@@ -3387,8 +3387,13 @@ func TestRun_VcsPush_BadRemote(t *testing.T) {
 	})
 }
 
-// TestRun_VcsPush_NonFastForward: divergent remote → exit 5 + hint mentions
-// "diverged".
+// TestRun_VcsPush_NonFastForward: divergent remote → exit 5. PR-5.1
+// removes the bump-semver editorial hint ("remote has diverged..."), so
+// the assertion now verifies that (a) git's own native rejection marker
+// (`(fetch first)` or `(non-fast-forward)`) reaches stderr unmolested and
+// (b) the old bump-semver hint phrase is GONE — kawaz confirmed users
+// should read the underlying tool's message directly rather than an
+// editorial paraphrase.
 func TestRun_VcsPush_NonFastForward(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -3412,14 +3417,24 @@ func TestRun_VcsPush_NonFastForward(t *testing.T) {
 		if !errors.As(err, &ee) || ee.code != exitCodeNonFastForward {
 			t.Errorf("expected exit %d, got: %v", exitCodeNonFastForward, err)
 		}
-		if !strings.Contains(stderr.String(), "diverged") {
-			t.Errorf("expected 'diverged' hint in stderr, got: %q", stderr.String())
+		s := stderr.String()
+		// Git's own native rejection marker must reach the user.
+		if !strings.Contains(s, "(fetch first)") && !strings.Contains(s, "(non-fast-forward)") {
+			t.Errorf("expected git's native rejection marker in stderr, got: %q", s)
+		}
+		// The old editorial hint must NOT appear (PR-5.1 removed it).
+		if strings.Contains(s, "remote has diverged") ||
+			strings.Contains(s, "force push is intentionally not supported") {
+			t.Errorf("PR-5.1 removed the editorial non-ff hint, but it is still present: %q", s)
 		}
 	})
 }
 
 // TestRun_VcsPush_NothingToPush: idempotent success when remote already
-// has it.
+// has it. PR-5.1 additionally requires that git's own "Everything
+// up-to-date" diagnostic reaches the user (stdout OR stderr — git puts
+// it on stderr but we don't lock the channel here) so the user can see
+// the convergence happened rather than a silent no-op.
 func TestRun_VcsPush_NothingToPush(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -3427,10 +3442,37 @@ func TestRun_VcsPush_NothingToPush(t *testing.T) {
 	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
 	preloadBareWith(t, work)
 	withCwd(t, work, func() {
+		var stdout, stderr bytes.Buffer
 		err := run([]string{"vcs", "push", "--branch", "main"},
-			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+			bytes.NewReader(nil), &stdout, &stderr)
 		if err != nil {
 			t.Errorf("idempotent push should succeed, got: %v", err)
+		}
+		combined := stdout.String() + stderr.String()
+		if !strings.Contains(combined, "Everything up-to-date") {
+			t.Errorf("expected git's 'Everything up-to-date' to reach the user, got: %q", combined)
+		}
+	})
+}
+
+// TestRun_VcsPush_NothingToPush_Quiet: with -q, the success-path
+// diagnostic is suppressed (matches the existing --quiet contract for
+// hints).
+func TestRun_VcsPush_NothingToPush_Quiet(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		var stdout, stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--branch", "main", "-q"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if err != nil {
+			t.Errorf("idempotent push with -q should succeed, got: %v", err)
+		}
+		if strings.Contains(stdout.String(), "Everything up-to-date") {
+			t.Errorf("-q should suppress success diagnostic on stdout, got: %q", stdout.String())
 		}
 	})
 }
@@ -3492,6 +3534,11 @@ func TestRun_VcsFetchHelp(t *testing.T) {
 	}
 }
 
+// TestRun_VcsPushHelp: PR-5.1 simplifies the help so `--branch` is the
+// canonical surface and the bookmark vocabulary appears as a single
+// brief parenthetical for jj users. Both flag spellings still parse —
+// kawaz's confirmation was "branch 一本化で help に jj では bookmark の
+// 意と簡潔記載て", i.e. terminology bridge, not alias advertising.
 func TestRun_VcsPushHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "push", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
@@ -3502,7 +3549,205 @@ func TestRun_VcsPushHelp(t *testing.T) {
 	if !strings.Contains(out, "--branch") {
 		t.Errorf("vcs push help should mention --branch, got: %q", out)
 	}
-	if !strings.Contains(out, "--bookmark") {
-		t.Errorf("vcs push help should mention --bookmark (alias), got: %q", out)
+	if !strings.Contains(out, "bookmark") {
+		t.Errorf("vcs push help should mention bookmark (jj vocabulary bridge), got: %q", out)
 	}
+	// The PR-5 verbose "alias" phrasing must be gone (PR-5.1 simplification).
+	if strings.Contains(out, "Alias of --branch") || strings.Contains(out, "alias of --branch") {
+		t.Errorf("PR-5.1 dropped the 'Alias of --branch' line, but it is still present: %q", out)
+	}
+}
+
+// --- DR-0020 PR-5.1: regression-locking tests ----------------------------
+//
+// These tests pin the four behaviour changes from PR-5.1:
+//   - help simplification (A, E)
+//   - non-ff hint removal (B, covered above + here for parent help)
+//   - jj git export retry-once + recovery hint (C)
+//   - nothing-to-push diagnostic forwarding (D, covered above)
+
+// TestHelpVcsPush_BookmarkIsBrief: the help body must NOT carry the
+// verbose `--bookmark NAME  Alias of --branch...` line introduced by
+// PR-5; PR-5.1 keeps `--branch` canonical and reduces the bookmark
+// mention to a single inline parenthetical for jj users.
+func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
+	body := helpVcsPush
+	// Old verbose lines that PR-5.1 deletes.
+	for _, banned := range []string{
+		"--bookmark NAME  Alias of --branch",
+		"--bookmark NAME  Alias of `--branch`",
+		"# alias",
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("PR-5.1 should remove %q from helpVcsPush, but it is still present", banned)
+		}
+	}
+	// The terminology bridge must remain (in whatever exact wording the
+	// implementation picks — we just require "bookmark" appears, since
+	// jj users need to recognise the verbose).
+	if !strings.Contains(body, "bookmark") {
+		t.Errorf("helpVcsPush should still mention 'bookmark' for jj users, got: %q", body)
+	}
+}
+
+// TestHelpVcsPush_NoEditorialHint: the per-verb help body must NOT
+// promise the deleted `remote has diverged` editorial hint — keep the
+// text honest about what bump-semver actually prints (= git/jj raw).
+func TestHelpVcsPush_NoEditorialHint(t *testing.T) {
+	body := helpVcsPush
+	if strings.Contains(body, "remote has diverged") {
+		t.Errorf("helpVcsPush should not promise a hint that PR-5.1 removed, got: %q", body)
+	}
+	// Help should now point users at the underlying tool's message
+	// instead. We assert the user-facing concept rather than a fixed
+	// phrasing (the implementer picks the exact wording).
+	if !strings.Contains(body, "git/jj") && !strings.Contains(body, "underlying") {
+		t.Errorf("helpVcsPush should redirect non-ff users to the underlying tool's stderr, got: %q", body)
+	}
+}
+
+// TestHelpVcsCommit_BareAmendIsBackendSplit: PR-4.1 advisor noted that
+// "fold ALL current changes" is wrong for git (the index is what amend
+// folds, not unstaged tree state). PR-5.1 splits the bare `--amend`
+// line into git/jj-specific phrasing, mirroring the `--staged` block
+// just above it.
+func TestHelpVcsCommit_BareAmendIsBackendSplit(t *testing.T) {
+	body := helpVcsCommit
+	if strings.Contains(body, "fold ALL current changes") {
+		t.Errorf("PR-5.1 replaces 'fold ALL current changes' with backend-split phrasing, "+
+			"but the old wording is still present: %q", body)
+	}
+	// The new wording should explicitly call out git's index scope (the
+	// kawaz/advisor correctness fix) and jj's @-snapshot scope.
+	if !strings.Contains(body, "git: ") || !strings.Contains(body, "jj: ") {
+		t.Errorf("helpVcsCommit bare-amend block should split into git/jj rows like --staged, got: %q", body)
+	}
+}
+
+// --- C: jj git export retry seam (unit-level) ----------------------------
+//
+// Real jj cannot be coerced into a "fail once, succeed second" pattern
+// on demand, so we expose the export call as a package-level function
+// variable (`jjGitExportFunc`) that tests can override. Two cases:
+//   - first call fails, second succeeds → Push returns nil (retry worked)
+//   - both calls fail               → Push returns exit 3 + recovery hint
+
+// TestJjBackend_Push_ExportRetrySucceeds: PR-5.1 retry-once on jj git
+// export failure. The first attempt fails with a transient-looking
+// stderr; the second succeeds; Push returns nil.
+func TestJjBackend_Push_ExportRetrySucceeds(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
+
+	// Install a stub export func: fail #1, succeed #2.
+	calls := 0
+	orig := jjGitExportFunc
+	jjGitExportFunc = func() (stderr string, code int, err error) {
+		calls++
+		if calls == 1 {
+			return "Internal error: cannot lock ref 'refs/heads/test'", 1, nil
+		}
+		return "", 0, nil
+	}
+	t.Cleanup(func() { jjGitExportFunc = orig })
+
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Errorf("Push with first-attempt export failure + retry success should return nil, got: %v", err)
+		}
+	})
+	if calls != 2 {
+		t.Errorf("expected exactly 2 export attempts (retry-once), got: %d", calls)
+	}
+}
+
+// TestJjBackend_Push_ExportRetryFailsTwice: PR-5.1 — both attempts fail
+// → exit 3 + recovery-hint message containing the matched-pattern
+// guidance and a jj-vcs issue link. We assert the substring-matched
+// case (ref-hierarchy conflict, issue #493) which is the most common
+// in practice.
+func TestJjBackend_Push_ExportRetryFailsTwice(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
+
+	calls := 0
+	orig := jjGitExportFunc
+	// Use a ref-hierarchy conflict signature (jj issue #493).
+	jjGitExportFunc = func() (stderr string, code int, err error) {
+		calls++
+		return "Internal error: Failed to export refs to underlying Git repo: " +
+			"cannot lock ref 'refs/heads/test', there are refs beneath that folder", 1, nil
+	}
+	t.Cleanup(func() { jjGitExportFunc = orig })
+
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin"})
+		if err == nil {
+			t.Fatal("Push with persistent export failure should error")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec (3), got: %v", err)
+		}
+		// Original jj stderr must be folded in (not paraphrased).
+		if !strings.Contains(ee.msg, "cannot lock ref") {
+			t.Errorf("recovery message should fold in the jj stderr, got: %q", ee.msg)
+		}
+		// Recovery guidance should mention the recognised pattern's
+		// concrete remedy (git for-each-ref or rename/delete) AND the
+		// jj-vcs issue link for cross-reference.
+		if !strings.Contains(ee.msg, "for-each-ref") && !strings.Contains(ee.msg, "rename or delete") {
+			t.Errorf("recovery message for ref-hierarchy clash should advise inspect+rename/delete, got: %q", ee.msg)
+		}
+		if !strings.Contains(ee.msg, "jj-vcs/jj") {
+			t.Errorf("recovery message should link to jj-vcs/jj for further reading, got: %q", ee.msg)
+		}
+	})
+	if calls != 2 {
+		t.Errorf("expected exactly 2 export attempts before giving up, got: %d", calls)
+	}
+}
+
+// TestJjBackend_Push_ExportRetryGenericFallback: PR-5.1 — when the
+// stderr doesn't match a known pattern, the generic fallback still
+// triggers (retry + exit 3 + issue link).
+func TestJjBackend_Push_ExportRetryGenericFallback(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
+
+	orig := jjGitExportFunc
+	jjGitExportFunc = func() (stderr string, code int, err error) {
+		return "Internal error: something totally novel we have not catalogued", 1, nil
+	}
+	t.Cleanup(func() { jjGitExportFunc = orig })
+
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin"})
+		if err == nil {
+			t.Fatal("expected error for unrecognised export failure")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec (3), got: %v", err)
+		}
+		// Raw stderr passthrough (no paraphrase) + issue link.
+		if !strings.Contains(ee.msg, "something totally novel") {
+			t.Errorf("recovery message should fold in the raw jj stderr, got: %q", ee.msg)
+		}
+		if !strings.Contains(ee.msg, "jj-vcs/jj") {
+			t.Errorf("recovery message should link to jj-vcs/jj, got: %q", ee.msg)
+		}
+	})
 }

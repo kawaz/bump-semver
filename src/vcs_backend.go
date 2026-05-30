@@ -972,6 +972,16 @@ func (j *jjBackend) Fetch(remote string) error {
 	return nil
 }
 
+// jjGitExportFunc is the seam tests use to inject deterministic `jj git
+// export` outcomes (PR-5.1). Real callers get the default implementation,
+// which shells out to `jj git export`. Tests override it to exercise the
+// retry-once + recovery-hint paths without needing a fixture that can
+// produce a transient-then-clearing failure on demand.
+var jjGitExportFunc = func() (stderr string, code int, err error) {
+	_, stderrOut, exitCode, runErr := runBackendCapture("jj", "git", "export")
+	return stderrOut, exitCode, runErr
+}
+
 // Push (jj) uploads opts.name to opts.remote via `jj git push --bookmark
 // <name> --remote <remote>`. After a successful push we run `jj git
 // export` and propagate its exit code — this keeps the colocated `.git`

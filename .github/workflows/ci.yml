@@ -15,10 +15,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install pkl (needed by lint:pkl)
-        uses: pkl-community/setup-pkl@v0
-        with:
-          pkl-version: "0.31.1"
+      # Install pkl directly instead of pkl-community/setup-pkl@v0 — that action
+      # still runs on Node.js 20 (PR pkl-community/setup-pkl#74 to bump to node24 is
+      # open since 2025-11 but unmerged), and GitHub Actions enforces the Node.js 20
+      # deprecation on 2026-09-16. Direct binary install also drops a third-party
+      # dependency for a single linux-amd64 runner.
+      - name: Install pkl (needed by lint-pkl)
+        run: |
+          set -euo pipefail
+          PKL_VERSION="0.31.1"
+          curl -fsSL --retry 5 --retry-delay 2 --max-time 60 \
+            "https://github.com/apple/pkl/releases/download/${PKL_VERSION}/pkl-linux-amd64" \
+            -o /usr/local/bin/pkl
+          chmod +x /usr/local/bin/pkl
+          pkl --version
       - name: Install just
-        uses: extractions/setup-just@v3
+        uses: extractions/setup-just@v4
       - run: just ci

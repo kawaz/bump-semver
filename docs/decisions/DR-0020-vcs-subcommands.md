@@ -374,6 +374,93 @@ two-tier verb (`vcs tag <sub-verb>`) で、parser 側にも追加変更が入る
   jj 状態を読むので一致を assert できる
 - **PR-6 land 日**: 2026-05-30
 
+### PR-7 (セルフドッグフーディング: 残生呼び出しの置換) 実装メモ (2026-05-30 確定)
+
+PR-1〜PR-6 + PR-4.1 + PR-5.1 で `vcs get` / `vcs is` / `vcs diff` / `vcs commit` /
+`vcs fetch` + `vcs push` / `vcs tag push|delete` 各 verb が land した。PR-7 は
+**bump-semver 自身の release / build サイクルに残っている生 git/jj 呼び出しを
+vcs サブコマンド経由に置換**し、family を最初のドッグフードユーザーで検証する。
+
+#### 置換した箇所
+
+- **Taskfile.pkl `bump-version` task (line 147-151)**:
+  `jj commit -m "Release v${new_version}"`
+  → `bump-semver vcs commit -m "Release v${new_version}" VERSION`
+  (path 必須形)。等価性の根拠は `deps { localEnsureClean }` で事前に working
+  copy が clean を保証している点 — `bump-semver ... VERSION --write` 後の唯一の
+  変更が VERSION なので、全 commit と path-commit が同結果に収束する。前提が
+  崩れた将来の読者向けに本ノート 1 行で根拠を残す。
+- **`.github/workflows/release.yml` の `update-homebrew` job (line 258-273)**:
+  `git add Formula/bump-semver.rb` / `git diff --staged --quiet ||` /
+  `git commit -m ...` / `git push` の 4 行 (旧 line 265-267) を、
+  `bump-semver vcs diff -q HEAD -- Formula/bump-semver.rb` でファイルスコープ
+  差分判定 → 差分あり時のみ `vcs commit -m "..." Formula/bump-semver.rb`
+  + `vcs push --branch main` に置換。`git config user.name/email` 2 行は
+  **維持** — bump-semver は git identity を自前設定しないため、fresh runner で
+  identity 未設定だと内部の `git commit` shell-out が identity エラーで落ちる。
+  `--branch main` 固定は `gh api repos/kawaz/homebrew-tap -q .default_branch`
+  で `main` を 1 回裏取り済み。
+- **`update-homebrew` job への install step 追加 (line 184-191)**: この job は
+  `release.yml` 内で `check-version` とは別 runner なので bump-semver が PATH に
+  無い。`actions/download-artifact` で展開された **今 release した版そのものの
+  linux/amd64 バイナリ** (`artifacts/bump-semver-linux-amd64/...`) を
+  `install -m 0755 ... /usr/local/bin/bump-semver` で配置。check-version 側の
+  「直前 release を curl」方式と違い、今 release してる版そのものを使うので
+  「commit/push サブコマンドの dogfooding が新版の挙動を検証」する構図になる。
+
+#### 維持した箇所 (= 置換対象外)
+
+- **`gh release create "v${VERSION}" ...` (line 169-174)**: tag 作成 +
+  release notes 生成 (`--generate-notes`) + asset upload を **atomic に処理**
+  する gh の責務。`vcs tag push` で tag だけ分解しても残り 2 つは別経路 (gh
+  / GitHub API 直叩き) に頼ることになり、merit が薄いだけでなく atomicity を
+  損ねる。DR-0020 PR-5 で `vcs push` に `--tags` を意図的に提供しなかった
+  方針 (= 「tag push は release 自動化 = `gh release create` 側の仕事」) と
+  整合。
+- **`check-version` job の bump-semver install (curl 経由、line 24-44)**:
+  ここは「直前 release を使って今 push してる VERSION の semver 妥当性を
+  検証」する構造で、新版バイナリは build job 完走後しか作られないため
+  artifact 経由は使えない。bootstrap fallback (= 過去 release ゼロ時に source
+  build) も含めて既に dogfood の正しい形になっている。
+- **README / README-ja の翻訳ペア**: kawaz 明示除外。
+
+#### ドッグフーディングで検証される vcs サブコマンドの挙動
+
+PR-7 で本 release.yml に乗った PR 自身の push (= v0.25.1) が、**変更後の
+release.yml を初めて流す**構造になる。よって次の release 完走で以下が実機検証:
+
+- `vcs diff -q HEAD -- PATH`: PR-3.1 のファイルスコープ presence 判定 (exit
+  code 1 == 差分あり) が github-actions 環境で期待通り動くか
+- `vcs commit -m MSG PATH..`: PR-4 の path モード commit (= `git add -- PATH`
+  内蔵 → empty-no-op gate → `git commit -m MSG -- PATH`) が deploy key 越しの
+  homebrew-tap clone 上で動くか
+- `vcs push --branch main`: PR-5 の `--branch NAME` 必須形 + PR-5.1 の
+  idempotent passthrough が ssh deploy key + remote URL 環境で動くか
+- Taskfile 側の `vcs commit -m MSG VERSION`: jj backend 経由で `jj commit
+  [FILESETS]... -m MSG` (PR-4 ノート参照) が kawaz の primary jj 0.41 環境で
+  release commit を成立させるか
+
+#### DR-0020 PR シリーズ完走 (2026-05-30)
+
+| PR | verb / 内容 | land 時 VERSION |
+|---|---|---|
+| PR-1 | 基盤 + `vcs get` | v0.19.0 系 |
+| PR-2 | `vcs is clean/dirty/git/jj` | v0.20.x |
+| PR-3 | `vcs diff REV [PATH..]` | v0.20.x |
+| PR-3.1 | `vcs diff -s/-q` + v0.20.2 verb-aware reject 修正 | v0.20.2 |
+| PR-4 | `vcs commit -m MSG PATH.. \| --staged \| --amend` | v0.21.x |
+| PR-4.1 | `vcs commit --amend [PATH.. \| --staged]` 受け入れ訂正 | v0.21.x |
+| PR-5 | `vcs fetch [REMOTE]` / `vcs push --branch NAME` | v0.22.x |
+| PR-5.1 | non-ff hint 削除 / `jj git export` retry + 復旧 hint / push passthrough | v0.22.x |
+| PR-6 | `vcs tag push --rev REV NAME` / `vcs tag delete NAME` | v0.25.0 |
+| **PR-7** | **セルフドッグフード (本 PR)** | **v0.25.1 (本 release)** |
+
+DR-0020 はこれで設計 → 実装 → ドッグフードの 3 段を完了。以降の vcs 関連
+変更は本 DR の延長 (= verb 追加 / 既存 verb 改修) として bug fix / 改善 PR で
+回す。
+
+- **PR-7 land 日**: 2026-05-30
+
 ## 関連
 
 - 上位/関連 DR: DR-0008 (`vcs:` schema 導入)、DR-0016 (`--vcs auto` 一本化)、DR-0019 (`vcs:latest-tag(<arg>)`)

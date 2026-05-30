@@ -26,6 +26,7 @@ bump-semver <major|minor|patch|pre> <INPUT...> [--write]
 bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
+bump-semver vcs diff REV [PATH..]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -81,9 +82,10 @@ bump-semver compare lt-minor Cargo.toml vcs:origin/main       # only minor-or-be
 ```
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
+bump-semver vcs diff REV [PATH..]
 ```
 
-A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate). Further verbs (`vcs diff`, `vcs commit`, `vcs push`, `vcs tag`) will follow as the design rolls out. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer). Further verbs (`vcs commit`, `vcs push`, `vcs tag`) will follow as the design rolls out. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
 
 **`vcs get <key>`** — emit a value on stdout:
 
@@ -101,7 +103,11 @@ A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vc
 | `dirty` | `!clean` |
 | `git` / `jj` | The detected (or `--vcs`-forced) backend matches |
 
-Exit codes (also see below): `0` success / predicate true; `1` predicate false (`vcs is`); `2` usage error; `3` VCS subprocess error (incl. "not a repo"); `4` ambiguous answer (`5` is reserved for `vcs push` non-ff in a future PR).
+**`vcs diff REV [PATH..]`** — print the patch between `REV` and the working copy on stdout. Backend-uniform: git runs `git diff REV [-- PATH..]`, jj runs `jj diff --from REV --to @ [-- PATH..]`. Both forms compare REV against the worktree, including uncommitted changes.
+
+Path filter rule (**declarative convergence**): nonexistent `PATH` arguments are silently ignored. When every supplied `PATH` is filtered out the command exits `0` with empty stdout — it does **NOT** widen back to "diff everything". A path present in `REV` but deleted in the worktree is not shown when named explicitly (the full diff with no `PATH` still shows the deletion).
+
+Exit codes (also see below): `0` success / predicate true; `1` predicate false (`vcs is`); `2` usage error; `3` VCS subprocess error (incl. "not a repo", unresolvable REV); `4` ambiguous answer (`5` is reserved for `vcs push` non-ff in a future PR).
 
 ```bash
 bump-semver vcs get backend                  # git
@@ -112,6 +118,10 @@ ROOT=$(bump-semver vcs get root) || exit
 bump-semver vcs is clean && bump-semver patch VERSION --write
 if bump-semver vcs is git; then ... fi
 bump-semver vcs is dirty || echo "nothing to commit"
+
+bump-semver vcs diff HEAD~1                   # full diff since previous commit
+bump-semver vcs diff main@origin VERSION      # what changed in VERSION vs remote main
+bump-semver vcs diff HEAD~1 src lib           # subtree-scoped diff
 ```
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.

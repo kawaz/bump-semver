@@ -117,13 +117,25 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 
 - **PR 分割**: 7 PR (PR-1 基盤+`vcs get` / PR-2 `vcs is` / PR-3 `vcs diff` / PR-4 `vcs commit` / PR-5 fetch+push / PR-6 tag / PR-7 移行+docs)。PR-1 で `vcsBackend` interface (`Kind` / `Root` / `CurrentBranch`) と git/jj backend を導入し、後続 PR は同じ pattern を踏襲する
 - **exit code 規約**: `0` 成功 / `1` 偽 (`compare` + 将来の `vcs is`) / `2` usage / `3` VCS 実行エラー / `4` 曖昧 / `5` non-fast-forward push (`vcs push` 用に予約)。`src/exit.go` の定数で 1 箇所管理
-- **`vcs is clean` の untracked 扱い** (PR-2 で実装): **除外** (tracked のみで判定)。`--include-untracked` は interface 引数として予約のみ、当初実装では default false
+- **`vcs is clean` の untracked 扱い** (PR-2 で実装): **除外** (tracked のみで判定)。`--include-untracked` は当初予約案だったが、PR-2 で **interface 引数を持たず `IsClean() (bool, error)` 形** (no-param) に確定。YAGNI: 「将来仮の要件のために dead な引数を生やさない」(`design-thinking.md` ルール準拠)。将来 untracked を含めたい場面が出たら別メソッド (例: `IsCleanIncludingUntracked()`) を追加する形で対応する
 - **jj 対応範囲**: **v0.35+** をサポート (`jj tag set` 依存)。CI matrix は `0.35` / `0.41` / `latest` の 3 種を目指す (v0.41 が手元の primary バージョン)
 - **`vcs get current-branch` 一意性**:
   - git: `git symbolic-ref --short HEAD`。DETACHED HEAD は exit 4 (merge / rebase / cherry-pick 進行中の追加判定は次 PR で `.git/MERGE_HEAD` 等を probe して足す)
   - jj: `heads(::@ & bookmarks())` の template で名前を集める。0 件 / 複数件 はいずれも exit 4
 - **`vcsKind` (DR-0008/0016) との一本化**: PR-1 で実施済。`vcsBackend` interface に `Kind` / `Root` / `CurrentBranch` (新規) に加えて `FetchFile` / `ListTags` / `LatestTag` を載せ、`vcsFetchFile` / `vcsListTags` / `vcsLatestTag` 等の free function は廃止 (= 中身は backend メソッドに移管)。`resolveVcsInput` / `resolveVcsFunc` は `vcsBackend` を受け取る形に書き換え、`resolveInputs` も `detectVcs` ではなく `newVcsBackend` で backend を取得する。`vcsKind` は `--vcs jj|git|auto` の override-spec 型として残し、`parseVcsOverride` と `detectVcs` (probe-only) も継続。`vcsListTagsRemote` は `latestTagFromRemote` (常に `git ls-remote` を叩く free function) に名称変更 + 統合。journal の「移行は PR-7」は本 DR 確定方針 (一本化) で上書き済 — PR-1 段階で一本化完了
 - **Cargo workspace.package 補完 (DR-0021)** とのリリース順序: DR-0021 が patch リリース (v0.16.2) で land 済み。本 DR の PR-1 land 時は **minor bump** で次バージョンに乗せ、欠けがちな minor リリースのリズムも揃える
+
+### PR-2 (vcs is) 実装メモ (2026-05-30 確定)
+
+- **述語ラインナップ**: `clean` / `dirty` / `git` / `jj` の 4 つで PR-2 を終える。`ahead` / `behind` 等は fetch とセットで初めて意味を持つので PR-5 以降。jj 固有概念 (`empty @`、`mutable_heads()` 等) は持ち込まない (DR-0020 「両 VCS ユーザが共通理解できるもの」原則)
+- **未知述語は exit 2**: `vcs is wibble` は silent false にせず必ず usage エラーで止める。typo による誤分岐 (= 「無いから偽 → else 枝に飛んで本来禁止された操作実行」) の防止
+- **predicate-false は silent**: `compare` と同じく stderr に何も出さず `*exitErr{code: 1}` のみ。シェルの `if cmd; then ...` / `&& chain` をノイズ無しで回せる
+- **`is git` / `is jj` の「リポ外」挙動**: backend を build した時点で「リポではない」エラー (exit 3) を伝播し、**false (exit 1) には堕とさない**。「git じゃない」と「そもそも VCS じゃない (= 答えられない)」を区別。DR-0020 「曖昧・期待外はエラー」原則の適用
+- **`IsClean` 実装**:
+  - git: `git diff --quiet` (unstaged) AND `git diff --cached --quiet` (staged) を両方確認。どちらか exit 1 が出れば dirty。**untracked は除外** (= `git diff` 既定挙動を踏襲)。`exec.Cmd.Output()` だと exit 1 を error 扱いしてしまうため、新規 helper `runBackendExitCode` を追加 (exit code を error 区別して返す)
+  - jj: `jj log -r @ --no-graph -T 'empty'` で `true` / `false` を直接読む。template keyword の boolean を文字列で受け取る。jj は read で自動 snapshot するため、新規ファイルも `@` に取り込まれ → dirty 扱い (= git との非対称、意図的)
+- **`runVcsCmdIs` 配線**: `parseArgs` の `isKnownVerb` に `"is"` を追加、`runVcsCmd` の switch に case 追加、`actionHelpTexts["vcs is"]` 登録の 3 点。これで `vcs is` / `vcs is --help` / `vcs is <pred>` がそれぞれ help / dispatch される
+- **PR-1 で導入した helper の再利用**: `emitVcsUsage` (exit 2 + stderr)、`emitVcsErr` (backend 由来 exit を保持しつつ stderr 出力) はそのまま流用。predicate-false だけは「stderr 何も出さない」要件のため helper を通さず `&exitErr{code: exitCodeFalse}` を直接 return
 
 ## 関連
 

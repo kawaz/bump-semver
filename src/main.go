@@ -197,9 +197,16 @@ func parseArgs(argv []string) (cliArgs, error) {
 		}
 		// Split flags from positional vcsArgs. The vcs branch supports a
 		// curated subset of the global flags: --vcs (override), -q/-qq,
-		// --no-hint. Anything else is reported as an unknown option.
+		// --no-hint. `-s/--name-status` is verb-local to `vcs diff`.
+		// Anything else is reported as an unknown flag (exit 2, names the
+		// verb in the hint so typos like `vcs get -s root` are caught).
 		// Unlike the main flat-action grammar, we don't process --pre /
 		// --write etc. here — those are bump-only.
+		//
+		// Design rationale: there is exactly one verb-local flag, so a
+		// `(verb == "diff")` guard inline is simpler than a verb→flags
+		// table. If verb-local flags grow, refactor to a table keyed by
+		// verb (see DR-0020 implementation notes).
 		rest := argv[2:]
 		for i := 0; i < len(rest); i++ {
 			a := rest[i]
@@ -224,12 +231,10 @@ func parseArgs(argv []string) (cliArgs, error) {
 				out.quiet = true
 			case a == "-qq", a == "--quiet-all":
 				out.quietAll = true
-			case a == "-s", a == "--name-status":
-				// Verb-local to `vcs diff` — accepted in the shared parser
-				// for simplicity. runVcsCmdGet / runVcsCmdIs never read this
-				// flag, so passing it to those verbs is a silent no-op
-				// (rejecting per-verb would need verb-aware dispatch the
-				// current structure lacks; not a correctness issue).
+			case (a == "-s" || a == "--name-status") && out.vcsVerb == "diff":
+				// Verb-local to `vcs diff` only. For other verbs this
+				// case is skipped and the generic unknown-flag catch-all
+				// below rejects with exit 2.
 				out.vcsDiffNameStatus = true
 			case a == "--no-hint":
 				out.noHint = true
@@ -237,7 +242,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 				out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
 				i = len(rest)
 			case strings.HasPrefix(a, "-") && a != "-":
-				return cliArgs{}, fmt.Errorf("unknown option: %s", a)
+				return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", out.vcsVerb, a)
 			default:
 				out.vcsArgs = append(out.vcsArgs, a)
 			}

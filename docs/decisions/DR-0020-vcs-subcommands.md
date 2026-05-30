@@ -107,7 +107,7 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 ## Consequences
 
 - 利用側 (Taskfile / justfile) は `is-jj`/`is-git` 分岐や jj/git の dirty 判定・diff の差を手書きする必要がなくなる。`check-version-bumped` の pathspec エラーや origin 比較の fetch 漏れも `vcs` 側で吸収できる
-- PR-1〜PR-5 land 済 (`vcs get` / `vcs is` / `vcs diff` (+ `-s`/`-q`) / `vcs commit` / `vcs fetch` + `vcs push`)。残りは PR-6 (tag) / PR-7 (移行+docs)
+- PR-1〜PR-5 + PR-4.1 + PR-5.1 land 済 (`vcs get` / `vcs is` / `vcs diff` (+ `-s`/`-q`) / `vcs commit` (+ amend symmetry refinements) / `vcs fetch` + `vcs push` (+ hint simplification / jj export retry / passthrough))。残りは PR-6 (tag) / PR-7 (移行+docs)
 - jj は **v0.35+ を最小サポートバージョン**とする (`jj tag set` 依存)
 - **実機検証推奨マトリクス** (empirical-verification 方針): `jj git init --git-repo=<bare>` → `jj tag set` → native `git push` tag → `jj git import`/`export` の挙動を、対象 jj バージョンで確認
 
@@ -207,15 +207,73 @@ PR-5 は network 系の counterpart。read (PR-1〜3.1) / write-local (PR-4) に
   - jj: `stale info` + `Failed to push some bookmarks`
 
   検出器 `isNonFastForward` は安定 marker (`(fetch first)` / `(non-fast-forward)` / `stale info` / `Failed to push some bookmarks`) の `strings.Contains` で判定。locale fragile な hint 行 (= "Updates were rejected..." 等) は使わない。**保守的方針**: 未知の失敗は exit 5 ではなく exit 3 にフォールバック (= `CurrentBranch` の「unknown failure → 安全側の code」と同じ原則)。理由: bad URL / signing 失敗を non-ff と誤分類して「fetch して reconcile しろ」と誘導すると修復経路が外れる、逆 (non-ff を generic とする) の方が損害が小さい
-- **共通 hint「remote has diverged...」**: dispatcher が exit 5 を検出したら `bump-semver: vcs push: remote has diverged. fetch and reconcile, then retry. (force push is intentionally not supported)` を stderr に出力。「force push not supported」を明示することで「`--force` あるかな?」と探させない (= ヘルプ確認の手間を 1 ステップ削減)
+- **共通 hint「remote has diverged...」** (※ PR-5.1 で削除、下記参照): dispatcher が exit 5 を検出したら `bump-semver: vcs push: remote has diverged. fetch and reconcile, then retry. (force push is intentionally not supported)` を stderr に出力していた。「force push not supported」を明示することで「`--force` あるかな?」と探させない (= ヘルプ確認の手間を 1 ステップ削減) という意図だったが、kawaz 確定で「git/jj 其々のエラーメッセージそのまま出して対応はユーザ責務」とのこと、editorial paraphrase は廃止 (= PR-5.1)
 - **`jj git push --allow-new` の deprecation 対応 (jj 0.41)**: 実機 (jj 0.41) で確認したところ、`jj git push --bookmark NEW_NAME --remote origin` (= `--allow-new` なし) は新規 bookmark でも warning なく動作。`--allow-new` を渡すと「deprecated, use auto-track-bookmarks instead」の warning が出る。よって **`--allow-new` は渡さない** (= 将来 jj が新規 push を block するようになったら明示 track を追加する。現状は YAGNI)
-- **`jj git export` を push 後に必ず呼ぶ (DR-0020 PR-5 要件)**: jj の push 後に `jj git export` を実行して colocated `.git` の ref を同期する。`jj git export` 自体は通常 no-op (= `Nothing changed`) だが、ref 階層衝突 (jj issue #493) / HEAD race (#6098) / packed-refs (#6203) のような edge case で fail し得る。**握りつぶさず exit code を確認** し、失敗時は exit 3 + jj の native stderr を fold した message で surface。事前に panic 文字列を parse するような複雑な hook は入れない (= 失敗を未知の bug として安全に伝える方が、自前 parser の誤検出より優れる)
+- **`jj git export` を push 後に必ず呼ぶ (DR-0020 PR-5 要件)** (※ PR-5.1 で retry + 復旧 hint に拡張、下記参照): jj の push 後に `jj git export` を実行して colocated `.git` の ref を同期する。`jj git export` 自体は通常 no-op (= `Nothing changed`) だが、ref 階層衝突 (jj issue #493) / HEAD race (#6098) / packed-refs (#6203) のような edge case で fail し得る。PR-5 では **握りつぶさず exit code を確認** し、失敗時は exit 3 + jj の native stderr を fold した message で surface。事前に panic 文字列を parse するような複雑な hook は入れない方針だったが、kawaz 確定で「再実行で冪等リカバリーなら大きな問題は無い」「対応方が分からん程だとユーザに丸投げしても解決できない」となり、PR-5.1 で 1 回 retry + substring 検出ベースの復旧 hint を追加 (= 公式 issue 由来のパターン別 remedy)
 - **interface 拡張**: `Fetch(remote string) error` と `Push(opts pushOpts) error` を `vcsBackend` に追加。`pushOpts` は `name` / `remote` の 2 フィールドのみ — `--force` を struct field として模型化すると将来 accidental 配線を招く (= 構造的にも `--force` ルートを存在させない)
 - **`runBackendCapture` 補助関数**: push は **exit code が信号 (= success / non-ff / その他)** なので、`runBackendCmd` (non-zero を error 化) と `runBackendExitCode` (出力捨て) のどちらも合わない。stdout / stderr / code の 3 つを同時に取れる `runBackendCapture` を追加して push 専用に利用
 - **test 環境の bare remote**: fixture は **ローカル bare repo を origin として**設定 (= filesystem path)。実 push ではないので「fixture 外で生 git push / jj git push しない」制約に違反しない。非 ff のシミュレートは **attacker clone fixture** (bare を別 path に clone → 異なる commit を作って `git push --force` → bare の main が divergent な commit を指す状態にする) で構成。git fixture の HEAD 不整合 (bare の default branch が master のまま、clone が main を check out できない) を防ぐため、`git init --bare -b main` で bare 作成時に明示
 - **parser 配置**: `--branch` / `--bookmark` / `--remote` を vcs flag loop に追加。`--remote` は fetch / push 両方で受理、`--branch` / `--bookmark` は push のみで受理 (verb-aware gate)。inline 実装 (verb→flags table への refactor は PR-6 以降に持ち越し、DR の「verb-local flag が増えたら refactor を検討」trigger を 1 回後ろにずらす)
 - **配線 4 点 (既存パターン踏襲)**: parser の `isKnownVerb` に `fetch` / `push` 追加、verb-local flag 追加、`runVcsCmd` の switch に 2 case 追加、`actionHelpTexts["vcs fetch"]` / `["vcs push"]` 登録 + `helpVcs` の verbs 一覧に追記
 - **PR-5 land 日**: 2026-05-30
+
+### PR-5.1 (vcs push 補修) 実装メモ (2026-05-30 訂正)
+
+PR-5 で land した実装に kawaz 確定の意向との乖離があったため、4 点を補修
+する subset PR-5.1 を続けて投入。PR-4.1 advisor で保留扱いだった bare
+`--amend` help 表現の git/jj 分割も同時に修正。
+
+- **`--branch` canonical 維持、`--bookmark` 注釈簡素化**: PR-5 は help body に
+  `--bookmark NAME  Alias of --branch. (jj users may also write --bookmark.)`
+  という 2 行注釈を持っていたが、これは "alias" を主役化しすぎていて
+  「`--branch` 一本化で help に jj では bookmark の意と簡潔記載」
+  (kawaz 原文) と乖離。**PR-5.1**: `--branch` の説明文に
+  「(jj users: "branch" here means the jj bookmark; the --bookmark spelling
+  is also accepted as an exact synonym, ...)」と一行注釈で圧縮。両指定 reject
+  ロジック自体は維持 (parser は `--branch` / `--bookmark` 同一スロットを共有、
+  両方指定は exit 2)。Usage の独立 `--bookmark` 行 / Examples の
+  `vcs push --bookmark main` も削除し、help body から `# alias` 等の補注を排除
+- **non-ff 共通 hint 削除 (`bump-semver: vcs push: remote has diverged...`)**:
+  PR-5 では dispatcher が exit 5 検出時に「remote has diverged. fetch and
+  reconcile, then retry. (force push is intentionally not supported)」を
+  必ず stderr に出していたが、kawaz 確定で「non-ff 検出云々: git/jj 其々の
+  エラーメッセージそのまま出して対応はユーザ責務以外ある?」のとおり editorial
+  paraphrase は不要。**PR-5.1**: dispatcher の hint 構築ブロックを削除し、
+  backend で formatPushError(...) によって stderr が ee.msg に折り込まれた
+  ものを emitVcsErr が `bump-semver: <msg>` として 1 回だけ出す経路に揃える。
+  exit code 5 マッピング (`isNonFastForward` 判定) はそのまま維持
+- **`jj git export` 失敗の retry once + 復旧 hint (kawaz 確定)**: PR-5 では
+  「失敗を握りつぶさず exit 3」までで止めていたが、kawaz 確定で
+  「再実行で冪等リカバリーなら大きな問題は無い」「対応方が分からん程だと
+  ユーザに丸投げしても解決できない」のとおり、(a) 1 回 retry → (b) 2 回目も
+  失敗なら exit 3 + 具体的 recovery hint の 2 段階に拡張。**PR-5.1**:
+  `jjGitExportFunc` package-level seam を導入し、Push() 内で
+  `exStderr1, exCode1, exErr1 := jjGitExportFunc()` → 失敗時にもう 1 回 →
+  両方失敗で `jjGitExportRecoveryMessage(finalStderr)` を msg として exit 3。
+  recovery hint は **substring 検出ベース** で issue 別に固有の手順を返す
+  (`#493` ref-hierarchy: `git for-each-ref refs/heads/` で衝突確認 +
+  rename/delete、`#6098` HEAD race: `jj git import` で resync、`#6203`
+  packed-refs: lock 解除 + retry)。未知 pattern は raw stderr + jj-vcs/jj
+  issues URL の generic fallback。seam の存在理由は test 性 — 実 jj で
+  「fail once, then succeed」を確実に再現する fixture は組めないため
+- **idempotent push 時に git/jj 自身の diagnostic を素通し (`Everything
+  up-to-date` / `Nothing changed`)**: PR-5 では success path で stdout/stderr
+  を捨てていたため、no-op が silent な exit 0 に見えていた (= 「本当に push
+  通ったのか?」が分からない)。**PR-5.1**: `pushPassthroughStdout` /
+  `pushPassthroughStderr` package-level buffer を導入し、backend が success
+  path で空でない出力を蓄積、dispatcher が `consumePushPassthrough()` 経由で
+  読み出してから自身の error を出すことで chronology (push 出力 →
+  dispatcher エラー) を保つ。`-q` で stdout 抑制、`-qq` で全抑制
+  (= 既存 quiet contract と整合)。事前検証で exit code は既に 0 (`if code
+  == 0 { return nil }`) だったので 5→0 のルート変更は不要 — gap は出力
+  forwarding 側にあった (advisor 指摘で確定)
+- **bare `--amend` help の git/jj 分割表記 (PR-4.1 残)**: PR-4.1 advisor で
+  「fold ALL current changes は git では index 限定 (unstaged は含まれない)
+  で不正確」と指摘されていた残課題。**PR-5.1**: helpVcsCommit の `--amend`
+  bare 行を `--staged` 行と同じ git/jj 分割形式に揃える (git: "folds the
+  staged index into HEAD (unstaged worktree changes are NOT included)" /
+  jj: "folds the entire @ snapshot into @- (jj auto-stages, ...)" )
+- **PR-5.1 land 日**: 2026-05-30
 
 ## 関連
 

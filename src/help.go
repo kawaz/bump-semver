@@ -710,11 +710,39 @@ const helpVcsPush = `bump-semver vcs push — upload refs to a remote (git/jj-ag
 
 Usage:
   bump-semver vcs push --branch NAME [--remote REMOTE]
+                       [--jj-bookmark-auto-advance]
 
 Arguments:
   --branch NAME    Branch to push (jj users: bookmark). Required — no
                    auto-detection. --bookmark accepted as a synonym.
   --remote REMOTE  Target remote name. Defaults to "origin" when omitted.
+
+jj-specific options (rejected with exit 2 in a git repo):
+  --jj-bookmark-auto-advance   Move the bookmark to the publishable
+                               commit before pushing. Target depends on
+                               the working copy:
+                                 - clean (@ empty)     → bookmark → @-
+                                 - dirty (@ non-empty) → bookmark → @
+                               Preconditions enforced before any move:
+                                 (a) the bookmark exists (otherwise we
+                                     fall through to the normal push and
+                                     let jj surface its own error);
+                                 (b) the bookmark is in ancestors(@)
+                                     (sideways/divergent → exit 3 with a
+                                     hint, no move). The move itself is
+                                     forward-only — jj's default refuses
+                                     backwards/sideways moves and we do
+                                     NOT pass --allow-backwards.
+
+                               Why: jj 慣習 places bookmarks on the
+                               confirmed parent commit (@-), not on the
+                               throw-away working copy (@). Manually
+                               running 'jj bookmark move' every bump
+                               is friction; this flag automates it
+                               while keeping the safety checks explicit.
+                               Opt-in by design — silent advancement
+                               would surprise users who positioned the
+                               bookmark intentionally.
 
 Notes:
   - git: runs 'git push <remote> <name>:<name>'. The explicit refspec
@@ -747,9 +775,12 @@ Global Options:
 Exit codes:
   0   success (push completed, or idempotent up-to-date)
   2   usage error (--branch/--bookmark missing or specified twice,
-                   --force passed, positional args supplied, unknown flag)
+                   --force passed, positional args supplied, unknown flag,
+                   --jj-bookmark-auto-advance on a git repo)
   3   VCS subprocess error (unknown remote, network failure, not a repo,
-                            jj git export failure persisted across retry)
+                            jj git export failure persisted across retry,
+                            --jj-bookmark-auto-advance refused: bookmark
+                            not in ancestors(@))
   5   non-fast-forward rejection — read git/jj's stderr for details
 
 Examples:
@@ -757,6 +788,10 @@ Examples:
   bump-semver vcs push --branch main --remote upstream
                                              # custom remote
   bump-semver vcs push --branch release-1.2  # push a feature/release branch
+  bump-semver vcs push --branch main --jj-bookmark-auto-advance
+                                             # jj: auto-move bookmark to
+                                             # @- (clean) or @ (dirty)
+                                             # before pushing
 `
 
 // helpVcsTag documents the `vcs tag` parent verb (DR-0020 PR-6).

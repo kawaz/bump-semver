@@ -28,6 +28,10 @@ bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 bump-semver vcs commit [--amend] [-m MSG] <PATH..|--staged>     # or: vcs commit --amend [-m MSG]
+bump-semver vcs fetch [REMOTE]
+bump-semver vcs push --branch NAME [--remote REMOTE]
+bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
+bump-semver vcs tag delete NAME [--remote REMOTE]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -89,9 +93,11 @@ bump-semver vcs commit -m MSG --staged
 bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 bump-semver vcs fetch [REMOTE]
 bump-semver vcs push --branch NAME [--remote REMOTE]   # jj users: --bookmark also accepted
+bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
+bump-semver vcs tag delete NAME [--remote REMOTE]      # idempotent (rm -f semantic)
 ```
 
-A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5). The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5); PR-6 adds `vcs tag push` / `vcs tag delete` (atomic create+push / idempotent delete, with `--allow-move` as the precise opt-in for tag relocation and exit 4 surfacing different-rev integrity violations). The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
 
 **`vcs get <key>`** — emit a value on stdout:
 
@@ -196,6 +202,36 @@ bump-semver vcs is clean \
 ```
 
 Exit codes for `vcs push`: `0` success / no-op; `2` usage (`--branch`/`--bookmark` missing, both supplied, `--force` passed, positional args, unknown flag); `3` VCS subprocess error (unknown remote, network, jj export failure that persisted across the retry); `5` non-fast-forward — read git/jj's stderr for the recovery path.
+
+**`vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]`** — create / move the tag `NAME` at `REV` and push it to `REMOTE` (default `origin`) in a single atomic intent. The verb's contract is "the tag points to `REV` on the remote when this returns" — the local create is the means, not the deliverable, so the tag lifecycle stays 1-1 with its remote presence (no orphan local tags).
+
+| Aspect | Behaviour |
+|---|---|
+| Mode | **git**: `git tag NAME REV` (or `git tag -f` for `--allow-move`) followed by `git push origin refs/tags/NAME` (`--force` only when `--allow-move`). **jj**: `jj tag set NAME -r REV` (with `--allow-move` if moving) followed by `jj git export` then `git -C <git_target> push ...` — native git push because jj 0.41 has no per-tag push primitive (DR-0020 line 70 commits to "create via jj tag set, push via native git" so jj retains tag awareness while we get fine-grained remote control) |
+| Same-rev re-push | Local already at the same target → skip local create, still push. This is the 片落ちリカバリ case: local has the tag but the previous push may have failed before reaching the remote. Same-rev push is a clean no-op when the remote also matches |
+| Different-rev no flag | **Exit 4** with no side-effect (no local move, no push attempt). Distinct from generic `3` so callers can branch on integrity violations |
+| Different-rev `--allow-move` | Move locally + force-push to remote. `--force-with-lease` is not used: tag refs have no remote-tracking ref, so a bare lease can't establish anything and is no safer than `--force`; the move is already gated behind explicit `--allow-move` + the diff-rev pre-check, so we know what we're overwriting |
+| Bad REV | Resolution failure → **exit 3** before any side-effect — distinguishable from "your tag has drifted" (4) and "git/jj broke" (also 3 but with the tool's stderr folded in) |
+| `--force` / `--tags` / `--all` | Not provided. `--force` is too broad — it conflates same-rev idempotent reconciliation with different-rev rewrites; `--allow-move` is the precise opt-in. Bulk operations are out of scope (DR-0020 line 91) |
+
+**`vcs tag delete NAME [--remote REMOTE]`** — remove the tag from both local and remote, idempotent. Per DR-0020 line 74 (`rm -f` semantic): the verb's intent is the end-state "no tag at NAME", which an already-absent tag already satisfies, so absent on either side is exit 0, not an error.
+
+- **git**: pre-checks local existence via `git rev-parse -q --verify refs/tags/NAME` (bare `git tag -d NAME` errors on missing) then `git push origin :refs/tags/NAME` (git's own "deleting a non-existent ref" returns exit 0 — naturally idempotent at the remote layer)
+- **jj**: `jj tag delete NAME` is natively idempotent ("No matching tags" → exit 0) so we just run it; then `jj git export` and the same `git push origin :refs/tags/NAME` for the remote half
+- A genuine remote failure (unknown remote, network down) is exit 3; the local-half side-effect may have already happened. We accept that asymmetry — the common case is "remote is fine, just clean up old local tags" and the alternative ("only delete locally if remote ack'd") would trade rare clean retries for frequent friction
+- `--allow-missing` is **not provided** — delete is already idempotent so the flag would be a no-op (DR-0020 line 92)
+
+```bash
+bump-semver vcs tag push --rev HEAD v1.2.3
+                                                # tag HEAD as v1.2.3, push to origin
+bump-semver vcs tag push --rev HEAD~1 v1.2.3 --allow-move
+                                                # move v1.2.3 back one commit (force-push)
+bump-semver vcs tag push --rev main v1.2.3 --remote upstream
+                                                # tag main, push to a non-default remote
+bump-semver vcs tag delete v0.9.0               # remove from local + origin (idempotent)
+```
+
+Exit codes for `vcs tag push`: `0` success (incl. idempotent same-rev re-push); `2` usage (NAME / `--rev` missing, NAME with bad shape, `--force` passed, extra positional); `3` VCS subprocess error (bad REV, unknown remote, network); `4` integrity violation (existing tag at different REV without `--allow-move`). For `vcs tag delete`: `0` success or already-absent; `2` usage; `3` VCS error.
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.
 

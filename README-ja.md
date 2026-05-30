@@ -28,6 +28,10 @@ bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 bump-semver vcs commit [--amend] [-m MSG] <PATH..|--staged>     # または: vcs commit --amend [-m MSG]
+bump-semver vcs fetch [REMOTE]
+bump-semver vcs push --branch NAME [--remote REMOTE]
+bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
+bump-semver vcs tag delete NAME [--remote REMOTE]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -89,9 +93,11 @@ bump-semver vcs commit -m MSG --staged
 bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 bump-semver vcs fetch [REMOTE]
 bump-semver vcs push --branch NAME [--remote REMOTE]   # jj users: --bookmark も同義で受理
+bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
+bump-semver vcs tag delete NAME [--remote REMOTE]      # 冪等 (rm -f セマンティクス)
 ```
 
-git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md))。PR-1 で `vcs get` (read-only) が land、PR-2 で `vcs is` (述語) が加わり、PR-3 で `vcs diff` (patch 出力) が追加され、PR-3.1 で `vcs diff` に `-s/--name-status` (M/A/D サマリ) と `-q/--quiet` (差分有無を終了コードで返す、`git diff --quiet` 相当) が拡張、PR-4 で `vcs commit` (path 必須を基本としつつ `--staged` / `--amend` を持つ安全な commit) が land、PR-5 で `vcs fetch` / `vcs push` (ネットワーク側の counterpart。`--force` は意図的に非提供、non-ff は exit 5 で検出) が land。動機: Taskfile / justfile で git と jj を毎回手書き分岐する板挟みの解消。`bump-semver` は既に `vcs:` で VCS read を吸収しているので、その自然な拡張として `vcs` サブコマンド群を同居させる。
+git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md))。PR-1 で `vcs get` (read-only) が land、PR-2 で `vcs is` (述語) が加わり、PR-3 で `vcs diff` (patch 出力) が追加され、PR-3.1 で `vcs diff` に `-s/--name-status` (M/A/D サマリ) と `-q/--quiet` (差分有無を終了コードで返す、`git diff --quiet` 相当) が拡張、PR-4 で `vcs commit` (path 必須を基本としつつ `--staged` / `--amend` を持つ安全な commit) が land、PR-5 で `vcs fetch` / `vcs push` (ネットワーク側の counterpart。`--force` は意図的に非提供、non-ff は exit 5 で検出) が land、PR-6 で `vcs tag push` / `vcs tag delete` (create+push をアトミックに / delete は冪等。`--allow-move` を tag 移動の精密な opt-in として用意し、別 rev の整合性違反は exit 4 で表面化) が追加。動機: Taskfile / justfile で git と jj を毎回手書き分岐する板挟みの解消。`bump-semver` は既に `vcs:` で VCS read を吸収しているので、その自然な拡張として `vcs` サブコマンド群を同居させる。
 
 **`vcs get <key>`** — 値を stdout に出力:
 
@@ -196,6 +202,36 @@ bump-semver vcs is clean \
 ```
 
 `vcs push` の終了コード: `0` 成功 / no-op; `2` usage (`--branch` / `--bookmark` 欠如・両指定、`--force` 指定、positional 引数、未知フラグ); `3` VCS 実行エラー (unknown remote / network / 再試行しても解消しない jj export 失敗); `5` non-fast-forward — 復旧経路は git/jj の stderr を参照。
+
+**`vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]`** — `NAME` を `REV` で create / move し、`REMOTE` (省略時 `origin`) に push するまでをアトミックな 1 ステップで実行する。動詞の契約は「return 時点で tag が remote 上で `REV` を指している」。local 作成は手段であって成果物ではないため、tag の lifecycle は remote 上の存在と 1-1 になる (orphan local tag を作らない)。
+
+| 観点 | 動作 |
+|---|---|
+| 実行 | **git**: `git tag NAME REV` (`--allow-move` の場合は `git tag -f`) の後に `git push origin refs/tags/NAME` (`--allow-move` 時のみ `--force`)。**jj**: `jj tag set NAME -r REV` (移動時は `--allow-move`) → `jj git export` → `git -C <git_target> push ...`。jj 0.41 が tag 単位の push primitive を持たないため native git push を使う (DR-0020 line 70 で「create は jj tag set / push は native git」と確定) |
+| 同 rev 再 push | local が既に同じ REV を指している → local create はスキップして push は実行。**片落ちリカバリ**: local にはあるが前回の push が remote に届く前に落ちた可能性を救う。remote も同じなら push は素の no-op |
+| 別 rev でフラグなし | **exit 4** で side-effect なし (local の move も push も行わない)。一般 VCS エラー (`3`) と分離してあるので呼び側で整合性違反を別扱いできる |
+| 別 rev で `--allow-move` | local を `--force` 相当で移動 + remote に force-push。`--force-with-lease` は tag ref に remote-tracking ref が無いため lease が成立せず `--force` と安全性は変わらない。すでに `--allow-move` (明示 opt-in) + 別 rev 検知 (= 何を上書きするか分かっている) でガード済み |
+| 不正 REV | 解決失敗 → **exit 3** で side-effect 前。「tag が drift した」(4) / 「git/jj 故障」(3 + 素 stderr) と区別可能 |
+| `--force` / `--tags` / `--all` | 非提供。`--force` は粗すぎる (同 rev 冪等な reconcile と別 rev rewrite を区別できない) ため `--allow-move` が精密な opt-in。bulk 操作はスコープ外 (DR-0020 line 91) |
+
+**`vcs tag delete NAME [--remote REMOTE]`** — local と remote 両方から tag を削除する。DR-0020 line 74 の `rm -f` セマンティクスに従って冪等: 動詞の意図は「NAME に tag が無い状態」への収束であり、既に無ければ目的達成済みなので片側 / 両側不在は exit 0。
+
+- **git**: local 存在を `git rev-parse -q --verify refs/tags/NAME` で事前判定 (素の `git tag -d NAME` は不在で失敗するため) → `git push origin :refs/tags/NAME` (git 自身の「deleting a non-existent ref」は exit 0 — remote layer は構造的に冪等)
+- **jj**: `jj tag delete NAME` は native で冪等 ("No matching tags" → exit 0) なのでそのまま実行 → `jj git export` → 同じ `git push origin :refs/tags/NAME`
+- 真の remote 失敗 (unknown remote / network down) は exit 3。local 側の side-effect は既に走っている可能性があるが、許容する非対称: 典型的なユースケースは「remote は健全で、ただ古い local tag を片付けたい」であり、「remote ack 後にしか local も消さない」案は稀なクリーンリトライのために頻繁な摩擦を生む
+- `--allow-missing` は**非提供** — 既に冪等なので存在しても no-op になる (DR-0020 line 92)
+
+```bash
+bump-semver vcs tag push --rev HEAD v1.2.3
+                                                # HEAD を v1.2.3 として tag、origin に push
+bump-semver vcs tag push --rev HEAD~1 v1.2.3 --allow-move
+                                                # v1.2.3 を 1 commit 後退させる (force-push)
+bump-semver vcs tag push --rev main v1.2.3 --remote upstream
+                                                # main を tag、非デフォルト remote へ
+bump-semver vcs tag delete v0.9.0               # local + origin から削除 (冪等)
+```
+
+`vcs tag push` の終了コード: `0` 成功 (同 rev 再 push の冪等成功を含む); `2` usage (NAME / `--rev` 欠如、NAME の形式不正、`--force` 指定、余分な positional); `3` VCS 実行エラー (REV 不正 / unknown remote / network); `4` 整合性違反 (`--allow-move` 無しで既存 tag が別 rev)。`vcs tag delete` は `0` 成功 or 既に不在; `2` usage; `3` VCS エラー。
 
 `--vcs jj|git|auto` は引き続き有効。colocated 構成で git 側を見たい場合は `bump-semver vcs get backend --vcs git` (または `vcs is git --vcs git`) で強制できる。
 

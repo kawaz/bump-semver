@@ -619,6 +619,186 @@ func TestJjBackend_Diff_BadRev(t *testing.T) {
 	})
 }
 
+// --- DR-0020 PR-3.1: DiffNameStatus tests --------------------------------
+
+// TestGitBackend_DiffNameStatus_HasChanges: with no path filter, returns
+// tab-separated lines like "M\tVERSION" mirroring `git diff --name-status`.
+func TestGitBackend_DiffNameStatus_HasChanges(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.DiffNameStatus("HEAD~1", nil)
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		s := string(out)
+		if !strings.Contains(s, "VERSION") {
+			t.Errorf("DiffNameStatus should mention VERSION, got: %q", s)
+		}
+		// Must be tab-separated (git's native format) so jj normalization
+		// produces uniform output across backends.
+		if !strings.Contains(s, "M\tVERSION") {
+			t.Errorf("expected tab-separated 'M\\tVERSION', got: %q", s)
+		}
+	})
+}
+
+// TestGitBackend_DiffNameStatus_NoChanges: clean fixture vs HEAD → empty.
+func TestGitBackend_DiffNameStatus_NoChanges(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.DiffNameStatus("HEAD", nil)
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("DiffNameStatus = %q, want empty", string(out))
+		}
+	})
+}
+
+// TestGitBackend_DiffNameStatus_PathFilter: nonexistent paths are silently
+// dropped (same declarative-convergence rule as Diff).
+func TestGitBackend_DiffNameStatus_PathFilter(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.DiffNameStatus("HEAD~1", []string{"VERSION", "nope.txt"})
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("expected VERSION in output, got: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_DiffNameStatus_AllPathsNonexistent: every path filtered →
+// empty bytes, no error, must not widen back to all paths.
+func TestGitBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		out, err := b.DiffNameStatus("HEAD~1", []string{"nope.txt"})
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("DiffNameStatus = %q, want empty", string(out))
+		}
+	})
+}
+
+// TestGitBackend_DiffNameStatus_BadRev: unresolvable REV → exit 3.
+func TestGitBackend_DiffNameStatus_BadRev(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		_, err := b.DiffNameStatus("doesnotexist", nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent rev")
+		}
+		if code := exitCodeOf(err); code != exitCodeVCSExec {
+			t.Errorf("exit code = %d, want %d", code, exitCodeVCSExec)
+		}
+	})
+}
+
+// TestJjBackend_DiffNameStatus_HasChanges_TabNormalized: jj's native
+// `jj diff --summary` produces "M VERSION" (space). The backend must
+// normalize to git's tab format so cross-backend output is uniform.
+func TestJjBackend_DiffNameStatus_HasChanges_TabNormalized(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.DiffNameStatus("@--", nil)
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		s := string(out)
+		if !strings.Contains(s, "M\tVERSION") {
+			t.Errorf("expected tab-normalized 'M\\tVERSION', got: %q", s)
+		}
+		// The native jj space-separator must NOT leak through.
+		if strings.Contains(s, "M VERSION") {
+			t.Errorf("jj space-separated output leaked: %q", s)
+		}
+	})
+}
+
+// TestJjBackend_DiffNameStatus_NoChanges: diff against @ → empty.
+func TestJjBackend_DiffNameStatus_NoChanges(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.DiffNameStatus("@", nil)
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("DiffNameStatus = %q, want empty", string(out))
+		}
+	})
+}
+
+// TestJjBackend_DiffNameStatus_AllPathsNonexistent: empty result, no widen.
+func TestJjBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		out, err := b.DiffNameStatus("@--", []string{"nope.txt"})
+		if err != nil {
+			t.Fatalf("DiffNameStatus: %v", err)
+		}
+		if len(out) != 0 {
+			t.Errorf("DiffNameStatus = %q, want empty", string(out))
+		}
+	})
+}
+
+// TestJjBackend_DiffNameStatus_BadRev: unresolvable REV → exit 3.
+func TestJjBackend_DiffNameStatus_BadRev(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		_, err := b.DiffNameStatus("doesnotexist", nil)
+		if err == nil {
+			t.Fatal("expected error for nonexistent rev")
+		}
+		if code := exitCodeOf(err); code != exitCodeVCSExec {
+			t.Errorf("exit code = %d, want %d", code, exitCodeVCSExec)
+		}
+	})
+}
+
 // exitCodeOf extracts the carried exit code from an *exitErr (or returns
 // -1 if err is not an *exitErr). Test-local helper.
 func exitCodeOf(err error) int {

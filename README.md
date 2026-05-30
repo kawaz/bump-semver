@@ -24,6 +24,7 @@ Pre-built binaries for Linux / macOS / Windows (amd64, arm64) are also published
 bump-semver get <INPUT...>
 bump-semver <major|minor|patch|pre> <INPUT...> [--write]
 bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
+bump-semver vcs get <root|backend|current-branch>
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -73,6 +74,31 @@ bump-semver compare eq-major 1.2.3 1.9.7                      # exit 0 (same maj
 bump-semver compare eq-patch 1.2.3 1.2.3-rc.1                 # exit 0 (pre-release ignored)
 bump-semver compare lt-minor Cargo.toml vcs:origin/main       # only minor-or-below bumps?
 ```
+
+### vcs subcommand
+
+```
+bump-semver vcs get <root|backend|current-branch>
+```
+
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 ships only the read-only `vcs get` verb; further verbs (`vcs is`, `vcs diff`, `vcs commit`, `vcs push`, `vcs tag`) will follow as the design rolls out. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+
+| Key | Output |
+|---|---|
+| `root` | Absolute path to the repository root |
+| `backend` | `git` or `jj` (jj wins on a colocated repo) |
+| `current-branch` | The unambiguous current branch (git) / bookmark (jj). Detached HEAD or multiple bookmarks at the same head → exit 4 |
+
+Exit codes (also see below): `0` success / `2` usage error / `3` VCS subprocess error / `4` ambiguous answer (`5` is reserved for `vcs push` non-ff in a future PR).
+
+```bash
+bump-semver vcs get backend                  # git
+bump-semver vcs get root                     # /path/to/repo
+bump-semver vcs get current-branch           # main
+ROOT=$(bump-semver vcs get root) || exit
+```
+
+`--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` forces the git branch on a colocated repo.
 
 ### Flags
 
@@ -401,8 +427,11 @@ Origin labels: `<file>:<path>` (FILE origin) / `<argv>` or `<argv:N>` (positiona
 ### Exit codes
 
 - `0` — success / compare predicate true
-- `1` — compare predicate false
-- `2` — error (parse failure, mismatch, unsupported file, exclusivity violation, IO error, etc.)
+- `1` — compare predicate false (also: future `vcs is` predicate false)
+- `2` — error (parse failure, mismatch, unsupported file, exclusivity violation, IO error, unknown verb/key for `vcs`, etc.)
+- `3` — VCS subprocess error (`vcs` subcommands only: not in a repo, git/jj invocation failed)
+- `4` — ambiguous answer (`vcs` subcommands only: detached HEAD, multiple bookmarks at the same head)
+- `5` — non-fast-forward push (reserved for `vcs push` in a future PR)
 
 ## Migrating from v0.4.x
 

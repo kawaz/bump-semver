@@ -24,6 +24,7 @@ Linux / macOS / Windows (amd64, arm64) のビルド済みバイナリも GitHub 
 bump-semver get <INPUT...>
 bump-semver <major|minor|patch|pre> <INPUT...> [--write]
 bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
+bump-semver vcs get <root|backend|current-branch>
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -73,6 +74,31 @@ bump-semver compare eq-major 1.2.3 1.9.7                      # exit 0 (同じ m
 bump-semver compare eq-patch 1.2.3 1.2.3-rc.1                 # exit 0 (pre-release 無視)
 bump-semver compare lt-minor Cargo.toml vcs:origin/main       # minor 以下しか動いてない?
 ```
+
+### vcs サブコマンド
+
+```
+bump-semver vcs get <root|backend|current-branch>
+```
+
+git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md))。PR-1 では読み取り専用の `vcs get` のみ提供。残りの verb (`vcs is` / `vcs diff` / `vcs commit` / `vcs push` / `vcs tag`) は段階的に追加予定。動機: Taskfile / justfile で git と jj を毎回手書き分岐する板挟みの解消。`bump-semver` は既に `vcs:` で VCS read を吸収しているので、その自然な拡張として `vcs` サブコマンド群を同居させる。
+
+| key | 出力 |
+|---|---|
+| `root` | リポジトリルートの絶対パス |
+| `backend` | `git` または `jj` (colocated 構成では jj が勝つ) |
+| `current-branch` | 一意に決まる現在の branch (git) / bookmark (jj)。DETACHED HEAD や同じ head に bookmark が複数 → exit 4 |
+
+終了コード (詳細は後述): `0` 成功 / `2` usage エラー / `3` VCS 実行エラー / `4` 曖昧 (`5` は将来の `vcs push` non-ff 用に予約)。
+
+```bash
+bump-semver vcs get backend                  # git
+bump-semver vcs get root                     # /path/to/repo
+bump-semver vcs get current-branch           # main
+ROOT=$(bump-semver vcs get root) || exit
+```
+
+`--vcs jj|git|auto` は引き続き有効。colocated 構成で git 側を見たい場合は `bump-semver vcs get backend --vcs git` で強制できる。
 
 ### フラグ
 
@@ -401,8 +427,11 @@ bump-semver: version mismatch:
 ### 終了コード
 
 - `0` — 成功 / compare 述語が真
-- `1` — compare 述語が偽
-- `2` — エラー (パース失敗、整合性 NG、未対応ファイル、排他オプション違反、IO エラー等)
+- `1` — compare 述語が偽 (将来の `vcs is` の偽も同じ)
+- `2` — エラー (パース失敗、整合性 NG、未対応ファイル、排他オプション違反、IO エラー、`vcs` の未知 verb/key 等)
+- `3` — VCS 実行エラー (`vcs` サブコマンドのみ: リポ外、git/jj 実行失敗)
+- `4` — 曖昧 (`vcs` サブコマンドのみ: DETACHED HEAD、同じ head に bookmark が複数)
+- `5` — non-fast-forward push (将来の `vcs push` 用に予約)
 
 ## v0.4.x からの移行
 

@@ -463,8 +463,11 @@ Notes:
   - clean / dirty (git): runs 'git diff --quiet' (unstaged) AND
     'git diff --cached --quiet' (staged). Untracked files do NOT
     count as dirty (PR-2 contract; a future opt-in would change this).
-  - clean / dirty (jj):  the working-copy change '@' is empty (template
-    keyword 'empty'). Because jj snapshots on read, newly-created files
+  - clean / dirty (jj):  '@' is clean when EITHER the change is empty
+    (template keyword 'empty' == "true") OR '@' is a merge commit
+    (parents > 1). Merge commits are meaningful nodes in the jj change
+    graph and read clean regardless of tree content (PR-2.1). Because
+    jj snapshots on read, newly-created files in a single-parent '@'
     DO render the worktree dirty. This asymmetry vs git is by design.
   - git / jj: compare against the auto-probe result. '--vcs git' /
     '--vcs jj' override forces the answer.

@@ -141,7 +141,7 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION 変更なし"
 |---|---|
 | `-m MSG PATH..` | 指定 path の working-tree 内容だけを stage + commit。存在しない path は黙ってスキップ (宣言的収束)。全 path 不在 / 全部変更なし → exit 0 (commit せず冪等成功) |
 | `-m MSG --staged` | staged / dirty な変更を一括 commit。**git**: index を commit。**jj**: `@` 全体を commit (jj は自動 stage)。内容なし → exit 0 (冪等) |
-| `--amend [-m MSG]` | 現在の変更を直前の commit に吸収。`-m` ありはメッセージ更新、なしは元メッセージ保持 (no-edit)。変更なし + `-m` のみ (= message-only amend) も意図的な rewrite として許容 |
+| `--amend [-m MSG]` | 現在の変更を**すべて**直前の commit に吸収。`-m` ありはメッセージ更新、なしは元メッセージ保持 (no-edit)。変更なし + `-m` のみ (= message-only amend) も意図的な rewrite として許容。`PATH..` / `--staged` は `--amend` と**併用不可** (MVP は `--amend [-m MSG]` のみ); path 限定の新規 commit が欲しい場合は `--amend` を外す |
 
 **`-a` / `--all` は意図的に非提供** (DR-0020 安全設計)。jj の「カレントコミット=自動 stage」世界観だと `-a` の unstaged 巻き込み挙動は事故を招きやすいため、`--staged` (全変更を commit) または `PATH..` を明示する形に絞っている。`-a` を渡すと exit 2 + `--staged` / `PATH..` への誘導 hint を返す。
 

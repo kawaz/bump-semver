@@ -3077,6 +3077,53 @@ func TestRun_VcsCommit_Paths_Jj(t *testing.T) {
 	})
 }
 
+// TestRun_VcsCommit_Amend_WithPath_Rejected: `--amend PATH..` must
+// reject with exit 2 (DR-0020 safety: silent path-ignore would be the
+// 巻き込み事故 the "path 必須" philosophy guards against).
+func TestRun_VcsCommit_Amend_WithPath_Rejected(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "commit", "--amend", "VERSION"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected --amend PATH to reject")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+		}
+		if !strings.Contains(stderr.String(), "--amend") {
+			t.Errorf("error should explain the --amend grammar, got: %q", stderr.String())
+		}
+	})
+}
+
+// TestRun_VcsCommit_Amend_WithStaged_Rejected: `--amend --staged` is
+// rejected for symmetry (silently-accepted no-op flag would be a UX
+// trap; the MVP amend grammar is `--amend [-m MSG]` only).
+func TestRun_VcsCommit_Amend_WithStaged_Rejected(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "commit", "--amend", "--staged"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected --amend --staged to reject")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+		}
+	})
+}
+
 // TestRun_VcsCommit_NotARepo: outside any vcs repo, `vcs commit` should
 // surface exit 3 (newVcsBackend failure), consistent with get/is/diff.
 func TestRun_VcsCommit_NotARepo(t *testing.T) {

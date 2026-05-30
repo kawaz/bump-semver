@@ -1088,6 +1088,20 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs commit: -m MSG is required (unless --amend)"))
 	}
+	// Step 3.5: amend + PATH / --staged reject (advisor catch).
+	//
+	// The MVP --amend grammar is `--amend [-m MSG]` only — it folds the
+	// entire current change into the previous commit. Path-restricted
+	// amend ("only fold these paths into @-") is a valid future feature
+	// but trivially implementable only on jj (`jj squash ... -- PATHS`);
+	// git --amend has no clean path-restriction semantic. Accepting +
+	// silently ignoring would be the worst outcome — it's the exact
+	// 巻き込み事故 the DR's "path 必須" philosophy guards against.
+	// `--staged` falls under the same rule for symmetry / clarity.
+	if args.vcsCommitAmend && (len(args.vcsArgs) > 0 || args.vcsCommitStaged) {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs commit: --amend folds all current changes; PATH.. / --staged are not supported with --amend (to commit specific paths as a NEW commit, drop --amend)"))
+	}
 	// Step 4: resolve backend.
 	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
@@ -1124,8 +1138,9 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 	}
 	// commit is silent on success (mirrors `git commit -q` philosophy
 	// for scripted callers; jj users get jj's own snapshot text in
-	// stderr from the subprocess but we don't echo on stdout).
-	_ = stdout
+	// stderr from the subprocess but we don't echo on stdout). The
+	// stdout writer is therefore unused — kept in the signature for
+	// dispatcher uniformity with the other vcs verbs.
 	return nil
 }
 

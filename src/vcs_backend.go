@@ -156,10 +156,10 @@ type commitOpts struct {
 	// paths at the parser layer.
 	staged bool
 
-	// amend folds the current change into the previous commit (git:
-	// --amend; jj: squash --from @ --into @-). When true, paths is
-	// applied as the source-restriction filter (not yet wired — MVP
-	// folds the entire change like git --amend).
+	// amend folds the entire current change into the previous commit
+	// (git: --amend; jj: squash --from @ --into @-). The parser layer
+	// guarantees paths/staged are zero when amend is true (= MVP grammar
+	// `--amend [-m MSG]` only) — see runVcsCmdCommit step 3.5 for why.
 	amend bool
 
 	// noEdit applies only with amend: keep the previous commit's

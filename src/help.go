@@ -569,11 +569,14 @@ Modes:
                   jj:  commits the entire @ snapshot (= all current changes,
                        since jj auto-stages).
                 No staged/dirty content → exit 0, no commit (idempotent).
-  --amend       Fold the current changes into the previous commit.
+  --amend       Fold ALL current changes into the previous commit.
                 With -m: rewrite the previous commit's message.
                 Without -m: preserve the previous commit's message (no-edit).
                 A message-only amend with no current changes is a legal
                 explicit rewrite (NOT subject to the no-op rule).
+                PATH.. and --staged are NOT supported with --amend
+                (MVP grammar: --amend [-m MSG] only). For a path-scoped
+                NEW commit, drop --amend.
 
 Arguments:
   -m, --message MSG    Commit message. Required UNLESS --amend.

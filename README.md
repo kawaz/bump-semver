@@ -141,7 +141,7 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
 |---|---|
 | `-m MSG PATH..` | Stage + commit each existing path's working-tree content. Nonexistent paths silently dropped (declarative convergence). All-nonexistent / no real change → exit 0 with no commit (idempotent) |
 | `-m MSG --staged` | Commit every staged/dirty change in one shot. **git**: commits the index. **jj**: commits the whole `@` snapshot (jj auto-stages). No content → exit 0, idempotent |
-| `--amend [-m MSG]` | Fold the current change into the previous commit. With `-m`: rewrite the message; without: preserve it (no-edit). Message-only amend with no current change is a legal explicit rewrite |
+| `--amend [-m MSG]` | Fold ALL current changes into the previous commit. With `-m`: rewrite the message; without: preserve it (no-edit). Message-only amend with no current change is a legal explicit rewrite. `PATH..` / `--staged` are **not supported** with `--amend` (MVP grammar `--amend [-m MSG]` only); for a path-scoped NEW commit, drop `--amend` |
 
 **`-a` / `--all` is intentionally not provided** (DR-0020 safety). jj's auto-staged worldview makes `-a`'s unstaged-grab semantic too easy to trip on; use `--staged` (commit all current changes) or pass `PATH..` explicitly. Calling `-a` exits 2 with a hint pointing at `--staged` / `PATH..`.
 

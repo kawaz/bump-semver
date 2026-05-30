@@ -1809,6 +1809,22 @@ func runBackendCmdIn(dir string, name string, args ...string) ([]byte, error) {
 //                                     line 74; the verb's intent is the
 //                                     end-state, not the transition)
 
+// jjResolveRev runs `jj log --no-graph -r REV -T commit_id` in dir and
+// returns the SHA jj currently sees for REV. This matters in test
+// assertions because jj auto-snapshots on every command, so git's view
+// of any given revspec can drift between subprocess calls — asking jj
+// for the SHA at the same moment as the assertion keeps the comparison
+// honest.
+func jjResolveRev(t *testing.T, dir, rev string) string {
+	t.Helper()
+	out, err := runBackendCmdIn(dir, "jj", "log", "--no-graph",
+		"-r", rev, "-T", `commit_id ++ "\n"`)
+	if err != nil {
+		t.Fatalf("jj log -r %s: %v", rev, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // tagOnBare returns the commit SHA the bare repo's NAME tag points at, or
 // "" when the bare has no such tag. We use `git -C bare show-ref` rather
 // than `rev-parse` so a missing ref returns empty rather than erroring —
@@ -2120,13 +2136,11 @@ func TestJjBackend_TagPush_NewTag(t *testing.T) {
 			t.Fatalf("TagPush(new): %v", err)
 		}
 	})
-	// @- on a fresh jj colocated repo resolves to the bump commit (the
-	// second commit setupGitRepo creates). Compare via git rev-parse.
-	wantOut, err := runBackendCmdIn(work, "git", "rev-parse", "HEAD")
-	if err != nil {
-		t.Fatalf("rev-parse HEAD: %v", err)
-	}
-	want := strings.TrimSpace(string(wantOut))
+	// Resolve `@-` via the same jj operation the SUT used; jj's
+	// auto-snapshot on every command means git's view of any given
+	// revspec can shift between subprocess calls, so we ask jj to
+	// resolve `@-` at the same moment we read the bare.
+	want := jjResolveRev(t, work, "@-")
 	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
 		t.Errorf("bare v1.0.0 = %q, want %q", got, want)
 	}
@@ -2224,9 +2238,9 @@ func TestJjBackend_TagPush_DiffRevAllowMove(t *testing.T) {
 			t.Fatalf("TagPush(--allow-move): %v", err)
 		}
 	})
-	// New target: @- which is the bump commit (= HEAD on the git side).
-	wantOut, _ := runBackendCmdIn(work, "git", "rev-parse", "HEAD")
-	want := strings.TrimSpace(string(wantOut))
+	// See TestJjBackend_TagPush_NewTag for why we resolve via jj rather
+	// than git rev-parse here.
+	want := jjResolveRev(t, work, "@-")
 	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
 		t.Errorf("bare v1.0.0 = %q, want %q (moved)", got, want)
 	}

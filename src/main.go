@@ -126,6 +126,26 @@ type cliArgs struct {
 	vcsPushNameSet   bool
 	vcsPushRemote    string
 	vcsPushRemoteSet bool
+
+	// vcsTagSubVerb / vcsTagRev / vcsTagRevSet / vcsTagAllowMove:
+	// DR-0020 PR-6. Verb-local to `vcs tag`.
+	//
+	// `vcs tag` is the first two-tier verb in the family — argv[1] is
+	// the parent "tag", argv[2] is the sub-verb ("push" | "delete"),
+	// argv[3..] is the sub-verb's payload (NAME plus flags).
+	// vcsTagSubVerb carries argv[2]; the parser captures it before
+	// scanning flags so verb-local flag gating ("--rev only under tag
+	// push") works the same way the existing single-tier verbs do.
+	//
+	// vcsTagAllowMove encodes the `--allow-move` flag (tag push only).
+	// vcsPushRemote (declared above) is reused for `--remote` because
+	// the semantics are identical across fetch/push/tag — the field is
+	// effectively "the user-specified remote for any verb that takes
+	// one"; the dispatcher reads it based on which verb is active.
+	vcsTagSubVerb   string
+	vcsTagRev       string
+	vcsTagRevSet    bool
+	vcsTagAllowMove bool
 }
 
 var bumpActions = map[string]bool{
@@ -208,18 +228,65 @@ func parseArgs(argv []string) (cliArgs, error) {
 		// Per-verb help only for known verbs — unknown verbs must
 		// surface as an exit-2 error, not as a silent help fallthrough.
 		// We route them to runVcsCmd which emits the proper usage error.
-		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push"
-		if len(argv) == 2 {
-			if isKnownVerb {
-				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"
+		// PR-6: `vcs tag` is the first two-tier verb. Sub-verb capture
+		// lives here so flag scanning can gate `--rev` / `--allow-move`
+		// on it the same way the single-tier verbs gate their flags.
+		//
+		// Help routing for tag:
+		//   vcs tag                                 → vcs tag help
+		//   vcs tag --help / -h                     → vcs tag help
+		//   vcs tag <subverb>                       → vcs tag <subverb> help
+		//   vcs tag <subverb> --help / -h           → vcs tag <subverb> help
+		//   vcs tag <subverb> <args>                → dispatch
+		// Unknown <subverb> falls through to runVcsCmd which reports
+		// the exit-2 usage error (mirroring unknown top-level verb
+		// handling above).
+		tagSubVerbStart := 2 // index where the sub-verb / args begin
+		if out.vcsVerb == "tag" {
+			if len(argv) == 2 {
+				return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
 			}
-			return out, nil
-		}
-		if argv[2] == "--help" || argv[2] == "-h" {
-			if isKnownVerb {
-				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+			if argv[2] == "--help" || argv[2] == "-h" {
+				return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
 			}
-			return out, nil
+			out.vcsTagSubVerb = argv[2]
+			isKnownSub := out.vcsTagSubVerb == "push" || out.vcsTagSubVerb == "delete"
+			if len(argv) == 3 {
+				if isKnownSub {
+					return cliArgs{
+						kind:   "helpAction",
+						action: "vcs tag " + out.vcsTagSubVerb,
+					}, nil
+				}
+				// Unknown sub-verb with no further args: still send to
+				// dispatcher so the exit-2 usage error fires (no silent
+				// help fallthrough).
+				return out, nil
+			}
+			if argv[3] == "--help" || argv[3] == "-h" {
+				if isKnownSub {
+					return cliArgs{
+						kind:   "helpAction",
+						action: "vcs tag " + out.vcsTagSubVerb,
+					}, nil
+				}
+				return out, nil
+			}
+			tagSubVerbStart = 3
+		} else {
+			if len(argv) == 2 {
+				if isKnownVerb {
+					return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+				}
+				return out, nil
+			}
+			if argv[2] == "--help" || argv[2] == "-h" {
+				if isKnownVerb {
+					return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+				}
+				return out, nil
+			}
 		}
 		// Split flags from positional vcsArgs. The vcs branch supports a
 		// curated subset of the global flags: --vcs (override), -q/-qq,
@@ -233,7 +300,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 		// `(verb == "diff")` guard inline is simpler than a verb→flags
 		// table. If verb-local flags grow, refactor to a table keyed by
 		// verb (see DR-0020 implementation notes).
-		rest := argv[2:]
+		rest := argv[tagSubVerbStart:]
 		for i := 0; i < len(rest); i++ {
 			a := rest[i]
 			switch {
@@ -336,7 +403,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 				eq := strings.IndexByte(a, '=')
 				out.vcsPushName = a[eq+1:]
 				out.vcsPushNameSet = true
-			case a == "--remote" && (out.vcsVerb == "fetch" || out.vcsVerb == "push"):
+			case a == "--remote" && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
 				if out.vcsPushRemoteSet {
 					return cliArgs{}, fmt.Errorf("--remote specified twice")
 				}
@@ -346,19 +413,50 @@ func parseArgs(argv []string) (cliArgs, error) {
 				out.vcsPushRemote = rest[i+1]
 				out.vcsPushRemoteSet = true
 				i++
-			case strings.HasPrefix(a, "--remote=") && (out.vcsVerb == "fetch" || out.vcsVerb == "push"):
+			case strings.HasPrefix(a, "--remote=") && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
 				if out.vcsPushRemoteSet {
 					return cliArgs{}, fmt.Errorf("--remote specified twice")
 				}
 				out.vcsPushRemote = strings.TrimPrefix(a, "--remote=")
 				out.vcsPushRemoteSet = true
+			// --- DR-0020 PR-6: vcs tag push flags ----------------------
+			//
+			// `--rev` carries the target revision for `vcs tag push`;
+			// `--allow-move` opts into moving an existing tag (DR-0020
+			// line 71). Both are verb-local to `vcs tag push` — when
+			// the sub-verb is `delete` or anything else, the generic
+			// unknown-flag catch-all below rejects them with exit 2,
+			// preserving the "wrong verb for this flag" guardrail that
+			// caught typos like `vcs get -s root` for PR-3.
+			case a == "--rev" && out.vcsVerb == "tag" && out.vcsTagSubVerb == "push":
+				if out.vcsTagRevSet {
+					return cliArgs{}, fmt.Errorf("--rev specified twice")
+				}
+				if i+1 >= len(rest) {
+					return cliArgs{}, fmt.Errorf("--rev requires a value (the target revision)")
+				}
+				out.vcsTagRev = rest[i+1]
+				out.vcsTagRevSet = true
+				i++
+			case strings.HasPrefix(a, "--rev=") && out.vcsVerb == "tag" && out.vcsTagSubVerb == "push":
+				if out.vcsTagRevSet {
+					return cliArgs{}, fmt.Errorf("--rev specified twice")
+				}
+				out.vcsTagRev = strings.TrimPrefix(a, "--rev=")
+				out.vcsTagRevSet = true
+			case a == "--allow-move" && out.vcsVerb == "tag" && out.vcsTagSubVerb == "push":
+				out.vcsTagAllowMove = true
 			case a == "--no-hint":
 				out.noHint = true
 			case a == "--":
 				out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
 				i = len(rest)
 			case strings.HasPrefix(a, "-") && a != "-":
-				return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", out.vcsVerb, a)
+				verbLabel := out.vcsVerb
+				if out.vcsVerb == "tag" && out.vcsTagSubVerb != "" {
+					verbLabel = "tag " + out.vcsTagSubVerb
+				}
+				return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", verbLabel, a)
 			default:
 				out.vcsArgs = append(out.vcsArgs, a)
 			}
@@ -852,9 +950,11 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdFetch(args, stdout, stderr)
 	case "push":
 		return runVcsCmdPush(args, stdout, stderr)
+	case "tag":
+		return runVcsCmdTag(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag)", args.vcsVerb))
 	}
 }
 
@@ -1319,6 +1419,166 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 		opts.stderr = stderr
 	}
 	if err := b.Push(opts); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	return nil
+}
+
+// runVcsCmdTag dispatches `vcs tag push` / `vcs tag delete` (DR-0020 PR-6).
+//
+// `vcs tag` is the first two-tier verb in the family. The parser captures
+// the sub-verb in args.vcsTagSubVerb; we route here on it and emit a
+// uniform exit-2 error for unknown / missing sub-verbs (mirroring the
+// top-level "unknown verb" handling).
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success (incl. idempotent same-rev push, absent-tag delete)
+//   - 2  usage error (sub-verb missing/unknown, NAME missing, bad shape)
+//   - 3  VCS subprocess error (unknown remote, bad REV, network failure)
+//   - 4  integrity violation: tag exists at a different REV without
+//        --allow-move (distinct from 3 so callers can detect "your tag
+//        has drifted" vs "git/jj broke")
+func runVcsCmdTag(args cliArgs, stdout, stderr io.Writer) error {
+	switch args.vcsTagSubVerb {
+	case "push":
+		return runVcsCmdTagPush(args, stdout, stderr)
+	case "delete":
+		return runVcsCmdTagDelete(args, stdout, stderr)
+	default:
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("unknown vcs tag sub-verb: %q (expected: push / delete)", args.vcsTagSubVerb))
+	}
+}
+
+// validTagName screens for bad NAME values before they reach the backend.
+// We catch:
+//   - empty string ("")
+//   - whitespace anywhere in the name (spaces, tabs, newlines — none of
+//     these are valid ref-name characters and silently passing them to
+//     git would create a confusingly-quoted ref)
+//   - "refs/" prefix (a common copy-paste mistake — the user typed
+//     "refs/tags/v1" thinking we want the full ref, but we prefix
+//     "refs/tags/" ourselves and would create refs/tags/refs/tags/...)
+//
+// More aggressive checks (e.g. all of git's
+// `check-ref-format --refname-component` rules) would be over-engineering
+// for the cases users actually hit; git/jj will surface deeper issues
+// with their own error messages.
+func validTagName(name string) error {
+	if name == "" {
+		return fmt.Errorf("NAME must not be empty")
+	}
+	if strings.ContainsAny(name, " \t\n\r") {
+		return fmt.Errorf("NAME %q contains whitespace (not a valid ref name)", name)
+	}
+	if strings.HasPrefix(name, "refs/") {
+		return fmt.Errorf("NAME %q must not start with refs/ (the tag-ref prefix is added automatically)", name)
+	}
+	return nil
+}
+
+// runVcsCmdTagPush implements `vcs tag push --rev REV NAME
+// [--remote REMOTE] [--allow-move]` (DR-0020 PR-6).
+//
+// Grammar requirements:
+//   - NAME is the sole positional, required. No auto-derivation from
+//     existing tags / latest version — explicit is safer than guessed.
+//   - --rev is required (no implicit "tag HEAD" — same explicit-only
+//     stance as `vcs push`'s --branch).
+//   - REMOTE defaults to "origin" when --remote is omitted.
+//   - --allow-move opts into moving an existing tag (DR-0020 line 71).
+//     Without it, an existing tag at a different REV is exit 4.
+//   - --force is intentionally not provided (use --allow-move instead).
+//     The parser doesn't capture --force as a special case — it falls
+//     through to the unknown-flag catch-all (exit 2 with hint pointing
+//     to --allow-move).
+func runVcsCmdTagPush(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) == 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag push: NAME is required (usage: vcs tag push --rev REV NAME)"))
+	}
+	if len(args.vcsArgs) > 1 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag push: takes exactly one NAME, got %d", len(args.vcsArgs)))
+	}
+	if !args.vcsTagRevSet {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag push: --rev REV is required"))
+	}
+	if args.vcsTagRev == "" {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag push: --rev value must not be empty"))
+	}
+	name := args.vcsArgs[0]
+	if err := validTagName(name); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag push: %w", err))
+	}
+	remote := "origin"
+	if args.vcsPushRemoteSet {
+		remote = args.vcsPushRemote
+	}
+	vcsOverride, _ := parseVcsOverride(args.vcs)
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	opts := tagPushOpts{
+		Name:      name,
+		Rev:       args.vcsTagRev,
+		Remote:    remote,
+		AllowMove: args.vcsTagAllowMove,
+	}
+	if !args.quietAll && !args.quiet {
+		opts.Stdout = stdout
+		opts.Stderr = stderr
+	}
+	if err := b.TagPush(opts); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	return nil
+}
+
+// runVcsCmdTagDelete implements `vcs tag delete NAME [--remote REMOTE]`
+// (DR-0020 PR-6).
+//
+// Grammar requirements:
+//   - NAME is the sole positional, required (no auto-detection: even
+//     though "delete all" would be technically definable, it's the kind
+//     of bulk destructive intent the verb design rejects per DR line 91).
+//   - REMOTE defaults to "origin".
+//
+// Delete is natively idempotent per DR line 74 (rm -f semantic) — an
+// absent tag is exit 0 with no error, because the verb's intent is the
+// end-state "no tag at NAME" which an absent tag already satisfies.
+func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) == 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag delete: NAME is required (usage: vcs tag delete NAME)"))
+	}
+	if len(args.vcsArgs) > 1 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag delete: takes exactly one NAME, got %d", len(args.vcsArgs)))
+	}
+	name := args.vcsArgs[0]
+	if err := validTagName(name); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag delete: %w", err))
+	}
+	remote := "origin"
+	if args.vcsPushRemoteSet {
+		remote = args.vcsPushRemote
+	}
+	vcsOverride, _ := parseVcsOverride(args.vcs)
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	opts := tagDeleteOpts{Name: name, Remote: remote}
+	if !args.quietAll && !args.quiet {
+		opts.Stdout = stdout
+		opts.Stderr = stderr
+	}
+	if err := b.TagDelete(opts); err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
 	return nil

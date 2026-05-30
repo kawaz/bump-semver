@@ -376,6 +376,11 @@ Verbs:
   push --branch NAME [--remote REMOTE]
                               Push NAME to REMOTE (default: origin).
                               (jj users: "branch" = bookmark; --bookmark also accepted.)
+  tag push --rev REV NAME [--remote REMOTE] [--allow-move]
+                              Create / move tag NAME at REV and push to REMOTE.
+                              Same-rev re-push is idempotent; different-rev needs --allow-move.
+  tag delete NAME [--remote REMOTE]
+                              Delete tag NAME locally and on REMOTE (idempotent — absent is OK).
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -388,7 +393,9 @@ Exit codes:
   1   predicate false (vcs is — silent on stderr, mirrors compare)
   2   usage error (unknown verb / unknown key / wrong number of args)
   3   VCS subprocess error (not a repo, command failed)
-  4   ambiguous answer (e.g. detached HEAD, multiple bookmarks)
+  4   ambiguous answer (e.g. detached HEAD, multiple bookmarks) —
+      also used by 'vcs tag push' when an existing tag points at a
+      different rev and --allow-move was not passed (integrity violation)
   5   non-fast-forward rejection (vcs push — remote has diverged)
 `
 
@@ -752,24 +759,175 @@ Examples:
   bump-semver vcs push --branch release-1.2  # push a feature/release branch
 `
 
+// helpVcsTag documents the `vcs tag` parent verb (DR-0020 PR-6).
+//
+// `vcs tag` is the first two-tier verb in the family; the parent help
+// just enumerates the sub-verbs and points at their dedicated help.
+// Per kawaz CLI design preferences: sections in order (sub-verb list,
+// global options, exit codes), long options only.
+const helpVcsTag = `bump-semver vcs tag — manage tags atomically (create+push / delete) [DR-0020]
+
+Usage:
+  bump-semver vcs tag <sub-verb> [args...]
+  bump-semver vcs tag --help
+
+Sub-verbs:
+  push --rev REV NAME [--remote REMOTE] [--allow-move]
+                              Create / move tag NAME at REV and push to REMOTE.
+  delete NAME [--remote REMOTE]
+                              Delete tag NAME locally and on REMOTE (idempotent).
+
+Notes:
+  - 'tag push' is intentionally NOT separable into "tag locally then push later".
+    The verb's contract is "the tag points to REV on the remote when this returns";
+    the local create is the means, not the deliverable. This keeps tags
+    1-1 with their remote presence (DR-0020 design — no orphan local tags
+    that didn't make it out).
+  - 'tag delete' removes both halves (local + remote) — pair with 'tag push'
+    so the lifecycle stays symmetric. Either half being missing is fine
+    (idempotent rm -f semantic).
+  - 'tag list' is NOT provided — use 'git tag --list' / 'jj tag list'
+    directly; the underlying tools' filters / templates are richer than
+    anything a bump-semver shim would expose.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+  --help, -h             Show this help
+
+Exit codes:
+  0   success (incl. idempotent same-rev push, absent-tag delete)
+  2   usage error (sub-verb missing / unknown, NAME shape problem)
+  3   VCS subprocess error (unknown remote, bad REV, network failure)
+  4   integrity violation: 'tag push' against an existing different-rev tag
+      without --allow-move (distinct from 3 so callers can detect
+      "tag drifted" vs "git/jj broke")
+`
+
+// helpVcsTagPush documents `vcs tag push --rev REV NAME [--remote REMOTE]
+// [--allow-move]` (DR-0020 PR-6).
+const helpVcsTagPush = `bump-semver vcs tag push — create or move a tag and push it [DR-0020]
+
+Usage:
+  bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
+
+Arguments:
+  NAME             Tag name (e.g. "v1.2.3"). Required. Must not be empty,
+                   must not contain whitespace, must not start with "refs/"
+                   (the "refs/tags/" prefix is added automatically).
+
+Verb Options:
+  --rev REV        Target revision (any git rev-spec / jj revset). Required.
+  --remote REMOTE  Target remote. Defaults to "origin".
+  --allow-move     Permit moving an existing tag to a different REV.
+                   Without this flag, a different-rev tag is exit 4
+                   (integrity violation). Same-rev re-push is always OK.
+
+Behaviour:
+  - absent local tag           → create at REV, push to remote
+  - local tag at same REV      → skip local create, still push
+                                 (片落ちリカバリ: remote may be missing it
+                                 even when local has it; the push is a
+                                 clean no-op if remote also matches)
+  - local tag at different REV → exit 4 (no side-effect), unless
+                                 --allow-move is set, in which case the
+                                 tag moves and is force-pushed.
+  - bad REV                    → exit 3 (resolution failure surfaces
+                                 before any side-effect).
+
+Not provided by design:
+  --force / --force-with-lease   Use --allow-move. Force is too broad —
+                                 it conflates "same-rev idempotent push"
+                                 with "different-rev rewrite"; --allow-move
+                                 is the precise opt-in (DR-0020 line 71/91).
+  --tags / --all                 Bulk operations are out of scope.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+
+Exit codes:
+  0   success (incl. idempotent same-rev re-push)
+  2   usage error (NAME missing / bad shape, --rev missing, --force passed)
+  3   VCS subprocess error (unknown remote, bad REV, network failure)
+  4   integrity violation: tag exists at a different REV, --allow-move
+      not set. No local move, no push attempted.
+
+Examples:
+  bump-semver vcs tag push --rev HEAD v1.2.3
+                                                # tag HEAD as v1.2.3, push to origin
+  bump-semver vcs tag push --rev "$(bump-semver get VERSION)" v1.2.3
+                                                # not useful; use a rev-spec, not a version
+  bump-semver vcs tag push --rev main v1.2.3 --remote upstream
+                                                # tag main, push to upstream
+  bump-semver vcs tag push --rev HEAD~1 v1.2.3 --allow-move
+                                                # move existing v1.2.3 back one commit
+`
+
+// helpVcsTagDelete documents `vcs tag delete NAME [--remote REMOTE]`
+// (DR-0020 PR-6).
+const helpVcsTagDelete = `bump-semver vcs tag delete — remove a tag locally and on a remote [DR-0020]
+
+Usage:
+  bump-semver vcs tag delete NAME [--remote REMOTE]
+
+Arguments:
+  NAME             Tag name to delete. Required.
+  --remote REMOTE  Target remote. Defaults to "origin".
+
+Behaviour:
+  - Removes both the local tag AND the remote tag.
+  - Idempotent (rm -f semantic): an absent tag on either side is exit 0,
+    not an error. The verb's intent is the end-state "NAME has no tag",
+    which an already-absent tag already satisfies.
+  - A genuine remote failure (unknown remote, network down) is exit 3;
+    the local-half side-effect may have already happened (we accept that
+    asymmetry — the common case is "remote is fine, just clean up").
+
+Not provided by design:
+  --allow-missing  Delete is natively idempotent; the flag would be no-op
+                   in every case (DR-0020 line 74 / 92).
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+
+Exit codes:
+  0   success (tag removed from both sides, OR already absent — same result)
+  2   usage error (NAME missing / bad shape)
+  3   VCS subprocess error (unknown remote, network failure, not a repo)
+
+Examples:
+  bump-semver vcs tag delete v0.9.0             # remove from local + origin
+  bump-semver vcs tag delete v0.9.0 --remote upstream
+                                                # delete from a non-default remote
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
 //
 // Two-tier verbs use space-separated keys ("vcs get"). The parent verb
 // ("vcs") gets the parent help; per-verb keys map to the per-verb help.
+// Three-tier paths ("vcs tag push") are introduced by PR-6.
 var actionHelpTexts = map[string]string{
-	"major":      helpBump,
-	"minor":      helpBump,
-	"patch":      helpBump,
-	"pre":        helpPre,
-	"get":        helpGet,
-	"compare":    helpCompare,
-	"vcs":        helpVcs,
-	"vcs get":    helpVcsGet,
-	"vcs is":     helpVcsIs,
-	"vcs diff":   helpVcsDiff,
-	"vcs commit": helpVcsCommit,
-	"vcs fetch":  helpVcsFetch,
-	"vcs push":   helpVcsPush,
+	"major":          helpBump,
+	"minor":          helpBump,
+	"patch":          helpBump,
+	"pre":            helpPre,
+	"get":            helpGet,
+	"compare":        helpCompare,
+	"vcs":            helpVcs,
+	"vcs get":        helpVcsGet,
+	"vcs is":         helpVcsIs,
+	"vcs diff":       helpVcsDiff,
+	"vcs commit":     helpVcsCommit,
+	"vcs fetch":      helpVcsFetch,
+	"vcs push":       helpVcsPush,
+	"vcs tag":        helpVcsTag,
+	"vcs tag push":   helpVcsTagPush,
+	"vcs tag delete": helpVcsTagDelete,
 }

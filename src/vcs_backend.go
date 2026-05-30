@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -171,6 +172,100 @@ type vcsBackend interface {
 	// underlying subprocess fails so callers preserve the exit-code
 	// contract (exit 3 outside a vcs operation context).
 	Commit(opts commitOpts) error
+
+	// TagPush creates / moves a tag locally AND pushes it to opts.Remote
+	// in a single atomic intent (DR-0020 PR-6). The verb's meaning is "the
+	// tag should point to REV on the remote when this returns" — the local
+	// create is the means, not the deliverable.
+	//
+	// Branch logic (shared across backends via resolveTagPushPlan):
+	//   - existing tag SHA == REV's SHA   → skip local create, still push
+	//     (片落ちリカバリ: remote may be missing it even though local has
+	//     it; same-rev push is a clean no-op on the remote when already
+	//     there, and a forward-push when only local had it)
+	//   - existing tag SHA != REV's SHA, !AllowMove → *exitErr{exitCodeAmbiguous (4)}
+	//     with NO side-effect (no local move, no push attempt). Distinct
+	//     from generic exitCodeVCSExec so callers can branch on integrity
+	//     vs. infrastructure failures.
+	//   - existing tag SHA != REV's SHA, AllowMove → force-move locally,
+	//     `--force`-push to remote.
+	//   - no existing tag                 → create + push.
+	//
+	// REV-resolution failure → *exitErr{exitCodeVCSExec (3)}, before any
+	// side-effect. This keeps "you typed the rev wrong" distinguishable
+	// from "your tag has drifted" (4) and "git/jj broke" (also 3 but with
+	// the underlying tool's stderr folded in).
+	//
+	// Force-push choice (DR-0020 PR-6 implementation notes): plain `--force`
+	// rather than `--force-with-lease`. The move is already gated behind
+	// AllowMove (user-confirmed) and the diff-rev pre-check (we know what
+	// we're overwriting), so the lease adds no real protection for tag refs
+	// (tags don't have remote-tracking refs, so a bare `--force-with-lease`
+	// can't establish a lease and is no safer than `--force`). An explicit
+	// lease value `--force-with-lease=refs/tags/NAME:<remote-sha>` would
+	// require an extra ls-remote round trip without strengthening the
+	// safety story.
+	TagPush(opts tagPushOpts) error
+
+	// TagDelete removes a tag from both the local VCS and opts.Remote
+	// (DR-0020 PR-6). Delete is natively idempotent (`rm -f` semantic per
+	// DR line 74: the verb's intent is the end-state "no tag", and an
+	// already-absent tag is an end-state already achieved):
+	//
+	//   - local half:  `git tag -d` errors on missing tags, so the git
+	//                  backend MUST pre-check with `git rev-parse -q
+	//                  --verify`. jj's `jj tag delete` is natively
+	//                  idempotent.
+	//   - remote half: `git push origin :refs/tags/NAME` against a missing
+	//                  remote ref reports "deleting a non-existent ref"
+	//                  but EXITS 0, so both backends can run it
+	//                  unconditionally without breaking idempotence.
+	//
+	// A genuine remote-side failure (unknown remote name, network down)
+	// surfaces as *exitErr{exitCodeVCSExec (3)} — the local half may
+	// already have succeeded by then; we accept that asymmetry because
+	// the alternative ("only delete locally if remote ack'd") would
+	// trade rare clean retries for the common "remote is offline, I just
+	// want to clean up my local tags" use case.
+	TagDelete(opts tagDeleteOpts) error
+}
+
+// tagPushOpts collects the arguments for TagPush. Kept as a struct (vs.
+// positional args) so future extensions (e.g. a `--remote-only` flag for
+// "I already have the tag locally, only push") plug in without breaking
+// existing callers.
+type tagPushOpts struct {
+	// Name is the tag name (e.g. "v1.2.3"). Required; the dispatcher
+	// validates non-empty and screens for surface bugs (refs/-prefix,
+	// whitespace) before reaching here.
+	Name string
+	// Rev is the revision the tag should point at (any git rev-spec / jj
+	// revset). Required. Resolution failure → *exitErr{exitCodeVCSExec}.
+	Rev string
+	// Remote is the named remote to push to. Required; dispatcher
+	// defaults to "origin" when the user omits --remote.
+	Remote string
+	// AllowMove permits moving an existing tag to a different rev. The
+	// same-rev idempotent case does NOT need AllowMove (DR-0020 line 71).
+	AllowMove bool
+	// Stdout / Stderr receive the underlying tool's success-path
+	// diagnostic output (mirrors PR-5.1 Push). Backend may use io.Discard
+	// when not interested; the dispatcher wires the user's stdout/stderr
+	// when -q/-qq are not set.
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// tagDeleteOpts collects the arguments for TagDelete. Same justification
+// for the struct shape as tagPushOpts.
+type tagDeleteOpts struct {
+	// Name is the tag name to delete. Required.
+	Name string
+	// Remote is the named remote to delete from. Required; dispatcher
+	// defaults to "origin".
+	Remote string
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // commitOpts collects the modal arguments for `Commit`. Kept as a
@@ -1202,4 +1297,410 @@ func formatPushError(tool, stderr, stdout string) string {
 		return fmt.Sprintf("%s push failed", tool)
 	}
 	return fmt.Sprintf("%s push failed: %s", tool, s)
+}
+
+// --- TagPush / TagDelete implementations (DR-0020 PR-6) -------------------
+
+// jjGitPushDir returns the directory to pass to `git -C` for the
+// tag-push step in jj backend operations.
+//
+// Two layouts are supported (DR-0020 line 105):
+//   - colocated:  `.git` is a real directory inside cwd. Push from cwd
+//     itself — pushing from inside `.git/` would lose the worktree
+//     context that pre-push hooks expect.
+//   - non-colocated: `.jj/repo/store/git_target` points to the backing
+//     bare repo (typically an absolute path under `~/.local/share/.../`).
+//     Bare repos push fine without a worktree, so `git -C <bare>` is
+//     correct here.
+//
+// Errors wrap as *exitErr{exitCodeVCSExec}.
+func jjGitPushDir() (string, error) {
+	// Colocated check: a `.git` entry in cwd that is a directory wins
+	// regardless of what git_target says. Saves us from "git_target's
+	// relative path resolved to the same .git but the bare config doesn't
+	// reach our hooks" cases.
+	if fi, err := os.Stat(".git"); err == nil && fi.IsDir() {
+		// Empty dir-arg means "use cwd" downstream — avoids special-casing
+		// the worktree/git-dir split.
+		return "", nil
+	}
+	const rel = ".jj/repo/store/git_target"
+	raw, err := os.ReadFile(rel)
+	if err != nil {
+		return "", &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("read .jj/repo/store/git_target: %v", err),
+		}
+	}
+	target := strings.TrimSpace(string(raw))
+	if target == "" {
+		return "", &exitErr{
+			code: exitCodeVCSExec,
+			msg:  ".jj/repo/store/git_target is empty",
+		}
+	}
+	if !filepath.IsAbs(target) {
+		base := ".jj/repo/store"
+		joined := filepath.Join(base, target)
+		abs, absErr := filepath.Abs(joined)
+		if absErr != nil {
+			return "", &exitErr{
+				code: exitCodeVCSExec,
+				msg:  fmt.Sprintf("resolve %s: %v", joined, absErr),
+			}
+		}
+		return abs, nil
+	}
+	return target, nil
+}
+
+// resolveGitRev returns the commit SHA `rev` resolves to in the cwd git
+// repo, or *exitErr{exitCodeVCSExec} on resolution failure.
+//
+// `^{commit}` peeling ensures annotated tags resolve to their target
+// commit (so comparing two refs that one is an annotated tag and the
+// other a rev-spec both land on the commit SHA, not the tag-object SHA).
+func resolveGitRev(rev string) (string, error) {
+	out, err := runBackendCmd("git", "rev-parse", "--verify", rev+"^{commit}")
+	if err != nil {
+		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// existingGitTagSHA returns the commit SHA that refs/tags/NAME points at,
+// or "" when the tag is absent. `-q --verify` makes a missing ref exit 1
+// with empty stdout (cleanly distinguished from "weird error"), and the
+// `^{commit}` peel keeps annotated tags landing on a commit SHA.
+//
+// Errors from genuine VCS failures (not "missing", which is the empty-
+// string return) bubble up so callers wrap with exitCodeVCSExec.
+func existingGitTagSHA(name string) string {
+	out, err := runBackendCmd("git", "rev-parse", "-q", "--verify", "refs/tags/"+name+"^{commit}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// resolveJjRev returns the commit SHA `rev` resolves to in the cwd jj
+// repo, or *exitErr{exitCodeVCSExec} on resolution failure.
+//
+// We use `jj log --no-graph -r REV -T commit_id` which (a) prints exactly
+// one line per resolved change and (b) emits the canonical 40-char commit
+// SHA — same format `git rev-parse` returns so cross-backend SHA
+// comparisons stay trivial.
+func resolveJjRev(rev string) (string, error) {
+	out, err := runBackendCmd("jj", "log", "--no-graph", "-r", rev, "-T", `commit_id ++ "\n"`)
+	if err != nil {
+		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	// jj prints one line per matched change. A multi-line result means
+	// the revset matched more than one change — treat as ambiguous-like
+	// VCS error (the caller wrote a revset that doesn't yield a single
+	// commit; jj's own error message would be similar).
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return "", &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("jj rev %q resolved to nothing", rev),
+		}
+	}
+	if len(lines) > 1 {
+		return "", &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("jj rev %q matched multiple changes", rev),
+		}
+	}
+	return lines[0], nil
+}
+
+// existingJjTagSHA returns the commit SHA that NAME points at in jj, or
+// "" when the tag is absent. Uses `jj tag list NAME -T` with the
+// `self.normal_target().commit_id()` keyword (verified in PR-6 probing on
+// jj 0.41). Multi-line output is treated as "not present" so the caller
+// proceeds with the create path; a downstream `jj tag set` will surface
+// any actual error.
+func existingJjTagSHA(name string) string {
+	out, err := runBackendCmd("jj", "tag", "list", name,
+		"-T", `self.normal_target().commit_id() ++ "\n"`)
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) != 1 {
+		return ""
+	}
+	return lines[0]
+}
+
+// tagPushDecision captures the shared-logic outcome before any backend
+// command runs. The four states map 1-1 to the DR-0020 PR-6 contract
+// (lines 71): absent → create+push; same → skip-create+push; diff+!move
+// → error 4; diff+move → move+force-push.
+type tagPushDecision int
+
+const (
+	tagPushDecisionCreate     tagPushDecision = iota // absent locally
+	tagPushDecisionSkipCreate                        // exists locally at same REV
+	tagPushDecisionMove                              // exists locally at different REV, AllowMove set
+	tagPushDecisionReject                            // exists locally at different REV, AllowMove not set
+)
+
+// decideTagPush implements the shared-logic decision matrix above. Pure
+// function over (existingSHA, targetSHA, allowMove); the backend feeds it
+// its own resolved values and acts on the returned decision.
+func decideTagPush(existingSHA, targetSHA string, allowMove bool) tagPushDecision {
+	switch {
+	case existingSHA == "":
+		return tagPushDecisionCreate
+	case existingSHA == targetSHA:
+		return tagPushDecisionSkipCreate
+	case allowMove:
+		return tagPushDecisionMove
+	default:
+		return tagPushDecisionReject
+	}
+}
+
+// formatTagDiffRevError builds the exit-4 message for the rejected
+// diff-rev case. The wording calls out --allow-move as the override so
+// the user can act on the hint without consulting the help text.
+func formatTagDiffRevError(name, existingSHA, targetSHA string) string {
+	return fmt.Sprintf(
+		"tag %q already points to %s, want %s; pass --allow-move to move it",
+		name, shortSHA(existingSHA), shortSHA(targetSHA))
+}
+
+// shortSHA truncates a 40-char commit SHA to 12 chars for human-readable
+// error messages. Empty or short inputs pass through unchanged.
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+// gitTagPushRemote runs the actual `git push` against opts.Remote for a
+// freshly-created or freshly-moved local tag. `force` adds `--force` —
+// required for the move case because the remote ref already exists at a
+// different value (plain push is rejected with `(already exists)`).
+//
+// Success-path stdout/stderr is forwarded via writePushDiagnostic
+// (matches PR-5.1 Push behaviour). Non-zero exit becomes
+// *exitErr{exitCodeVCSExec} with the underlying stderr folded in.
+func gitTagPushRemote(opts tagPushOpts, force bool, dir string) error {
+	args := []string{"push"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, opts.Remote, "refs/tags/"+opts.Name)
+	var stdoutBuf, stderrBuf strings.Builder
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	runErr := cmd.Run()
+	stdout := stdoutBuf.String()
+	stderr := stderrBuf.String()
+	if runErr == nil {
+		writePushDiagnostic(opts.Stdout, stdout)
+		writePushDiagnostic(opts.Stderr, stderr)
+		return nil
+	}
+	var ee *exec.ExitError
+	if errors.As(runErr, &ee) {
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  formatPushError("git", stderr, stdout),
+		}
+	}
+	return &exitErr{
+		code: exitCodeVCSExec,
+		msg:  fmt.Sprintf("git %s: %v", strings.Join(args, " "), runErr),
+	}
+}
+
+// gitTagDeleteRemote runs `git push origin :refs/tags/NAME`. Idempotent by
+// virtue of git's own behaviour: a missing remote tag yields "warning:
+// deleting a non-existent ref" with exit 0. The only failure path is a
+// genuine remote/network error.
+func gitTagDeleteRemote(opts tagDeleteOpts, dir string) error {
+	cmd := exec.Command("git", "push", opts.Remote, ":refs/tags/"+opts.Name)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	var stdoutBuf, stderrBuf strings.Builder
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	if err := cmd.Run(); err != nil {
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  formatPushError("git",
+				stderrBuf.String(), stdoutBuf.String()),
+		}
+	}
+	writePushDiagnostic(opts.Stdout, stdoutBuf.String())
+	writePushDiagnostic(opts.Stderr, stderrBuf.String())
+	return nil
+}
+
+// TagPush (git): resolve REV → SHA, look up existing tag SHA, decide,
+// then create-or-move locally and push.
+func (g *gitBackend) TagPush(opts tagPushOpts) error {
+	targetSHA, err := resolveGitRev(opts.Rev)
+	if err != nil {
+		return err
+	}
+	existingSHA := existingGitTagSHA(opts.Name)
+	switch decideTagPush(existingSHA, targetSHA, opts.AllowMove) {
+	case tagPushDecisionReject:
+		return &exitErr{
+			code: exitCodeAmbiguous,
+			msg:  formatTagDiffRevError(opts.Name, existingSHA, targetSHA),
+		}
+	case tagPushDecisionCreate:
+		if _, err := runBackendCmd("git", "tag", opts.Name, targetSHA); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		return gitTagPushRemote(opts, false, "")
+	case tagPushDecisionSkipCreate:
+		// Local already has it at the same target — 片落ちリカバリ case.
+		// Still issue the push so the remote converges; non-force is
+		// safe because we know the local SHA matches what we want.
+		return gitTagPushRemote(opts, false, "")
+	case tagPushDecisionMove:
+		if _, err := runBackendCmd("git", "tag", "-f", opts.Name, targetSHA); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		return gitTagPushRemote(opts, true, "")
+	default:
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("internal: unhandled tag push decision"),
+		}
+	}
+}
+
+// TagDelete (git): pre-check existence on the local side (git tag -d errors
+// on missing), then unconditionally push :refs/tags/NAME to the remote
+// (idempotent by git's own behaviour).
+func (g *gitBackend) TagDelete(opts tagDeleteOpts) error {
+	if existingGitTagSHA(opts.Name) != "" {
+		if _, err := runBackendCmd("git", "tag", "-d", opts.Name); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+	}
+	return gitTagDeleteRemote(opts, "")
+}
+
+// TagPush (jj): same logic as the git backend but routes the local create
+// through `jj tag set`, runs `jj git export` to materialise the tag in
+// the underlying git store, then issues a native `git -C <git_target>
+// push` against the remote.
+//
+// Why native git push for the remote half: jj 0.41 has no native
+// tag-push command (`jj git push --bookmark` only handles bookmarks,
+// and the push-everything `jj git push` is too broad — DR-0020 requires
+// per-tag intent). DR-0020 line 70 commits to "create via jj tag set,
+// push via native git" so jj retains tag awareness while we get fine-
+// grained remote control.
+func (j *jjBackend) TagPush(opts tagPushOpts) error {
+	targetSHA, err := resolveJjRev(opts.Rev)
+	if err != nil {
+		return err
+	}
+	existingSHA := existingJjTagSHA(opts.Name)
+	gitTarget, gtErr := jjGitPushDir()
+	if gtErr != nil {
+		return gtErr
+	}
+	switch decideTagPush(existingSHA, targetSHA, opts.AllowMove) {
+	case tagPushDecisionReject:
+		return &exitErr{
+			code: exitCodeAmbiguous,
+			msg:  formatTagDiffRevError(opts.Name, existingSHA, targetSHA),
+		}
+	case tagPushDecisionCreate:
+		if _, err := runBackendCmd("jj", "tag", "set", opts.Name, "-r", opts.Rev); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if err := jjGitExportOrWrap(); err != nil {
+			return err
+		}
+		return gitTagPushRemote(opts, false, gitTarget)
+	case tagPushDecisionSkipCreate:
+		// Local already has it at the same target — ensure git store has
+		// it (export is a no-op if it's already there), then push.
+		if err := jjGitExportOrWrap(); err != nil {
+			return err
+		}
+		return gitTagPushRemote(opts, false, gitTarget)
+	case tagPushDecisionMove:
+		if _, err := runBackendCmd("jj", "tag", "set", opts.Name,
+			"-r", opts.Rev, "--allow-move"); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if err := jjGitExportOrWrap(); err != nil {
+			return err
+		}
+		return gitTagPushRemote(opts, true, gitTarget)
+	default:
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("internal: unhandled tag push decision"),
+		}
+	}
+}
+
+// TagDelete (jj): `jj tag delete` is natively idempotent (PR-6 probing on
+// jj 0.41 confirms missing-NAME yields "No matching tags" with exit 0),
+// so we can run it unconditionally. Export so the git store loses the
+// ref, then push the delete to the remote (also idempotent at the git
+// layer).
+func (j *jjBackend) TagDelete(opts tagDeleteOpts) error {
+	if _, err := runBackendCmd("jj", "tag", "delete", opts.Name); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if err := jjGitExportOrWrap(); err != nil {
+		return err
+	}
+	gitTarget, gtErr := jjGitPushDir()
+	if gtErr != nil {
+		return gtErr
+	}
+	return gitTagDeleteRemote(opts, gitTarget)
+}
+
+// jjGitExportOrWrap runs `jj git export` via the same seam Push uses, so
+// the PR-5.1 retry-once + recovery-hint hardening is shared. The retry
+// covers transient packed-refs locks and HEAD races that surfaced in
+// PR-5 testing (jj-vcs/jj #493, #6098, #6203). PR-6 reuses the seam
+// rather than introducing a parallel export path.
+func jjGitExportOrWrap() error {
+	exStderr1, exCode1, exErr1 := jjGitExportFunc()
+	if exErr1 == nil && exCode1 == 0 {
+		return nil
+	}
+	exStderr2, exCode2, exErr2 := jjGitExportFunc()
+	if exErr2 == nil && exCode2 == 0 {
+		return nil
+	}
+	finalStderr := strings.TrimSpace(exStderr2)
+	if finalStderr == "" {
+		finalStderr = strings.TrimSpace(exStderr1)
+	}
+	if exErr2 != nil {
+		finalStderr = strings.TrimSpace(finalStderr + "\n" + exErr2.Error())
+	}
+	return &exitErr{
+		code: exitCodeVCSExec,
+		msg:  jjGitExportRecoveryMessage(finalStderr),
+	}
 }

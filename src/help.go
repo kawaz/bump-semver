@@ -24,7 +24,7 @@ Actions:
   patch      Bump patch (x.y.Z)
   pre        Pre-release identifiers (counter advance / set / remove)
   compare    Compare two SemVer values via <eq|lt|le|gt|ge|...>
-  vcs        VCS helpers (git/jj-agnostic; e.g. vcs get root|backend|current-branch)
+  vcs        VCS helpers (git/jj-agnostic; e.g. vcs get root, vcs is clean)
 
 Action-specific help: bump-semver <action> --help
 Full reference:       bump-semver --help-full
@@ -117,11 +117,13 @@ VCS helpers (DR-0020):
   vcs get root             Print the repository root
   vcs get backend          Print "git" or "jj"
   vcs get current-branch   Print the unambiguous branch (git) / bookmark (jj)
+  vcs is clean|dirty       Test worktree cleanliness (untracked ignored on git)
+  vcs is git|jj            Test the detected backend
   (See: bump-semver vcs --help)
 
 Exit codes:
-  0   success (or compare predicate true)
-  1   compare predicate false (or 'vcs is' predicate false in future PRs)
+  0   success (or predicate true)
+  1   predicate false (compare / vcs is — silent on stderr)
   2   usage error (parse failure, mismatch, missing input, unknown verb/key, etc.)
   3   VCS subprocess error (vcs subcommands only — e.g. not in a repo)
   4   ambiguous answer (vcs subcommands only — e.g. detached HEAD)
@@ -359,6 +361,7 @@ Usage:
 
 Verbs:
   get <key>     Read a value from the VCS. Keys: root | backend | current-branch.
+  is  <pred>    Test a predicate. Predicates: clean | dirty | git | jj. Exit 0=true, 1=false.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -367,7 +370,8 @@ Global Options:
   --help, -h             Show this help
 
 Exit codes:
-  0   success
+  0   success (predicate true)
+  1   predicate false (vcs is — silent on stderr, mirrors compare)
   2   usage error (unknown verb / unknown key / wrong number of args)
   3   VCS subprocess error (not a repo, command failed)
   4   ambiguous answer (e.g. detached HEAD, multiple bookmarks)
@@ -410,6 +414,57 @@ Examples:
   ROOT=$(bump-semver vcs get root) || exit    # capture for further use
 `
 
+// helpVcsIs documents `vcs is <pred>` (DR-0020 PR-2).
+//
+// The four predicates are intentionally minimal: `clean` / `dirty` cover
+// "is the worktree ready to commit?" — the question Taskfile/justfile
+// authors actually ask before bumping a version. `git` / `jj` cover
+// "which backend was selected?" so shell scripts can branch without
+// re-running the probe themselves.
+//
+// Future predicates (`ahead` / `behind` / …) plug in here as the
+// design rolls out; backend-specific concepts (e.g. jj's empty `@`)
+// are intentionally excluded for portability.
+const helpVcsIs = `bump-semver vcs is — test a VCS predicate [DR-0020]
+
+Usage:
+  bump-semver vcs is <pred>
+
+Predicates:
+  clean    Worktree has no uncommitted changes (tracked-only; untracked
+           files are ignored on git, snapshotted on jj — see notes).
+  dirty    !clean (worktree has uncommitted changes).
+  git      The detected backend is git.
+  jj       The detected backend is jj.
+
+Notes:
+  - clean / dirty (git): runs 'git diff --quiet' (unstaged) AND
+    'git diff --cached --quiet' (staged). Untracked files do NOT
+    count as dirty (PR-2 contract; a future opt-in would change this).
+  - clean / dirty (jj):  the working-copy change '@' is empty (template
+    keyword 'empty'). Because jj snapshots on read, newly-created files
+    DO render the worktree dirty. This asymmetry vs git is by design.
+  - git / jj: compare against the auto-probe result. '--vcs git' /
+    '--vcs jj' override forces the answer.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            (no-op for is — there is no stdout payload)
+  -qq, --quiet-all       Suppress error output (use with caution)
+
+Exit codes:
+  0   predicate true
+  1   predicate false (silent on stderr, mirrors compare)
+  2   usage error (predicate missing / unknown / multiple given)
+  3   VCS subprocess error (not a repo, command failed)
+  4   ambiguous answer (reserved for future predicates)
+
+Examples:
+  bump-semver vcs is clean && bump-semver patch VERSION --write
+  if bump-semver vcs is git; then ... fi
+  bump-semver vcs is dirty || echo "nothing to commit"
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
@@ -425,4 +480,5 @@ var actionHelpTexts = map[string]string{
 	"compare": helpCompare,
 	"vcs":     helpVcs,
 	"vcs get": helpVcsGet,
+	"vcs is":  helpVcsIs,
 }

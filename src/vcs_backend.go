@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -47,6 +48,24 @@ type vcsBackend interface {
 	// LatestTag returns the SemVer-largest tag known to the local VCS.
 	// Non-semver tag names are silently skipped (mirrors DR-0008).
 	LatestTag() (Version, error)
+
+	// IsClean reports whether the worktree has no uncommitted changes
+	// requiring action (DR-0020 PR-2). Definitions per backend:
+	//
+	//   - git: `git diff --quiet` (unstaged) AND `git diff --cached
+	//     --quiet` (staged). **Untracked files are intentionally
+	//     ignored** (mirrors `git diff`'s default; the future
+	//     `--include-untracked` option would be opt-in).
+	//   - jj: the working-copy change `@` is empty (`jj log -r @ -T
+	//     'empty'` == "true"). Because jj snapshots automatically,
+	//     new files become part of `@` and DO render the worktree
+	//     dirty. This asymmetry vs git is intrinsic to jj's design
+	//     (see DR-0020 PR-2 implementation notes).
+	//
+	// Returns (true, nil) for clean, (false, nil) for dirty. Errors are
+	// wrapped as *exitErr{code: exitCodeVCSExec} so unexpected backend
+	// failures don't degrade into "dirty".
+	IsClean() (bool, error)
 }
 
 // newVcsBackend resolves the `--vcs` override (or auto-probe) into a
@@ -190,6 +209,32 @@ func runBackendCmd(name string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
+// runBackendExitCode is a runBackendCmd variant that returns the child's
+// exit code instead of treating non-zero as an error. Required for
+// commands whose exit code is a normal signal (e.g. `git diff --quiet`
+// uses 0/1 for clean/dirty; routing those through runBackendCmd would
+// misclassify "dirty" as a VCS error).
+//
+// A real exec failure (binary missing, signal, etc.) is still returned
+// as an error with stderr folded in for diagnostics.
+func runBackendExitCode(name string, args ...string) (int, error) {
+	cmd := exec.Command(name, args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode(), nil
+		}
+		errOut := strings.TrimSpace(stderr.String())
+		if errOut != "" {
+			return -1, fmt.Errorf("%s %s: %s", name, strings.Join(args, " "), errOut)
+		}
+		return -1, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return 0, nil
+}
+
 // --- git: FetchFile / ListTags / LatestTag ---------------------------------
 
 // FetchFile returns `file` at `rev` via `git show <rev>:<file>`.
@@ -214,6 +259,39 @@ func (g *gitBackend) LatestTag() (Version, error) {
 		return Version{}, err
 	}
 	return pickLatestSemverTag(tags)
+}
+
+// IsClean returns true when both `git diff --quiet` (unstaged) and
+// `git diff --cached --quiet` (staged) succeed (exit 0). Either check
+// reporting exit 1 (= "diff present") flips the answer to dirty.
+// Untracked files are NOT considered — `git diff` ignores them by
+// design, matching the DR-0020 PR-2 contract.
+//
+// Both checks are required: editing a file and `git add`-ing it makes
+// the workdir match the index, so `--quiet` (no --cached) returns 0 —
+// only `--cached` catches the staged-only delta.
+func (g *gitBackend) IsClean() (bool, error) {
+	for _, args := range [][]string{
+		{"diff", "--quiet"},
+		{"diff", "--cached", "--quiet"},
+	} {
+		code, err := runBackendExitCode("git", args...)
+		if err != nil {
+			return false, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		switch code {
+		case 0:
+			// this check clean; keep going
+		case 1:
+			return false, nil
+		default:
+			return false, &exitErr{
+				code: exitCodeVCSExec,
+				msg:  fmt.Sprintf("git %s: unexpected exit code %d", strings.Join(args, " "), code),
+			}
+		}
+	}
+	return true, nil
 }
 
 // --- jj: FetchFile / ListTags / LatestTag ----------------------------------
@@ -258,4 +336,32 @@ func (j *jjBackend) LatestTag() (Version, error) {
 		return Version{}, err
 	}
 	return pickLatestSemverTag(tags)
+}
+
+// IsClean returns true when the working-copy change `@` is empty.
+//
+// jj's `empty` template keyword renders the literal string "true" or
+// "false" — no diff text parsing needed. Reading `@` is also what
+// triggers jj's automatic snapshot, so this implicitly reflects any
+// just-edited (or just-created) files in the worktree.
+//
+// Contrast with git: jj treats new files as worktree state by design,
+// so an untracked-new-file makes `IsClean` return false (intentional
+// asymmetry, documented in DR-0020 PR-2).
+func (j *jjBackend) IsClean() (bool, error) {
+	out, err := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "empty")
+	if err != nil {
+		return false, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("jj log -r @ -T empty: unexpected output %q", strings.TrimSpace(string(out))),
+		}
+	}
 }

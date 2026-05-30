@@ -175,7 +175,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 		// Per-verb help only for known verbs — unknown verbs must
 		// surface as an exit-2 error, not as a silent help fallthrough.
 		// We route them to runVcsCmd which emits the proper usage error.
-		isKnownVerb := out.vcsVerb == "get"
+		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is"
 		if len(argv) == 2 {
 			if isKnownVerb {
 				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
@@ -700,16 +700,18 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return runBump(args, stdin, stdout, stderr)
 }
 
-// runVcsCmd is the dispatcher for the `vcs <verb>` family (DR-0020). PR-1
-// implements only `vcs get`; future verbs (is / diff / commit / push /
+// runVcsCmd is the dispatcher for the `vcs <verb>` family (DR-0020). PR-2
+// adds `vcs is` alongside `vcs get`; future verbs (diff / commit / push /
 // tag) plug in here as additional cases.
 func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch args.vcsVerb {
 	case "get":
 		return runVcsCmdGet(args, stdout, stderr)
+	case "is":
+		return runVcsCmdIs(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is)", args.vcsVerb))
 	}
 }
 
@@ -790,6 +792,86 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 	}
 	// Unreachable: key was validated against vcsGetKeys above.
 	return emitVcsUsage(stderr, args, fmt.Errorf("internal: unhandled vcs get key %q", key))
+}
+
+// vcsIsPreds lists the predicates recognised by `vcs is`. Kept as a
+// slice so the order is preserved when surfaced in error messages.
+//
+// DR-0020 scope rule: only predicates that read the same way for git
+// and jj users land here. Backend-specific concepts (e.g. jj's
+// `empty @`) stay out — they would not be transferable to git users
+// reading shared Taskfiles.
+var vcsIsPreds = []string{"clean", "dirty", "git", "jj"}
+
+// runVcsCmdIs implements `vcs is <pred>`.
+//
+// Exit codes (DR-0020):
+//
+//   - 0  predicate true
+//   - 1  predicate false (silent on stderr, mirroring `compare`)
+//   - 2  usage error (missing / unknown / too many args)
+//   - 3  VCS subprocess error or "not a vcs repo"
+//
+// `clean` / `dirty` need to consult the backend's worktree state.
+// `git` / `jj` need to know which backend the auto-probe (or override)
+// selected — for both we build the backend up front and surface its
+// exit-3 if we're outside a repo. That distinguishes "not git" from
+// "can't tell" (DR-0020: 曖昧・期待外はエラー).
+func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) == 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs is requires a predicate (one of: %s)", strings.Join(vcsIsPreds, " / ")))
+	}
+	if len(args.vcsArgs) > 1 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs is takes exactly one predicate, got %d", len(args.vcsArgs)))
+	}
+	pred := args.vcsArgs[0]
+
+	known := false
+	for _, p := range vcsIsPreds {
+		if p == pred {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("unknown vcs is predicate: %s (expected one of: %s)", pred, strings.Join(vcsIsPreds, " / ")))
+	}
+
+	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+
+	var result bool
+	switch pred {
+	case "clean":
+		result, err = b.IsClean()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+	case "dirty":
+		clean, ierr := b.IsClean()
+		if ierr != nil {
+			return emitVcsErr(stderr, args, ierr)
+		}
+		result = !clean
+	case "git", "jj":
+		result = b.Kind() == pred
+	default:
+		// Unreachable: pred was validated against vcsIsPreds above.
+		return emitVcsUsage(stderr, args, fmt.Errorf("internal: unhandled vcs is predicate %q", pred))
+	}
+
+	if result {
+		return nil
+	}
+	// Predicate-false is silent on stderr — matches `compare` semantics
+	// so shell `if`/`&&` chains work without filtering output.
+	return &exitErr{code: exitCodeFalse}
 }
 
 // emitVcsUsage prints a "bump-semver: <msg>" line and returns an

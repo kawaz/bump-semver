@@ -717,34 +717,26 @@ func filterExistingPaths(paths []string) []string {
 	return out
 }
 
-// IsClean returns true when the working-copy change `@` is "clean" in
-// the jj change-graph sense:
+// IsClean returns true when the working-copy change `@` is empty.
 //
-//   - `@` is empty (jj's `empty` template == "true": tree matches the
-//     merge of @-'s parents — for a single-parent commit, equivalent
-//     to "no diff vs @-"), OR
-//   - `@` is a merge commit (parents > 1).
-//
-// The merge clause was added in DR-0020 PR-2.1. PR-2's original rule
-// ("empty only") classified evil merges (parents>1, non-empty tree)
-// as dirty; kawaz's directive is that merge commits are meaningful
-// nodes in the change graph and should be reported as clean
-// regardless of tree content. A conflicted merge also reads as clean
-// under this rule — out of scope for PR-2.1 (deferred).
-//
-// The template `if(parents.len() > 1, "true", empty)` short-circuits
-// on merge commits and falls back to the original empty-keyword
-// otherwise. jj renders both branches as the literal string "true" /
+// jj's `empty` template keyword renders the literal string "true" or
 // "false" — no diff text parsing needed. Reading `@` is also what
 // triggers jj's automatic snapshot, so this implicitly reflects any
 // just-edited (or just-created) files in the worktree.
 //
+// The `empty` keyword is parent-relative: it returns true when @'s
+// tree equals the merge of @-'s parents. For a single-parent commit
+// that's "no diff vs @-"; for a merge commit (parents>1) it's "tree
+// matches the merge of parents" (= empty merge → clean, evil merge
+// with extra tree edits → dirty). This is the correct semantics:
+// merge commits with content additions ("evil merges") DO carry
+// uncommitted intent and should read as dirty.
+//
 // Contrast with git: jj treats new files as worktree state by design,
-// so an untracked-new-file in a single-parent `@` makes `IsClean`
-// return false (intentional asymmetry, documented in DR-0020 PR-2).
+// so an untracked-new-file makes `IsClean` return false (intentional
+// asymmetry, documented in DR-0020 PR-2).
 func (j *jjBackend) IsClean() (bool, error) {
-	out, err := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T",
-		`if(parents.len() > 1, "true", empty)`)
+	out, err := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "empty")
 	if err != nil {
 		return false, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
@@ -756,7 +748,7 @@ func (j *jjBackend) IsClean() (bool, error) {
 	default:
 		return false, &exitErr{
 			code: exitCodeVCSExec,
-			msg:  fmt.Sprintf("jj log -r @ clean-template: unexpected output %q", strings.TrimSpace(string(out))),
+			msg:  fmt.Sprintf("jj log -r @ -T empty: unexpected output %q", strings.TrimSpace(string(out))),
 		}
 	}
 }

@@ -414,17 +414,21 @@ func TestJjBackend_IsClean_NewFileDirty(t *testing.T) {
 	})
 }
 
-// --- DR-0020 PR-2.1: merge-commit handling for IsClean ------------------
+// --- DR-0020 PR-2.2: merge-commit handling for IsClean ------------------
 //
-// PR-2 used `jj log -r @ -T 'empty'` alone. That predicate is
-// parent-relative: for a merge commit (parents>1) whose tree equals the
-// merge of its parents, jj reports `empty = true` — which already worked
-// as "clean" by accident, but a merge commit with any tree edit on top
-// (an "evil merge") would be reported as dirty. kawaz's directive is
-// that merge commits are meaningful nodes in the change graph and
-// SHOULD be reported as clean regardless of tree content. PR-2.1
-// formalises this by classifying any commit with parents>1 as clean
-// (i.e. the predicate is "empty OR is-merge").
+// PR-2 used `jj log -r @ -T 'empty'` alone. PR-2.1 (v0.25.2) overrode
+// that template with `if(parents.len() > 1, "true", empty)` based on a
+// misread of kawaz's intent — flipping evil merges (parents>1,
+// non-empty tree) from dirty to clean. PR-2.2 reverts to the empty-only
+// template. The correct reading of kawaz's directive is:
+//
+//   - empty merge (parents>1, tree == merge-of-parents) → clean.
+//     This already worked under the empty-only template because jj's
+//     `empty` keyword is parent-relative for merges (returns true when
+//     @'s tree equals the merge of all parents).
+//   - evil merge (parents>1, extra tree edits) → dirty. The PR-2.1
+//     flip was wrong: a merge commit carrying uncommitted content
+//     IS dirty.
 
 // jjMergeFixture builds on setupJjRepo to produce a colocated jj repo
 // whose @ is a real merge commit. It creates two side changes (with
@@ -452,8 +456,9 @@ func jjMergeFixture(t *testing.T, extraFile string) string {
 
 // TestJjBackend_IsClean_MergeEmpty: a merge commit whose tree matches
 // the merge of its parents (empty=true on jj's parent-relative
-// template) is clean. This case happens to already pass under the PR-2
-// implementation but is pinned here to lock the invariant.
+// template) is clean. This works under the empty-only template
+// without any merge-specific short-circuit — pinned here to lock the
+// invariant that empty merges remain clean.
 func TestJjBackend_IsClean_MergeEmpty(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
@@ -473,9 +478,10 @@ func TestJjBackend_IsClean_MergeEmpty(t *testing.T) {
 
 // TestJjBackend_IsClean_MergeNonEmpty: a merge commit with an
 // additional tree edit ("evil merge", empty=false but parents>1) is
-// also clean — kawaz's directive: "マージコミット自体は意味があるから
-// clean". This is the case the PR-2 narrow rule got wrong; PR-2.1
-// fixes it via the parents>1 short-circuit.
+// dirty. The PR-2.1 flip that classified this as clean was a misread
+// of kawaz's intent; PR-2.2 restores the correct behaviour — a merge
+// commit carrying uncommitted content is dirty just like any other
+// non-empty change.
 func TestJjBackend_IsClean_MergeNonEmpty(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
@@ -487,8 +493,8 @@ func TestJjBackend_IsClean_MergeNonEmpty(t *testing.T) {
 		if err != nil {
 			t.Fatalf("IsClean: %v", err)
 		}
-		if !clean {
-			t.Errorf("IsClean = false, want true (merge commit is clean even with extra edits)")
+		if clean {
+			t.Errorf("IsClean = true, want false (evil merge: parents>1 with extra tree edits is dirty)")
 		}
 	})
 }

@@ -111,7 +111,7 @@ git/jj を抽象化した小さなヘルパー群 ([DR-0020](./docs/decisions/DR
 
 | 述語 | 意味 |
 |---|---|
-| `clean` | コミット必要な変更なし。**git**: `git diff --quiet` AND `git diff --cached --quiet` (untracked は無視)。**jj**: `@` が empty (template `empty` == "true") **または** マージコミット (parents > 1) の場合に clean。マージコミットは jj の change graph 上で意味のあるノードであり、内容にかかわらず clean 扱い (PR-2.1)。jj は read で自動 snapshot するので 単一親の `@` に新規ファイルがあると dirty になる — git との非対称は意図的 |
+| `clean` | コミット必要な変更なし。**git**: `git diff --quiet` AND `git diff --cached --quiet` (untracked は無視)。**jj**: `@` が empty (template `empty`)。jj は read で自動 snapshot するので新規ファイルも dirty 扱いになる — git との非対称は意図的 |
 | `dirty` | `!clean` |
 | `git` / `jj` | 自動判定 (または `--vcs` 強制) の backend が一致 |
 

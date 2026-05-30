@@ -111,7 +111,7 @@ A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vc
 
 | Predicate | Meaning |
 |---|---|
-| `clean` | Worktree has no uncommitted changes. **git**: `git diff --quiet` AND `git diff --cached --quiet` (untracked files ignored). **jj**: `@` is clean when EITHER it is empty (template `empty` == "true") OR it is a merge commit (parents > 1). Merge commits are meaningful nodes in the change graph and read clean regardless of tree content (PR-2.1). jj snapshots on read, so newly-created files in a single-parent `@` DO render dirty — this asymmetry vs git is intentional |
+| `clean` | Worktree has no uncommitted changes. **git**: `git diff --quiet` AND `git diff --cached --quiet` (untracked files ignored). **jj**: the working-copy change `@` is empty (template `empty`). jj snapshots on read, so newly-created files DO render dirty — this asymmetry vs git is intentional |
 | `dirty` | `!clean` |
 | `git` / `jj` | The detected (or `--vcs`-forced) backend matches |
 

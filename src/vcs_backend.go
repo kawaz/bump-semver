@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -66,6 +67,22 @@ type vcsBackend interface {
 	// wrapped as *exitErr{code: exitCodeVCSExec} so unexpected backend
 	// failures don't degrade into "dirty".
 	IsClean() (bool, error)
+
+	// Diff returns the patch between `rev` and the working copy. When
+	// `paths` is non-empty, callers should pass the original (user-named)
+	// list; the backend is responsible for filtering out paths that don't
+	// exist in the worktree (declarative-convergence rule, DR-0020 PR-3):
+	//
+	//   - paths == nil / len 0           → full diff (rev .. working copy)
+	//   - some paths exist after filter  → diff scoped to the survivors
+	//   - all paths filter to zero       → empty []byte, nil error
+	//     (must NOT fall through to "all paths" — that would silently
+	//     widen the user's request)
+	//
+	// Errors (VCS subprocess failure, bad REV) are returned as
+	// *exitErr{code: exitCodeVCSExec} so callers preserve the exit-code
+	// contract.
+	Diff(rev string, paths []string) ([]byte, error)
 }
 
 // newVcsBackend resolves the `--vcs` override (or auto-probe) into a
@@ -336,6 +353,70 @@ func (j *jjBackend) LatestTag() (Version, error) {
 		return Version{}, err
 	}
 	return pickLatestSemverTag(tags)
+}
+
+// Diff returns the patch from `rev` to the current working tree (= the
+// one-revision form `git diff <rev>`, which compares REV against the
+// worktree including uncommitted changes). When `paths` is supplied,
+// we filter to those that exist in the worktree (declarative-convergence)
+// and scope the diff to the survivors. All-filtered yields empty bytes
+// without invoking git — calling `git diff REV --` with no paths would
+// widen back to the full diff.
+func (g *gitBackend) Diff(rev string, paths []string) ([]byte, error) {
+	args := []string{"diff", rev}
+	if len(paths) > 0 {
+		existing := filterExistingPaths(paths)
+		if len(existing) == 0 {
+			return nil, nil
+		}
+		args = append(args, "--")
+		args = append(args, existing...)
+	}
+	out, err := runBackendCmd("git", args...)
+	if err != nil {
+		return nil, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return out, nil
+}
+
+// Diff returns the patch between `rev` and `@` (jj's working copy). Same
+// declarative-convergence path filter as the git backend — see the
+// gitBackend.Diff comment for the contract.
+func (j *jjBackend) Diff(rev string, paths []string) ([]byte, error) {
+	args := []string{"diff", "--from", rev, "--to", "@"}
+	if len(paths) > 0 {
+		existing := filterExistingPaths(paths)
+		if len(existing) == 0 {
+			return nil, nil
+		}
+		args = append(args, "--")
+		args = append(args, existing...)
+	}
+	out, err := runBackendCmd("jj", args...)
+	if err != nil {
+		return nil, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return out, nil
+}
+
+// filterExistingPaths returns the subset of `paths` that os.Stat resolves.
+// kawaz's declarative-convergence rule: nonexistent paths are silently
+// dropped rather than erroring. This means `vcs diff REV a b c` succeeds
+// when only some of `a b c` exist, and converges to "empty" only when none
+// do (the caller is responsible for the no-op short-circuit).
+//
+// Caveat: a path present in REV but deleted in @ is not surfaced when the
+// user names it explicitly (os.Stat misses it). The full diff (no paths
+// supplied) still shows the deletion. See DR-0020 PR-3 implementation
+// notes — this is the intentional scope of declarative-convergence.
+func filterExistingPaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // IsClean returns true when the working-copy change `@` is empty.

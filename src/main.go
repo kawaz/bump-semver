@@ -175,7 +175,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 		// Per-verb help only for known verbs — unknown verbs must
 		// surface as an exit-2 error, not as a silent help fallthrough.
 		// We route them to runVcsCmd which emits the proper usage error.
-		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is"
+		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff"
 		if len(argv) == 2 {
 			if isKnownVerb {
 				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
@@ -709,9 +709,11 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdGet(args, stdout, stderr)
 	case "is":
 		return runVcsCmdIs(args, stdout, stderr)
+	case "diff":
+		return runVcsCmdDiff(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff)", args.vcsVerb))
 	}
 }
 
@@ -872,6 +874,53 @@ func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
 	// Predicate-false is silent on stderr — matches `compare` semantics
 	// so shell `if`/`&&` chains work without filtering output.
 	return &exitErr{code: exitCodeFalse}
+}
+
+// runVcsCmdDiff implements `vcs diff REV [PATH..]` (DR-0020 PR-3).
+//
+// Exit codes (DR-0020):
+//
+//   - 0  on success (patch written to stdout — may be empty when no diff)
+//   - 2  usage error (the parser surfaces "no REV" as help; reserved for
+//     future verb-level usage problems)
+//   - 3  VCS subprocess error or "not a vcs repo"
+//
+// Path-handling rule (kawaz's declarative-convergence): nonexistent paths
+// are silently ignored. When every supplied path is filtered out we emit
+// nothing — `vcs diff REV nope.txt` deliberately does NOT widen back to
+// "diff everything" the way `git diff REV --` would.
+func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) == 0 {
+		// The parseArgs layer normally short-circuits "vcs diff" with no
+		// further args to the per-verb help; this branch only fires if a
+		// future code path reaches the dispatcher with an empty arg list.
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs diff requires a REV (usage: vcs diff REV [PATH..])"))
+	}
+	rev := args.vcsArgs[0]
+	paths := args.vcsArgs[1:]
+
+	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+
+	out, err := b.Diff(rev, paths)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	// -q / -qq suppress the stdout payload (the exit code is what scripts
+	// usually want, mirroring `vcs get`).
+	if args.quiet || args.quietAll {
+		return nil
+	}
+	if len(out) > 0 {
+		if _, werr := stdout.Write(out); werr != nil {
+			return werr
+		}
+	}
+	return nil
 }
 
 // emitVcsUsage prints a "bump-semver: <msg>" line and returns an

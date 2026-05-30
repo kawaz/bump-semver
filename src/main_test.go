@@ -1900,3 +1900,186 @@ func TestRun_VersionJSON_InvalidVersion(t *testing.T) {
 		t.Errorf("expected exitErr code=2, got %v", err)
 	}
 }
+
+// --- DR-0020 `vcs` subcommand integration tests --------------------------
+
+// TestRun_Vcs_NoArgs: `bump-semver vcs` with no verb shows help on stdout
+// and exits 0 (= kawaz CLI design: no-args == --help).
+func TestRun_Vcs_NoArgs(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"vcs"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("vcs (no args): %v", err)
+	}
+	if !strings.Contains(stdout.String(), "vcs") {
+		t.Errorf("expected help on stdout, got: %q", stdout.String())
+	}
+}
+
+// TestRun_Vcs_UnknownVerb: an unknown vcs verb is a usage error (exit 2).
+func TestRun_Vcs_UnknownVerb(t *testing.T) {
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "wibble"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected usage error for unknown verb")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+	}
+}
+
+// TestRun_VcsGet_NoArgs: `vcs get` with no key shows the vcs-get help.
+func TestRun_VcsGet_NoArgs(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"vcs", "get"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("vcs get (no args): %v", err)
+	}
+	if !strings.Contains(stdout.String(), "root") || !strings.Contains(stdout.String(), "backend") {
+		t.Errorf("expected vcs get help mentioning root/backend, got: %q", stdout.String())
+	}
+}
+
+// TestRun_VcsGet_UnknownKey: an unknown key is a usage error (exit 2)
+// and the error names the available keys.
+func TestRun_VcsGet_UnknownKey(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "get", "wibble"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected usage error for unknown key")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+		}
+		if !strings.Contains(stderr.String(), "root") {
+			t.Errorf("error should mention available keys, got: %q", stderr.String())
+		}
+	})
+}
+
+// TestRun_VcsGet_Backend_Git: prints "git" on a git-only repo.
+func TestRun_VcsGet_Backend_Git(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "backend"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get backend: %v", err)
+		}
+		if got := strings.TrimSpace(stdout.String()); got != "git" {
+			t.Errorf("backend = %q, want git", got)
+		}
+	})
+}
+
+// TestRun_VcsGet_Backend_Jj: prints "jj" on a colocated git+jj repo
+// (jj wins over git per DR-0008 precedence).
+func TestRun_VcsGet_Backend_Jj(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "backend"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get backend: %v", err)
+		}
+		if got := strings.TrimSpace(stdout.String()); got != "jj" {
+			t.Errorf("backend = %q, want jj", got)
+		}
+	})
+}
+
+// TestRun_VcsGet_Root_Git: prints the repo root path.
+func TestRun_VcsGet_Root_Git(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "root"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get root: %v", err)
+		}
+		got := strings.TrimSpace(stdout.String())
+		if got == "" {
+			t.Errorf("Root should be non-empty, got empty string")
+		}
+		// Compare via EvalSymlinks because macOS /var/folders symlinks
+		// through to /private/var.
+		gotCanon, _ := filepath.EvalSymlinks(got)
+		wantCanon, _ := filepath.EvalSymlinks(dir)
+		if gotCanon != wantCanon {
+			t.Errorf("root = %q (canon %q), want %q", got, gotCanon, wantCanon)
+		}
+	})
+}
+
+// TestRun_VcsGet_CurrentBranch_Git: prints "main" for the fixture.
+func TestRun_VcsGet_CurrentBranch_Git(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "current-branch"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get current-branch: %v", err)
+		}
+		if got := strings.TrimSpace(stdout.String()); got != "main" {
+			t.Errorf("current-branch = %q, want main", got)
+		}
+	})
+}
+
+// TestRun_VcsGet_CurrentBranch_Detached: detached HEAD returns exit 4
+// (exitCodeAmbiguous), not the standard exit 2 (usage).
+func TestRun_VcsGet_CurrentBranch_Detached(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	runIn(t, dir, "git", "checkout", "--detach", "HEAD")
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "get", "current-branch"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error on detached HEAD")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeAmbiguous {
+			t.Errorf("expected exit %d (ambiguous), got: %v", exitCodeAmbiguous, err)
+		}
+	})
+}
+
+// TestRun_VcsGet_NoRepo: outside a vcs repo, `vcs get backend` should
+// report exit 3 (VCS exec / not-a-repo) — distinct from the get's own
+// usage errors.
+func TestRun_VcsGet_NoRepo(t *testing.T) {
+	dir := t.TempDir()
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "get", "backend"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error outside a vcs repo")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exit %d (vcs exec), got: %v", exitCodeVCSExec, err)
+		}
+	})
+}

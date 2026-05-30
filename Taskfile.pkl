@@ -147,7 +147,7 @@ local bumpVersion: Task = new {
   cmd =
     #"""
     new_version=$(bump-semver "$LEVEL" VERSION --write --no-hint) \
-      && jj commit -m "Release v${new_version}"
+      && bump-semver vcs commit -m "Release v${new_version}" VERSION
     """#
 }
 

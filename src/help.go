@@ -364,6 +364,9 @@ Verbs:
   get <key>           Read a value from the VCS. Keys: root | backend | current-branch.
   is  <pred>          Test a predicate. Predicates: clean | dirty | git | jj. Exit 0=true, 1=false.
   diff REV [PATH..]   Print the patch between REV and the working copy (git/jj-agnostic).
+  commit -m MSG PATH..        Commit listed paths' working-tree content (safe default).
+  commit -m MSG --staged      Commit all staged/dirty changes at once.
+  commit --amend [-m MSG]     Fold current changes into the previous commit.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -537,6 +540,69 @@ Examples:
                                                 # exit 0 ⇔ no diff in VERSION
 `
 
+// helpVcsCommit documents `vcs commit` (DR-0020 PR-4).
+//
+// Three modes — path (default safety), --staged (commit-all), --amend
+// (rewrite). `-a` is intentionally NOT provided (kawaz CLI safety: jj's
+// auto-staged worldview makes `-a`-style unstaged grabs too easy to
+// trip on; use --staged or pass a PATH explicitly).
+//
+// The empty-no-op rule (DR-0020) means a path list with no real
+// change — including all-nonexistent — exits 0 without creating a
+// commit. This makes `vcs commit -m "..." VERSION Cargo.toml
+// package.json` a useful "commit whatever bumped" snippet across
+// languages without needing per-project presets.
+const helpVcsCommit = `bump-semver vcs commit — record changes safely (git/jj-agnostic) [DR-0020]
+
+Usage:
+  bump-semver vcs commit -m MSG PATH..
+  bump-semver vcs commit -m MSG --staged
+  bump-semver vcs commit --amend [-m MSG]
+
+Modes:
+  PATH..        Commit the working-tree content of the listed paths only.
+                Nonexistent paths are silently dropped (declarative
+                convergence). All-nonexistent OR no actual change for any
+                surviving path → exit 0, no commit (idempotent).
+  --staged      Commit all staged/dirty changes at once.
+                  git: commits the index (anything previously 'git add'-ed).
+                  jj:  commits the entire @ snapshot (= all current changes,
+                       since jj auto-stages).
+                No staged/dirty content → exit 0, no commit (idempotent).
+  --amend       Fold the current changes into the previous commit.
+                With -m: rewrite the previous commit's message.
+                Without -m: preserve the previous commit's message (no-edit).
+                A message-only amend with no current changes is a legal
+                explicit rewrite (NOT subject to the no-op rule).
+
+Arguments:
+  -m, --message MSG    Commit message. Required UNLESS --amend.
+
+Not provided by design:
+  -a / --all           Use --staged (avoids unstaged-grab accidents — see
+                       DR-0020). For jj users the equivalent is naming the
+                       PATH list explicitly.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (errors still printed)
+  -qq, --quiet-all       Suppress stdout, hint, and error output (use with caution)
+
+Exit codes:
+  0   success (commit created, OR idempotent no-op when there was nothing to do)
+  2   usage error (-m missing on non-amend; --staged + PATH; -a; other parse errors)
+  3   VCS subprocess error (not a repo, command failed)
+
+Examples:
+  bump-semver vcs commit -m "bump version" VERSION Cargo.toml package.json
+                                                # commit whichever exist & changed
+  bump-semver vcs commit --staged -m "release: 1.2.3"
+                                                # commit everything in one shot
+  bump-semver vcs commit --amend                # fold into previous, keep message
+  bump-semver vcs commit --amend -m "release: 1.2.3 (final)"
+                                                # rewrite previous message
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
@@ -550,8 +616,9 @@ var actionHelpTexts = map[string]string{
 	"pre":      helpPre,
 	"get":      helpGet,
 	"compare":  helpCompare,
-	"vcs":      helpVcs,
-	"vcs get":  helpVcsGet,
-	"vcs is":   helpVcsIs,
-	"vcs diff": helpVcsDiff,
+	"vcs":        helpVcs,
+	"vcs get":    helpVcsGet,
+	"vcs is":     helpVcsIs,
+	"vcs diff":   helpVcsDiff,
+	"vcs commit": helpVcsCommit,
 }

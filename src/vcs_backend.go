@@ -103,6 +103,69 @@ type vcsBackend interface {
 	// `vcs diff -q/--quiet` to derive presence (len > 0 → diff present).
 	// Returning a single shape lets both options share one code path.
 	DiffNameStatus(rev string, paths []string) ([]byte, error)
+
+	// Commit records the requested change set into the VCS (DR-0020 PR-4).
+	// Modes are encoded in commitOpts; the contract is:
+	//
+	//   - paths mode (len(paths) > 0): stage + commit exactly those paths'
+	//     working-tree contents. Nonexistent paths are silently dropped
+	//     (declarative-convergence, same rule as Diff). When the survivor
+	//     set produces no actual change vs HEAD/@-, this is a no-op
+	//     (returns nil without creating an empty commit).
+	//   - staged mode (opts.staged): commit every dirty/staged file at
+	//     once (git: --cached, jj: the entire @ snapshot). No real change
+	//     → no-op nil. Mirrors DR-0020 "0 targets → exit 0, no action".
+	//   - amend mode (opts.amend): fold the current change into the
+	//     previous commit (git: --amend; jj: squash @ → @-). With
+	//     opts.noEdit (-m absent), the previous commit's message is
+	//     preserved verbatim; with opts.message non-empty, the previous
+	//     commit's message is replaced. amend is NOT subject to the
+	//     empty-no-op rule — message-only amend is a legal explicit
+	//     rewrite.
+	//
+	// The caller is responsible for the message-required check (parser
+	// already enforces it for !amend modes). The mode-flags themselves
+	// are mutually exclusive at the parser layer; this method assumes a
+	// resolved combination (paths XOR staged, with amend orthogonal).
+	//
+	// Errors are wrapped as *exitErr{code: exitCodeVCSExec} when the
+	// underlying subprocess fails so callers preserve the exit-code
+	// contract (exit 3 outside a vcs operation context).
+	Commit(opts commitOpts) error
+}
+
+// commitOpts collects the modal arguments for `Commit`. Kept as a
+// single struct (rather than method-per-mode) so the interface stays
+// compact and future flags (e.g. PR-5's `--allow-empty` if ever needed)
+// extend without breaking implementations.
+type commitOpts struct {
+	// paths is the list of path arguments the user typed. The backend
+	// filters out nonexistent entries (declarative-convergence) before
+	// committing. Empty paths + !staged + !amend is a caller bug; the
+	// parser layer rejects that combination with exit 2 before reaching
+	// here.
+	paths []string
+
+	// message is the commit message. Required when !amend; with amend it
+	// is optional — empty + opts.noEdit means "keep the previous
+	// message".
+	message string
+
+	// staged switches to "commit everything dirty/staged at once" mode
+	// (git: --cached; jj: the full @ snapshot). Mutually exclusive with
+	// paths at the parser layer.
+	staged bool
+
+	// amend folds the current change into the previous commit (git:
+	// --amend; jj: squash --from @ --into @-). When true, paths is
+	// applied as the source-restriction filter (not yet wired — MVP
+	// folds the entire change like git --amend).
+	amend bool
+
+	// noEdit applies only with amend: keep the previous commit's
+	// message unchanged. Mutually exclusive with a non-empty message at
+	// the parser layer.
+	noEdit bool
 }
 
 // newVcsBackend resolves the `--vcs` override (or auto-probe) into a
@@ -535,4 +598,154 @@ func (j *jjBackend) IsClean() (bool, error) {
 			msg:  fmt.Sprintf("jj log -r @ -T empty: unexpected output %q", strings.TrimSpace(string(out))),
 		}
 	}
+}
+
+// --- Commit implementations (DR-0020 PR-4) --------------------------------
+
+// Commit (git) records the requested change set. See the interface comment
+// on `Commit` for the full contract. Implementation notes:
+//
+//   - amend: `git commit --amend` with either `-m MSG` (rewrite) or
+//     `--no-edit` (keep). Pre-stages any worktree changes that overlap
+//     paths (paths arg currently best-effort: MVP folds the entire
+//     change set into HEAD, mirroring git --amend's default).
+//   - paths: `git add -- PATHS` first (handles new files; bare
+//     `git diff --quiet HEAD` would miss them — see DR-0020 PR-4 notes),
+//     then check `git diff --cached --quiet -- PATHS`; commit only if
+//     non-empty.
+//   - staged: `git diff --cached --quiet` (no paths) to gate, then
+//     `git commit -m MSG` (commits whatever is staged).
+//
+// The no-op rule (no real change → nil) is enforced PRE-commit on every
+// non-amend mode so DR-0020 "0 targets → exit 0, no action" holds.
+func (g *gitBackend) Commit(opts commitOpts) error {
+	if opts.amend {
+		return g.commitAmend(opts)
+	}
+	if opts.staged {
+		// Gate: anything staged at all?
+		code, err := runBackendExitCode("git", "diff", "--cached", "--quiet")
+		if err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if code == 0 {
+			return nil // nothing staged → no-op success
+		}
+		if _, err := runBackendCmd("git", "commit", "-m", opts.message); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		return nil
+	}
+	// paths mode.
+	existing := filterExistingPaths(opts.paths)
+	if len(existing) == 0 {
+		return nil // all-nonexistent → no-op success
+	}
+	// Stage the surviving paths so new (untracked) files become eligible.
+	addArgs := append([]string{"add", "--"}, existing...)
+	if _, err := runBackendCmd("git", addArgs...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	// Now check whether anything actually changed for the given paths.
+	gateArgs := append([]string{"diff", "--cached", "--quiet", "--"}, existing...)
+	code, err := runBackendExitCode("git", gateArgs...)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if code == 0 {
+		return nil // nothing to commit for these paths → no-op
+	}
+	// `git commit -m MSG -- PATHS` is a partial commit: only PATHS make it
+	// into HEAD, even if other paths are staged. Exactly what we want.
+	commitArgs := append([]string{"commit", "-m", opts.message, "--"}, existing...)
+	if _, err := runBackendCmd("git", commitArgs...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
+}
+
+// commitAmend handles git's --amend mode (rewrite or no-edit). amend is
+// explicit rewrite intent → we do NOT apply the empty-no-op gate (a
+// message-only amend with a clean index is legal). git's `--amend
+// --no-edit` is well-defined for empty deltas too.
+func (g *gitBackend) commitAmend(opts commitOpts) error {
+	args := []string{"commit", "--amend"}
+	if opts.noEdit || opts.message == "" {
+		args = append(args, "--no-edit")
+	} else {
+		args = append(args, "-m", opts.message)
+	}
+	if _, err := runBackendCmd("git", args...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
+}
+
+// Commit (jj) records the requested change set. See the interface comment
+// on `Commit` for the full contract. Implementation notes:
+//
+//   - paths: `jj commit [FILESETS]... -m MSG` puts only those paths' @
+//     changes into a new commit (the rest stays in the new working copy).
+//     Pre-gated by `jj diff --summary --from @- --to @ -- PATHS` so an
+//     all-nonexistent or no-change set is a no-op (DR-0020 explicitly
+//     wants no empty commits — jj would otherwise happily create one).
+//   - staged: `jj commit -m MSG` (no paths) commits the entire @ snapshot.
+//     Pre-gated by the `empty` template (same predicate as IsClean).
+//   - amend: `jj squash --from @ --into @-` folds @ into @-. With -m,
+//     `--into @-` gets a new description; without, the existing
+//     description is preserved (no-edit). jj squash on empty @ is benign.
+func (j *jjBackend) Commit(opts commitOpts) error {
+	if opts.amend {
+		return j.commitAmend(opts)
+	}
+	if opts.staged {
+		// Gate: is @ empty?
+		out, err := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "empty")
+		if err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if strings.TrimSpace(string(out)) == "true" {
+			return nil // empty @ → no-op success
+		}
+		if _, err := runBackendCmd("jj", "commit", "-m", opts.message); err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		return nil
+	}
+	// paths mode.
+	existing := filterExistingPaths(opts.paths)
+	if len(existing) == 0 {
+		return nil
+	}
+	// Gate via `jj diff --summary` over the same paths: if it produces no
+	// output, there is nothing to commit even after path filtering.
+	gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, existing...)
+	gateOut, err := runBackendCmd("jj", gateArgs...)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if strings.TrimSpace(string(gateOut)) == "" {
+		return nil
+	}
+	commitArgs := append([]string{"commit", "-m", opts.message}, existing...)
+	if _, err := runBackendCmd("jj", commitArgs...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
+}
+
+// commitAmend handles jj's amend mode by squashing @ into @-. Like git,
+// amend is explicit rewrite intent — we do NOT gate it on emptiness (a
+// message-only amend with empty @ just updates @-'s description). jj
+// `squash --from @ --into @-` is also a safe no-op when there's nothing
+// to move (verified in DR-0020 PR-4 fixture probing).
+func (j *jjBackend) commitAmend(opts commitOpts) error {
+	args := []string{"squash", "--from", "@", "--into", "@-"}
+	if !opts.noEdit && opts.message != "" {
+		args = append(args, "-m", opts.message)
+	}
+	if _, err := runBackendCmd("jj", args...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return nil
 }

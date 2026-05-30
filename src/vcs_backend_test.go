@@ -1156,13 +1156,14 @@ func TestJjBackend_Commit_Amend_NoEdit(t *testing.T) {
 		t.Skip("git+jj fixture requires both binaries")
 	}
 	dir := setupJjRepo(t, nil, "1.0.0")
-	// Give @- a known description first (the jj fixture leaves it as
-	// the git commit message "bump"). Read it via template.
-	prevDesc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
 	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
 		t.Fatal(err)
 	}
 	withCwd(t, dir, func() {
+		// Capture @-'s description from INSIDE the fixture cwd; outside
+		// the chdir, runBackendCmd would read from the test binary's
+		// original cwd (i.e. the bump-semver repo).
+		prevDesc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
 		b := &jjBackend{}
 		if err := b.Commit(commitOpts{amend: true, noEdit: true}); err != nil {
 			t.Fatalf("Commit --amend: %v", err)

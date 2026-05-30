@@ -100,6 +100,17 @@ type cliArgs struct {
 	// suppressed; exit code still reflects diff presence). Verb-local —
 	// parsed in the vcs branch and only consumed by runVcsCmdDiff.
 	vcsDiffNameStatus bool
+
+	// vcsCommitMessage / vcsCommitMessageSet / vcsCommitStaged /
+	// vcsCommitAmend / vcsCommitDashA: DR-0020 PR-4. Verb-local to
+	// `vcs commit`. -a is parsed only to give a tailored exit-2
+	// rejection (kawaz CLI safety: --staged is the supported "all"
+	// mode; -a's unstaged-grabbing semantic is intentionally absent).
+	vcsCommitMessage    string
+	vcsCommitMessageSet bool
+	vcsCommitStaged     bool
+	vcsCommitAmend      bool
+	vcsCommitDashA      bool
 }
 
 var bumpActions = map[string]bool{
@@ -182,7 +193,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 		// Per-verb help only for known verbs — unknown verbs must
 		// surface as an exit-2 error, not as a silent help fallthrough.
 		// We route them to runVcsCmd which emits the proper usage error.
-		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff"
+		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit"
 		if len(argv) == 2 {
 			if isKnownVerb {
 				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
@@ -236,6 +247,50 @@ func parseArgs(argv []string) (cliArgs, error) {
 				// case is skipped and the generic unknown-flag catch-all
 				// below rejects with exit 2.
 				out.vcsDiffNameStatus = true
+			case a == "-m" && out.vcsVerb == "commit":
+				// Verb-local to `vcs commit`. Takes a value.
+				if out.vcsCommitMessageSet {
+					return cliArgs{}, fmt.Errorf("-m specified twice")
+				}
+				if i+1 >= len(rest) {
+					return cliArgs{}, fmt.Errorf("-m requires a value (commit message)")
+				}
+				out.vcsCommitMessage = rest[i+1]
+				out.vcsCommitMessageSet = true
+				i++
+			case strings.HasPrefix(a, "-m=") && out.vcsVerb == "commit":
+				if out.vcsCommitMessageSet {
+					return cliArgs{}, fmt.Errorf("-m specified twice")
+				}
+				out.vcsCommitMessage = strings.TrimPrefix(a, "-m=")
+				out.vcsCommitMessageSet = true
+			case a == "--message" && out.vcsVerb == "commit":
+				if out.vcsCommitMessageSet {
+					return cliArgs{}, fmt.Errorf("--message specified twice")
+				}
+				if i+1 >= len(rest) {
+					return cliArgs{}, fmt.Errorf("--message requires a value")
+				}
+				out.vcsCommitMessage = rest[i+1]
+				out.vcsCommitMessageSet = true
+				i++
+			case strings.HasPrefix(a, "--message=") && out.vcsVerb == "commit":
+				if out.vcsCommitMessageSet {
+					return cliArgs{}, fmt.Errorf("--message specified twice")
+				}
+				out.vcsCommitMessage = strings.TrimPrefix(a, "--message=")
+				out.vcsCommitMessageSet = true
+			case a == "--staged" && out.vcsVerb == "commit":
+				out.vcsCommitStaged = true
+			case a == "--amend" && out.vcsVerb == "commit":
+				out.vcsCommitAmend = true
+			case (a == "-a" || a == "--all") && out.vcsVerb == "commit":
+				// Captured here only so we can give a tailored exit-2
+				// rejection in runVcsCmdCommit (instead of the generic
+				// "unknown flag" message). DR-0020: -a is intentionally
+				// non-provided to prevent unstaged-grab accidents in
+				// jj's auto-staged world.
+				out.vcsCommitDashA = true
 			case a == "--no-hint":
 				out.noHint = true
 			case a == "--":
@@ -730,9 +785,11 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdIs(args, stdout, stderr)
 	case "diff":
 		return runVcsCmdDiff(args, stdout, stderr)
+	case "commit":
+		return runVcsCmdCommit(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit)", args.vcsVerb))
 	}
 }
 
@@ -984,6 +1041,91 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 			return werr
 		}
 	}
+	return nil
+}
+
+// runVcsCmdCommit implements `vcs commit` (DR-0020 PR-4).
+//
+// Three modes:
+//
+//   - `vcs commit -m MSG PATH..`         — commit listed paths' content
+//   - `vcs commit -m MSG --staged`       — commit all staged/dirty changes
+//   - `vcs commit --amend [-m MSG]`      — fold current change into prev
+//
+// `-a` / `--all` is intentionally not provided (DR-0020 safety: kawaz
+// CLI design + jj's auto-staged worldview). It's parsed only so we can
+// reject it with a tailored exit-2 hint instead of the generic
+// "unknown flag" catch-all.
+//
+// Argument-error ordering (advisor #3):
+//
+//  1. -a   → exit 2 with hint (backend-independent, before resolve)
+//  2. path + --staged → exit 2 (backend-independent, before resolve)
+//  3. !amend && !message → exit 2 (backend-independent, before resolve)
+//  4. Resolve backend (exit 3 if not a vcs repo)
+//  5. no PATH && no --staged && !amend → exit 2 with backend-Kind() hint
+//  6. Dispatch to backend.Commit
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success (commit created, or no-op if there was nothing to commit)
+//   - 2  usage error
+//   - 3  VCS subprocess error or "not a vcs repo"
+func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
+	// Step 1: -a explicit reject (before backend resolve so non-repo
+	// cwd still gets the tailored hint).
+	if args.vcsCommitDashA {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs commit: -a / --all is not supported (use --staged to commit all staged changes, or pass PATH..)"))
+	}
+	// Step 2: path + --staged exclusivity.
+	if args.vcsCommitStaged && len(args.vcsArgs) > 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs commit: --staged and PATH.. are mutually exclusive"))
+	}
+	// Step 3: -m required for !amend.
+	if !args.vcsCommitAmend && !args.vcsCommitMessageSet {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs commit: -m MSG is required (unless --amend)"))
+	}
+	// Step 4: resolve backend.
+	vcsOverride, _ := parseVcsOverride(args.vcs) // validated in parseArgs
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	// Step 5: no mode (= no path, no --staged, no --amend) → backend-
+	// specific hint. By this point we know we're in a vcs repo, so the
+	// hint can be specific to git's "you usually want --staged" vs jj's
+	// "auto-staged world, name a PATH".
+	if !args.vcsCommitAmend && !args.vcsCommitStaged && len(args.vcsArgs) == 0 {
+		var hint string
+		switch b.Kind() {
+		case "git":
+			hint = "use --staged to commit staged changes, or specify PATH.."
+		case "jj":
+			hint = "specify PATH.. (commit -a is not supported by design); or use --staged for the entire @ change"
+		default:
+			hint = "specify PATH.. or --staged"
+		}
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs commit: nothing to commit (%s)", hint))
+	}
+	// Step 6: dispatch.
+	opts := commitOpts{
+		paths:   args.vcsArgs,
+		message: args.vcsCommitMessage,
+		staged:  args.vcsCommitStaged,
+		amend:   args.vcsCommitAmend,
+		noEdit:  args.vcsCommitAmend && !args.vcsCommitMessageSet,
+	}
+	if err := b.Commit(opts); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	// commit is silent on success (mirrors `git commit -q` philosophy
+	// for scripted callers; jj users get jj's own snapshot text in
+	// stderr from the subprocess but we don't echo on stdout).
+	_ = stdout
 	return nil
 }
 

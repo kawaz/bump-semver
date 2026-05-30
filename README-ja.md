@@ -27,7 +27,7 @@ bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
-bump-semver vcs commit -m MSG <PATH..|--staged> | --amend [-m MSG]
+bump-semver vcs commit [--amend] [-m MSG] <PATH..|--staged>     # または: vcs commit --amend [-m MSG]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -86,7 +86,7 @@ bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 bump-semver vcs commit -m MSG PATH..
 bump-semver vcs commit -m MSG --staged
-bump-semver vcs commit --amend [-m MSG]
+bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 bump-semver vcs fetch [REMOTE]
 bump-semver vcs push --branch NAME [--remote REMOTE]   # --bookmark はエイリアス
 ```
@@ -143,7 +143,7 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION 変更なし"
 |---|---|
 | `-m MSG PATH..` | 指定 path の working-tree 内容だけを stage + commit。存在しない path は黙ってスキップ (宣言的収束)。全 path 不在 / 全部変更なし → exit 0 (commit せず冪等成功) |
 | `-m MSG --staged` | staged / dirty な変更を一括 commit。**git**: index を commit。**jj**: `@` 全体を commit (jj は自動 stage)。内容なし → exit 0 (冪等) |
-| `--amend [-m MSG]` | 現在の変更を**すべて**直前の commit に吸収。`-m` ありはメッセージ更新、なしは元メッセージ保持 (no-edit)。変更なし + `-m` のみ (= message-only amend) も意図的な rewrite として許容。`PATH..` / `--staged` は `--amend` と**併用不可** (MVP は `--amend [-m MSG]` のみ); path 限定の新規 commit が欲しい場合は `--amend` を外す |
+| `--amend [-m MSG] [PATH.. \| --staged]` | 新規 commit を作る代わりに直前 commit へ吸収する。上 2 モードと**完全対称** — `--amend` でも `PATH..` / `--staged` 同じ selector を受理する。素の `--amend` は全変更を吸収 (明示 rewrite 意図のため gate なし。変更なし + `-m` の message-only amend も合法)。`--amend PATH..` は指定 path のみを吸収 (path モードと同じ「全 path 不在 / 全変更なし → no-op」ルールが効く)。`--amend --staged` は素の `--amend` の明示的シノニム (= 吸収元は index / `@` snapshot そのもの)。`-m` ありで直前メッセージを上書き、なしで保持。等価コマンド: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`、jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
 
 **`-a` / `--all` は意図的に非提供** (DR-0020 安全設計)。jj の「カレントコミット=自動 stage」世界観だと `-a` の unstaged 巻き込み挙動は事故を招きやすいため、`--staged` (全変更を commit) または `PATH..` を明示する形に絞っている。`-a` を渡すと exit 2 + `--staged` / `PATH..` への誘導 hint を返す。
 
@@ -159,8 +159,10 @@ bump-semver vcs commit -m "bump version" VERSION Cargo.toml package.json pyproje
 ```bash
 bump-semver vcs commit -m "bump 1.2.3" VERSION         # VERSION のみ commit
 bump-semver vcs commit --staged -m "release: 1.2.3"     # staged を一括 commit
-bump-semver vcs commit --amend                          # 直前に吸収、メッセージ維持
+bump-semver vcs commit --amend                          # 全変更を直前に吸収、メッセージ維持
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # 直前のメッセージを更新
+bump-semver vcs commit --amend VERSION                  # VERSION だけを直前に吸収
+bump-semver vcs commit --amend --staged -m "fixup"      # staged を一括で直前に吸収
 ```
 
 **`vcs fetch [REMOTE]`** — 指定 remote (省略時 `origin`) から refs を refresh する。

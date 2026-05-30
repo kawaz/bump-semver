@@ -27,7 +27,7 @@ bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
-bump-semver vcs commit -m MSG <PATH..|--staged> | --amend [-m MSG]
+bump-semver vcs commit [--amend] [-m MSG] <PATH..|--staged>     # or: vcs commit --amend [-m MSG]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -86,7 +86,7 @@ bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 bump-semver vcs commit -m MSG PATH..
 bump-semver vcs commit -m MSG --staged
-bump-semver vcs commit --amend [-m MSG]
+bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 bump-semver vcs fetch [REMOTE]
 bump-semver vcs push --branch NAME [--remote REMOTE]   # --bookmark is an alias
 ```
@@ -143,7 +143,7 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
 |---|---|
 | `-m MSG PATH..` | Stage + commit each existing path's working-tree content. Nonexistent paths silently dropped (declarative convergence). All-nonexistent / no real change → exit 0 with no commit (idempotent) |
 | `-m MSG --staged` | Commit every staged/dirty change in one shot. **git**: commits the index. **jj**: commits the whole `@` snapshot (jj auto-stages). No content → exit 0, idempotent |
-| `--amend [-m MSG]` | Fold ALL current changes into the previous commit. With `-m`: rewrite the message; without: preserve it (no-edit). Message-only amend with no current change is a legal explicit rewrite. `PATH..` / `--staged` are **not supported** with `--amend` (MVP grammar `--amend [-m MSG]` only); for a path-scoped NEW commit, drop `--amend` |
+| `--amend [-m MSG] [PATH.. \| --staged]` | Fold the current change into the previous commit instead of creating a new one. Fully symmetric with the two modes above — `--amend` accepts the same `PATH..` / `--staged` selectors. Bare `--amend` folds everything (explicit rewrite, ungated; message-only amend with no change is legal). `--amend PATH..` folds only those paths (same all-nonexistent / no-change → no-op rule as plain path mode). `--amend --staged` is an explicit synonym for bare amend (the index / `@` snapshot IS amend's absorption source). With `-m`: rewrite the previous commit's message; without: preserve it. Equivalences: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`; jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
 
 **`-a` / `--all` is intentionally not provided** (DR-0020 safety). jj's auto-staged worldview makes `-a`'s unstaged-grab semantic too easy to trip on; use `--staged` (commit all current changes) or pass `PATH..` explicitly. Calling `-a` exits 2 with a hint pointing at `--staged` / `PATH..`.
 
@@ -159,8 +159,10 @@ Exit codes for `vcs commit`: `0` success or idempotent no-op; `2` usage error (m
 ```bash
 bump-semver vcs commit -m "bump 1.2.3" VERSION         # commit just VERSION
 bump-semver vcs commit --staged -m "release: 1.2.3"     # commit everything staged
-bump-semver vcs commit --amend                          # absorb into previous, keep msg
+bump-semver vcs commit --amend                          # absorb all into previous, keep msg
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # rewrite previous msg
+bump-semver vcs commit --amend VERSION                  # fold ONLY VERSION into previous
+bump-semver vcs commit --amend --staged -m "fixup"      # fold all staged into previous
 ```
 
 **`vcs fetch [REMOTE]`** — refresh refs from the named remote (default `origin`).

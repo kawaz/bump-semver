@@ -1784,3 +1784,537 @@ func runBackendCmdIn(dir string, name string, args ...string) ([]byte, error) {
 	cmd.Dir = dir
 	return cmd.Output()
 }
+
+// --- DR-0020 PR-6: TagPush / TagDelete backend tests ----------------------
+//
+// Fixtures reuse the bare-as-origin pattern from PR-5: a local bare repo
+// at a sibling path of the workdir, set as `origin`. Tags push end-to-end
+// without any network. Like PR-5, success-path exit codes are covered at
+// the dispatcher level (main_test.go); these tests focus on the four
+// behavioural matrices that span both backends:
+//
+//   - new tag                       → exit 0, tag visible on bare
+//   - same NAME @ same REV          → exit 0 (idempotent reconciliation),
+//                                     the 片落ちリカバリ case in DR-0020 line 71:
+//                                     local has the tag, remote may not, so
+//                                     create-skip but still push
+//   - same NAME @ diff REV no flag  → exit 4 (integrity violation, distinct
+//                                     from generic "VCS failed" so callers
+//                                     can branch on it)
+//   - same NAME @ diff REV w/ flag  → exit 0 (move + force-push to remote)
+//   - unresolvable REV              → exit 3 (caller bug surfaces, not a
+//                                     "tag already there" red herring)
+//   - delete present tag            → exit 0, bare loses the tag
+//   - delete absent tag             → exit 0 (rm -f semantic per DR-0020
+//                                     line 74; the verb's intent is the
+//                                     end-state, not the transition)
+
+// tagOnBare returns the commit SHA the bare repo's NAME tag points at, or
+// "" when the bare has no such tag. We use `git -C bare show-ref` rather
+// than `rev-parse` so a missing ref returns empty rather than erroring —
+// that lets the assertion side stay declarative.
+func tagOnBare(t *testing.T, bare, name string) string {
+	t.Helper()
+	out, err := runBackendCmdIn(bare, "git", "show-ref", "--tags", "-s", name)
+	if err != nil {
+		// `show-ref` exits 1 when the ref is absent; treat as "no tag".
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// localHeadSHA returns the work-dir HEAD's commit SHA, for cross-checking
+// that a pushed tag actually points where we expect.
+func localHeadSHA(t *testing.T, work string) string {
+	t.Helper()
+	out, err := runBackendCmdIn(work, "git", "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("local rev-parse HEAD: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// localParentSHA returns HEAD~1's SHA for tests that want to move a tag
+// to a different rev.
+func localParentSHA(t *testing.T, work string) string {
+	t.Helper()
+	out, err := runBackendCmdIn(work, "git", "rev-parse", "HEAD~1")
+	if err != nil {
+		t.Fatalf("local rev-parse HEAD~1: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// --- git TagPush -----------------------------------------------------------
+
+// TestGitBackend_TagPush_NewTag: a fresh NAME at HEAD is created locally
+// and pushed; the bare ends up holding it.
+func TestGitBackend_TagPush_NewTag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "HEAD", Remote: "origin",
+		}); err != nil {
+			t.Fatalf("TagPush(new): %v", err)
+		}
+	})
+	want := localHeadSHA(t, work)
+	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
+		t.Errorf("bare v1.0.0 = %q, want %q", got, want)
+	}
+}
+
+// TestGitBackend_TagPush_SameRevIdempotent: the 片落ちリカバリ case.
+// Locally we already have the tag; running again with the same REV must
+// succeed (the operation's intent is "tag points to REV on remote",
+// which is already true). This isolates the local-create-skip branch
+// because the remote already has it too (preloaded).
+func TestGitBackend_TagPush_SameRevIdempotent(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	// Tag locally then push (round 1) so we're in the "exists on both
+	// sides" state at the same REV.
+	runIn(t, work, "git", "tag", "v1.0.0", "HEAD")
+	want := localHeadSHA(t, work)
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		// Manually push the local tag via runBackendCmdIn (out of band,
+		// not via TagPush) — we want round 1 to set up the remote without
+		// touching our SUT.
+		if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v1.0.0"); err != nil {
+			t.Fatalf("setup push: %v", err)
+		}
+		// Round 2: same REV, must be a no-op success.
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "HEAD", Remote: "origin",
+		}); err != nil {
+			t.Errorf("same-rev TagPush should succeed (idempotent), got: %v", err)
+		}
+	})
+	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
+		t.Errorf("bare v1.0.0 = %q, want %q (unchanged)", got, want)
+	}
+}
+
+// TestGitBackend_TagPush_DiffRevNoMoveFlag: same NAME at a different REV
+// without `--allow-move` is the integrity violation case (exit 4). The
+// bare must remain pointing at the original REV (no side-effect).
+func TestGitBackend_TagPush_DiffRevNoMoveFlag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	// Round 1: tag at HEAD~1, push it.
+	parentSHA := localParentSHA(t, work)
+	runIn(t, work, "git", "tag", "v1.0.0", "HEAD~1")
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v1.0.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		// Attempt move to HEAD without flag → exit 4.
+		err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "HEAD", Remote: "origin",
+		})
+		if err == nil {
+			t.Fatal("diff-rev TagPush without --allow-move should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeAmbiguous {
+			t.Errorf("expected exitCodeAmbiguous (4), got: %v", err)
+		}
+	})
+	// Bare must still point at the original REV.
+	if got := tagOnBare(t, bare, "v1.0.0"); got != parentSHA {
+		t.Errorf("bare v1.0.0 = %q, want %q (unchanged)", got, parentSHA)
+	}
+}
+
+// TestGitBackend_TagPush_DiffRevAllowMove: with `--allow-move=true`, the
+// move is permitted; bare ends up pointing at the new REV.
+func TestGitBackend_TagPush_DiffRevAllowMove(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	runIn(t, work, "git", "tag", "v1.0.0", "HEAD~1")
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v1.0.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "HEAD", Remote: "origin", AllowMove: true,
+		}); err != nil {
+			t.Fatalf("TagPush(--allow-move): %v", err)
+		}
+	})
+	want := localHeadSHA(t, work)
+	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
+		t.Errorf("bare v1.0.0 = %q, want %q (moved to HEAD)", got, want)
+	}
+}
+
+// TestGitBackend_TagPush_BadRev: unresolvable REV surfaces as exitCodeVCSExec
+// (3) — distinct from the integrity-violation exit 4 so callers can branch.
+func TestGitBackend_TagPush_BadRev(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "definitely-not-a-rev", Remote: "origin",
+		})
+		if err == nil {
+			t.Fatal("TagPush with bad REV should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// TestGitBackend_TagPush_BadRemote: unknown remote → exit 3.
+func TestGitBackend_TagPush_BadRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "HEAD", Remote: "nonexistent",
+		})
+		if err == nil {
+			t.Fatal("TagPush to nonexistent remote should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// --- git TagDelete ---------------------------------------------------------
+
+// TestGitBackend_TagDelete_PresentTag: a tag present locally and on the
+// bare is removed from both.
+func TestGitBackend_TagDelete_PresentTag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	runIn(t, work, "git", "tag", "v0.9.0", "HEAD")
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v0.9.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	if tagOnBare(t, bare, "v0.9.0") == "" {
+		t.Fatal("setup invariant: bare should have v0.9.0 before delete")
+	}
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.TagDelete(tagDeleteOpts{Name: "v0.9.0", Remote: "origin"}); err != nil {
+			t.Fatalf("TagDelete: %v", err)
+		}
+	})
+	if got := tagOnBare(t, bare, "v0.9.0"); got != "" {
+		t.Errorf("bare should not have v0.9.0 after delete, got %q", got)
+	}
+	// Local should also be gone.
+	out, _ := runBackendCmdIn(work, "git", "tag", "--list", "v0.9.0")
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("local should not have v0.9.0 after delete, got %q", string(out))
+	}
+}
+
+// TestGitBackend_TagDelete_AbsentIdempotent: deleting an absent tag is a
+// no-op success (rm -f semantic). Critical: git's bare `git tag -d NAME`
+// errors when the tag is missing, so the backend MUST pre-check existence.
+func TestGitBackend_TagDelete_AbsentIdempotent(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.TagDelete(tagDeleteOpts{Name: "never-existed", Remote: "origin"}); err != nil {
+			t.Errorf("absent TagDelete should succeed (rm -f semantic), got: %v", err)
+		}
+	})
+}
+
+// TestGitBackend_TagDelete_LocalOnly: local has the tag, bare doesn't.
+// Both halves of the delete must short-circuit cleanly: the remote push
+// of `:refs/tags/NAME` reports "deleting a non-existent ref" but exits 0,
+// so the backend can run it unconditionally without breaking idempotence.
+func TestGitBackend_TagDelete_LocalOnly(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "git", "tag", "local-only", "HEAD")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.TagDelete(tagDeleteOpts{Name: "local-only", Remote: "origin"}); err != nil {
+			t.Errorf("TagDelete (local-only) should succeed, got: %v", err)
+		}
+	})
+	out, _ := runBackendCmdIn(work, "git", "tag", "--list", "local-only")
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("local should not have local-only after delete, got %q", string(out))
+	}
+	if got := tagOnBare(t, bare, "local-only"); got != "" {
+		t.Errorf("bare should not have local-only, got %q", got)
+	}
+}
+
+// TestGitBackend_TagDelete_BadRemote: unknown remote on the remote-delete
+// half → exit 3. The local half already ran (idempotent) but the remote
+// failure surfaces.
+func TestGitBackend_TagDelete_BadRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "git", "tag", "v9.0.0", "HEAD")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.TagDelete(tagDeleteOpts{Name: "v9.0.0", Remote: "nonexistent"})
+		if err == nil {
+			t.Fatal("TagDelete to nonexistent remote should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// --- jj TagPush ------------------------------------------------------------
+
+// TestJjBackend_TagPush_NewTag: fresh tag at @- via jj tag set + jj git
+// export + native git push to origin.
+func TestJjBackend_TagPush_NewTag(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "@-", Remote: "origin",
+		}); err != nil {
+			t.Fatalf("TagPush(new): %v", err)
+		}
+	})
+	// @- on a fresh jj colocated repo resolves to the bump commit (the
+	// second commit setupGitRepo creates). Compare via git rev-parse.
+	wantOut, err := runBackendCmdIn(work, "git", "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	want := strings.TrimSpace(string(wantOut))
+	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
+		t.Errorf("bare v1.0.0 = %q, want %q", got, want)
+	}
+}
+
+// TestJjBackend_TagPush_SameRevIdempotent: local tag exists, push again at
+// same REV. Crucial: jj's `jj tag set NAME -r REV` errors out when the
+// tag already exists (even at the same REV), so the backend MUST pre-check
+// and skip the create on a same-rev match. The push half stays — that's
+// the 片落ちリカバリ behaviour.
+func TestJjBackend_TagPush_SameRevIdempotent(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "tag", "set", "v1.0.0", "-r", "@-")
+	// Push out of band so the remote already has it.
+	if _, err := runBackendCmdIn(work, "jj", "git", "export"); err != nil {
+		t.Fatalf("setup jj git export: %v", err)
+	}
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v1.0.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	want := tagOnBare(t, bare, "v1.0.0")
+	if want == "" {
+		t.Fatal("setup invariant: bare should have v1.0.0")
+	}
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "@-", Remote: "origin",
+		}); err != nil {
+			t.Errorf("same-rev jj TagPush should succeed (idempotent), got: %v", err)
+		}
+	})
+	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
+		t.Errorf("bare v1.0.0 = %q, want %q (unchanged)", got, want)
+	}
+}
+
+// TestJjBackend_TagPush_DiffRevNoMoveFlag: jj-side integrity violation.
+// The backend must pre-detect the diff-rev case and emit exit 4 with no
+// side-effect on the bare (jj's own "Refusing to move tag" hint would be
+// exit 1 untransformed).
+func TestJjBackend_TagPush_DiffRevNoMoveFlag(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "tag", "set", "v1.0.0", "-r", "@--")
+	if _, err := runBackendCmdIn(work, "jj", "git", "export"); err != nil {
+		t.Fatalf("setup jj git export: %v", err)
+	}
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v1.0.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	wantBare := tagOnBare(t, bare, "v1.0.0")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "@-", Remote: "origin",
+		})
+		if err == nil {
+			t.Fatal("diff-rev jj TagPush without --allow-move should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeAmbiguous {
+			t.Errorf("expected exitCodeAmbiguous (4), got: %v", err)
+		}
+	})
+	if got := tagOnBare(t, bare, "v1.0.0"); got != wantBare {
+		t.Errorf("bare v1.0.0 should be unchanged after rejected move, got %q want %q", got, wantBare)
+	}
+}
+
+// TestJjBackend_TagPush_DiffRevAllowMove: with `--allow-move`, the move is
+// permitted: `jj tag set --allow-move` + export + force-push.
+func TestJjBackend_TagPush_DiffRevAllowMove(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "tag", "set", "v1.0.0", "-r", "@--")
+	if _, err := runBackendCmdIn(work, "jj", "git", "export"); err != nil {
+		t.Fatalf("setup jj git export: %v", err)
+	}
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v1.0.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "@-", Remote: "origin", AllowMove: true,
+		}); err != nil {
+			t.Fatalf("TagPush(--allow-move): %v", err)
+		}
+	})
+	// New target: @- which is the bump commit (= HEAD on the git side).
+	wantOut, _ := runBackendCmdIn(work, "git", "rev-parse", "HEAD")
+	want := strings.TrimSpace(string(wantOut))
+	if got := tagOnBare(t, bare, "v1.0.0"); got != want {
+		t.Errorf("bare v1.0.0 = %q, want %q (moved)", got, want)
+	}
+}
+
+// TestJjBackend_TagPush_BadRev: unresolvable REV → exit 3.
+func TestJjBackend_TagPush_BadRev(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "definitely-not-a-rev", Remote: "origin",
+		})
+		if err == nil {
+			t.Fatal("TagPush with bad REV should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// --- jj TagDelete ----------------------------------------------------------
+
+// TestJjBackend_TagDelete_PresentTag: jj tag delete + jj git export +
+// remote delete; both sides end up tagless.
+func TestJjBackend_TagDelete_PresentTag(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "tag", "set", "v0.9.0", "-r", "@-")
+	if _, err := runBackendCmdIn(work, "jj", "git", "export"); err != nil {
+		t.Fatalf("setup jj git export: %v", err)
+	}
+	if _, err := runBackendCmdIn(work, "git", "push", "origin", "refs/tags/v0.9.0"); err != nil {
+		t.Fatalf("setup push: %v", err)
+	}
+	if tagOnBare(t, bare, "v0.9.0") == "" {
+		t.Fatal("setup invariant: bare should have v0.9.0 before delete")
+	}
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagDelete(tagDeleteOpts{Name: "v0.9.0", Remote: "origin"}); err != nil {
+			t.Fatalf("TagDelete: %v", err)
+		}
+	})
+	if got := tagOnBare(t, bare, "v0.9.0"); got != "" {
+		t.Errorf("bare should not have v0.9.0 after delete, got %q", got)
+	}
+}
+
+// TestJjBackend_TagDelete_AbsentIdempotent: `jj tag delete` is natively
+// idempotent (exit 0 with "No matching tags"). The remote half is also
+// idempotent (git's `push :refs/tags/NAME` against a missing ref exits 0).
+func TestJjBackend_TagDelete_AbsentIdempotent(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.TagDelete(tagDeleteOpts{Name: "never-existed", Remote: "origin"}); err != nil {
+			t.Errorf("absent jj TagDelete should succeed (rm -f semantic), got: %v", err)
+		}
+	})
+}
+
+// TestJjBackend_TagDelete_BadRemote: unknown remote → exit 3.
+func TestJjBackend_TagDelete_BadRemote(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "tag", "set", "v9.0.0", "-r", "@-")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.TagDelete(tagDeleteOpts{Name: "v9.0.0", Remote: "nonexistent"})
+		if err == nil {
+			t.Fatal("TagDelete to nonexistent remote should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}

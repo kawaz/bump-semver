@@ -119,6 +119,7 @@ VCS helpers (DR-0020):
   vcs get current-branch   Print the unambiguous branch (git) / bookmark (jj)
   vcs is clean|dirty       Test worktree cleanliness (untracked ignored on git)
   vcs is git|jj            Test the detected backend
+  vcs diff REV [PATH..]    Print the patch between REV and the working copy
   (See: bump-semver vcs --help)
 
 Exit codes:
@@ -360,8 +361,9 @@ Usage:
   bump-semver vcs --help
 
 Verbs:
-  get <key>     Read a value from the VCS. Keys: root | backend | current-branch.
-  is  <pred>    Test a predicate. Predicates: clean | dirty | git | jj. Exit 0=true, 1=false.
+  get <key>           Read a value from the VCS. Keys: root | backend | current-branch.
+  is  <pred>          Test a predicate. Predicates: clean | dirty | git | jj. Exit 0=true, 1=false.
+  diff REV [PATH..]   Print the patch between REV and the working copy (git/jj-agnostic).
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -465,6 +467,57 @@ Examples:
   bump-semver vcs is dirty || echo "nothing to commit"
 `
 
+// helpVcsDiff documents `vcs diff REV [PATH..]` (DR-0020 PR-3).
+//
+// The verb is a thin wrapper around the backend's native `diff` (one-rev
+// form: REV vs working copy, including uncommitted changes). The user
+// gets identical output whether the cwd is git or jj — git via
+// `git diff REV`, jj via `jj diff --from REV --to @`.
+//
+// PATH filtering is declarative-convergent: nonexistent paths are
+// silently dropped (kawaz's design decision). When every supplied path
+// is filtered out the command exits 0 with empty stdout — it explicitly
+// does NOT widen back to "diff everything".
+const helpVcsDiff = `bump-semver vcs diff — print the patch between REV and the working copy [DR-0020]
+
+Usage:
+  bump-semver vcs diff REV [PATH..]
+
+Arguments:
+  REV          The revision to compare against (git: any rev-spec like
+               HEAD~1, origin/main, <sha>; jj: any revset like @-, main@origin).
+  PATH..       Optional path filter. Nonexistent paths are silently
+               ignored (declarative convergence). When every PATH is
+               filtered out, stdout is empty and exit is 0 — the verb
+               does NOT widen back to "all paths" in that case.
+
+Notes:
+  - git: runs 'git diff REV [-- PATH..]' (one-rev form = REV vs working
+    copy, including uncommitted changes).
+  - jj:  runs 'jj diff --from REV --to @ [-- PATH..]' (same semantics —
+    REV vs working copy).
+  - The patch text is written verbatim to stdout (no re-formatting).
+  - A path present in REV but deleted in @ is NOT shown when named
+    explicitly (os.Stat filters it). The full diff (no PATH) still
+    shows the deletion.
+
+Global Options:
+  --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
+  -q, --quiet            Suppress stdout (exit code still carries success/failure)
+  -qq, --quiet-all       Suppress stdout, hint, and error output
+
+Exit codes:
+  0   success (patch on stdout, possibly empty)
+  2   usage error (REV missing — currently surfaces as the help text)
+  3   VCS subprocess error (not a repo, unresolvable REV)
+
+Examples:
+  bump-semver vcs diff HEAD~1                   # full diff since previous commit
+  bump-semver vcs diff main@origin VERSION      # what changed in VERSION vs remote main
+  bump-semver vcs diff HEAD~1 src lib           # subtree-scoped diff
+  bump-semver vcs diff @-                       # jj: diff since @- (parent change)
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
@@ -478,7 +531,8 @@ var actionHelpTexts = map[string]string{
 	"pre":     helpPre,
 	"get":     helpGet,
 	"compare": helpCompare,
-	"vcs":     helpVcs,
-	"vcs get": helpVcsGet,
-	"vcs is":  helpVcsIs,
+	"vcs":      helpVcs,
+	"vcs get":  helpVcsGet,
+	"vcs is":   helpVcsIs,
+	"vcs diff": helpVcsDiff,
 }

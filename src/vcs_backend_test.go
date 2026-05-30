@@ -814,10 +814,15 @@ func TestJjBackend_DiffNameStatus_BadRev(t *testing.T) {
 //                              (git: --cached, jj: @ snapshot).
 //                              No change at all → no-op, nil.
 //   - opts.amend             → fold the current change set into @- (jj) or
-//                              the last commit (git --amend). Allowed with
-//                              no path / no message (no-edit). amend bypasses
-//                              the empty-no-op rule — message-only amend is
-//                              a legal explicit rewrite.
+//                              the last commit (git --amend). PR-4.1 made
+//                              amend fully symmetric with non-amend on
+//                              path selectors: bare amend, amend+paths,
+//                              and amend+staged are all accepted.
+//                              Path-scoped amend follows the same no-op
+//                              gate as path mode (all-nonexistent / no-
+//                              change → nil). Bare amend bypasses the
+//                              gate — message-only amend is a legal
+//                              explicit rewrite.
 //   - opts.message=="" with !amend → caller-side guarantee (parser rejects
 //                              earlier); the backend assumes a message is
 //                              present whenever !amend.

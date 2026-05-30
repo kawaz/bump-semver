@@ -369,7 +369,9 @@ Verbs:
   diff REV [PATH..]   Print the patch between REV and the working copy (git/jj-agnostic).
   commit -m MSG PATH..        Commit listed paths' working-tree content (safe default).
   commit -m MSG --staged      Commit all staged/dirty changes at once.
-  commit --amend [-m MSG]     Fold current changes into the previous commit.
+  commit --amend [-m MSG] [PATH.. | --staged]
+                              Fold current changes into the previous commit
+                              (symmetric with -m PATH.. / -m --staged above).
   fetch [REMOTE]              Fetch refs from REMOTE (default: origin).
   push --branch NAME [--remote REMOTE]
                               Push NAME to REMOTE (default: origin). --bookmark is an alias.
@@ -564,7 +566,7 @@ const helpVcsCommit = `bump-semver vcs commit — record changes safely (git/jj-
 Usage:
   bump-semver vcs commit -m MSG PATH..
   bump-semver vcs commit -m MSG --staged
-  bump-semver vcs commit --amend [-m MSG]
+  bump-semver vcs commit --amend [-m MSG] [PATH.. | --staged]
 
 Modes:
   PATH..        Commit the working-tree content of the listed paths only.
@@ -576,14 +578,20 @@ Modes:
                   jj:  commits the entire @ snapshot (= all current changes,
                        since jj auto-stages).
                 No staged/dirty content → exit 0, no commit (idempotent).
-  --amend       Fold ALL current changes into the previous commit.
+  --amend       Fold the current change into the previous commit (instead
+                of creating a new one). Fully symmetric with non-amend:
+                  --amend                  fold ALL current changes (bare)
+                  --amend PATH..           fold only those paths
+                  --amend --staged         synonym for bare amend (the
+                                           staged index IS amend's source)
                 With -m: rewrite the previous commit's message.
-                Without -m: preserve the previous commit's message (no-edit).
-                A message-only amend with no current changes is a legal
-                explicit rewrite (NOT subject to the no-op rule).
-                PATH.. and --staged are NOT supported with --amend
-                (MVP grammar: --amend [-m MSG] only). For a path-scoped
-                NEW commit, drop --amend.
+                Without -m: preserve the previous commit's message.
+                Equivalences:
+                  git: git add -- PATHS; git commit --amend [-m|--no-edit] -- PATHS
+                  jj:  jj squash --from @ --into @- [-m MSG | -u] [-- PATHS]
+                Path-scoped amend follows the same no-op rule as path mode
+                (all-nonexistent / no-change → exit 0). Bare amend bypasses
+                the gate — message-only rewrite is a legal explicit intent.
 
 Arguments:
   -m, --message MSG    Commit message. Required UNLESS --amend.
@@ -608,9 +616,12 @@ Examples:
                                                 # commit whichever exist & changed
   bump-semver vcs commit --staged -m "release: 1.2.3"
                                                 # commit everything in one shot
-  bump-semver vcs commit --amend                # fold into previous, keep message
+  bump-semver vcs commit --amend                # fold all into previous, keep message
   bump-semver vcs commit --amend -m "release: 1.2.3 (final)"
                                                 # rewrite previous message
+  bump-semver vcs commit --amend VERSION        # fold ONLY VERSION into previous
+  bump-semver vcs commit --amend --staged -m "fixup"
+                                                # fold all staged into previous
 `
 
 // helpVcsFetch documents `vcs fetch [REMOTE]` (DR-0020 PR-5).

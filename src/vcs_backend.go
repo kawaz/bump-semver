@@ -33,6 +33,20 @@ type vcsBackend interface {
 	// bookmarks in ancestors) returns *exitErr{code: exitCodeAmbiguous}
 	// so callers can preserve the exit-code contract.
 	CurrentBranch() (string, error)
+
+	// FetchFile reads the contents of `file` at revision `rev` from
+	// the underlying VCS. Replaces the free function vcsFetchFile.
+	FetchFile(rev, file string) ([]byte, error)
+
+	// ListTags returns every tag known to the local VCS, in whatever
+	// order the VCS reports them. Caller filters / sorts.
+	// Use latestTagFromRemote for remote queries — those are always
+	// git ls-remote regardless of the local backend.
+	ListTags() ([]string, error)
+
+	// LatestTag returns the SemVer-largest tag known to the local VCS.
+	// Non-semver tag names are silently skipped (mirrors DR-0008).
+	LatestTag() (Version, error)
 }
 
 // newVcsBackend resolves the `--vcs` override (or auto-probe) into a
@@ -158,14 +172,9 @@ func (j *jjBackend) CurrentBranch() (string, error) {
 }
 
 // runBackendCmd is the shared subprocess helper for backend methods.
-// Mirrors the long-standing runVcs in vcs.go (Output() + folded stderr)
-// but lives here so we can keep new code self-contained while the
-// legacy vcs.go is gradually migrated to the backend interface.
-//
-// Design rationale: runVcs predates the vcsBackend interface and is
-// scheduled for migration in a follow-up step within this PR. Until
-// then we duplicate the helper to keep PR-1's basal new code free of
-// dependencies on the legacy file's identifier set.
+// Output() + folded stderr keeps subprocess diagnostics intact (the
+// jj/git native messages are almost always more accurate than anything
+// we could rephrase).
 func runBackendCmd(name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	var stderr strings.Builder
@@ -179,4 +188,74 @@ func runBackendCmd(name string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return out, nil
+}
+
+// --- git: FetchFile / ListTags / LatestTag ---------------------------------
+
+// FetchFile returns `file` at `rev` via `git show <rev>:<file>`.
+func (g *gitBackend) FetchFile(rev, file string) ([]byte, error) {
+	return runBackendCmd("git", "show", rev+":"+file)
+}
+
+// ListTags returns every tag known to the local git repo
+// (`git tag --list`), deduplicated.
+func (g *gitBackend) ListTags() ([]string, error) {
+	out, err := runBackendCmd("git", "tag", "--list")
+	if err != nil {
+		return nil, err
+	}
+	return splitAndDedup(string(out)), nil
+}
+
+// LatestTag picks the SemVer-largest tag from ListTags.
+func (g *gitBackend) LatestTag() (Version, error) {
+	tags, err := g.ListTags()
+	if err != nil {
+		return Version{}, err
+	}
+	return pickLatestSemverTag(tags)
+}
+
+// --- jj: FetchFile / ListTags / LatestTag ----------------------------------
+
+// FetchFile returns `file` at `rev` via `jj file show`. When `rev`
+// looks like `<remote>/<bookmark>` (a git-style remote ref) we
+// transparently retry as jj's native `<bookmark>@<remote>` form on
+// failure — git users habitually write `origin/main` and the fallback
+// keeps that ergonomic. See altJjRev for the mapping.
+func (j *jjBackend) FetchFile(rev, file string) ([]byte, error) {
+	out, err := runBackendCmd("jj", "file", "show", "-r", rev, file)
+	if err == nil {
+		return out, nil
+	}
+	if alt, ok := altJjRev(rev); ok {
+		if out2, err2 := runBackendCmd("jj", "file", "show", "-r", alt, file); err2 == nil {
+			return out2, nil
+		}
+	}
+	return nil, err
+}
+
+// ListTags returns every tag known to the local jj repo. The template
+// emits one tag name per line per change with tags; the dedup pass
+// collapses duplicates from changes that share a tag.
+//
+// We do not run `jj git fetch` here — DR-0008 makes "no implicit
+// network calls" an explicit decision.
+func (j *jjBackend) ListTags() ([]string, error) {
+	out, err := runBackendCmd("jj", "log", "-r", "tags()", "--no-graph",
+		"-T", `tags.map(|t| t.name() ++ "\n").join("")`)
+	if err != nil {
+		return nil, err
+	}
+	return splitAndDedup(string(out)), nil
+}
+
+// LatestTag picks the SemVer-largest tag from ListTags.
+func (j *jjBackend) LatestTag() (Version, error) {
+	tags, err := j.ListTags()
+	if err != nil {
+		return Version{}, err
+	}
+	return pickLatestSemverTag(tags)
 }

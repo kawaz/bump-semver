@@ -2066,6 +2066,44 @@ func TestRun_VcsGet_CurrentBranch_Detached(t *testing.T) {
 	})
 }
 
+// TestRun_VcsGet_Backend_VcsOverride: --vcs git on a colocated repo
+// forces the git backend (was jj otherwise).
+func TestRun_VcsGet_Backend_VcsOverride(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "backend", "--vcs", "git"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get backend --vcs git: %v", err)
+		}
+		if got := strings.TrimSpace(stdout.String()); got != "git" {
+			t.Errorf("backend (--vcs git) = %q, want git", got)
+		}
+	})
+}
+
+// TestRun_VcsGet_Quiet: -q suppresses the stdout value but the command
+// still exits 0.
+func TestRun_VcsGet_Quiet(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "backend", "-q"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get backend -q: %v", err)
+		}
+		if got := stdout.String(); got != "" {
+			t.Errorf("stdout should be empty with -q, got: %q", got)
+		}
+	})
+}
+
 // TestRun_VcsGet_NoRepo: outside a vcs repo, `vcs get backend` should
 // report exit 3 (VCS exec / not-a-repo) — distinct from the get's own
 // usage errors.

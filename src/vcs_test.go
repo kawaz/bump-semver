@@ -283,9 +283,10 @@ func TestVcsListTags_Git(t *testing.T) {
 	}
 	dir := setupGitRepo(t, []string{"v1.0.0", "v1.1.0", "not-a-version"}, "1.1.0")
 	withCwd(t, dir, func() {
-		got, err := vcsListTags(vcsGit)
+		b := &gitBackend{}
+		got, err := b.ListTags()
 		if err != nil {
-			t.Fatalf("vcsListTags: %v", err)
+			t.Fatalf("ListTags: %v", err)
 		}
 		want := map[string]bool{"v1.0.0": true, "v1.1.0": true, "not-a-version": true}
 		for _, g := range got {
@@ -305,13 +306,14 @@ func TestVcsLatestTag_Git(t *testing.T) {
 	}
 	dir := setupGitRepo(t, []string{"v1.0.0", "v1.2.3", "v1.1.0", "build-2025"}, "1.2.3")
 	withCwd(t, dir, func() {
-		v, err := vcsLatestTag(vcsGit, "")
+		b := &gitBackend{}
+		v, err := b.LatestTag()
 		if err != nil {
-			t.Fatalf("vcsLatestTag: %v", err)
+			t.Fatalf("LatestTag: %v", err)
 		}
 		// Prefix preserved (DR-0006), so the tag came back with `v`.
 		if got := v.String(); got != "v1.2.3" {
-			t.Errorf("vcsLatestTag = %q, want v1.2.3", got)
+			t.Errorf("LatestTag = %q, want v1.2.3", got)
 		}
 	})
 }
@@ -323,7 +325,8 @@ func TestVcsLatestTag_Git_NoSemver(t *testing.T) {
 	}
 	dir := setupGitRepo(t, []string{"build-2025", "rolling"}, "1.0.0")
 	withCwd(t, dir, func() {
-		_, err := vcsLatestTag(vcsGit, "")
+		b := &gitBackend{}
+		_, err := b.LatestTag()
 		if err == nil {
 			t.Fatal("expected error for no-semver-tags repo")
 		}
@@ -340,9 +343,10 @@ func TestVcsFetchFile_Git(t *testing.T) {
 	}
 	dir := setupGitRepo(t, nil, "1.2.3")
 	withCwd(t, dir, func() {
-		out, err := vcsFetchFile(vcsGit, "HEAD~1", "VERSION")
+		b := &gitBackend{}
+		out, err := b.FetchFile("HEAD~1", "VERSION")
 		if err != nil {
-			t.Fatalf("vcsFetchFile: %v", err)
+			t.Fatalf("FetchFile: %v", err)
 		}
 		if got := strings.TrimSpace(string(out)); got != "0.0.1" {
 			t.Errorf("VERSION at HEAD~1 = %q, want 0.0.1", got)
@@ -445,9 +449,10 @@ func TestVcsListTags_Jj(t *testing.T) {
 	}
 	dir := setupJjRepo(t, []string{"v1.0.0", "v2.0.0", "build-x"}, "2.0.0")
 	withCwd(t, dir, func() {
-		got, err := vcsListTags(vcsJj)
+		b := &jjBackend{}
+		got, err := b.ListTags()
 		if err != nil {
-			t.Fatalf("vcsListTags: %v", err)
+			t.Fatalf("ListTags: %v", err)
 		}
 		want := map[string]bool{"v1.0.0": true, "v2.0.0": true, "build-x": true}
 		for _, g := range got {
@@ -470,9 +475,10 @@ func TestVcsFetchFile_Jj(t *testing.T) {
 	}
 	dir := setupJjRepo(t, nil, "1.2.3")
 	withCwd(t, dir, func() {
-		out, err := vcsFetchFile(vcsJj, "@--", "VERSION")
+		b := &jjBackend{}
+		out, err := b.FetchFile("@--", "VERSION")
 		if err != nil {
-			t.Fatalf("vcsFetchFile: %v", err)
+			t.Fatalf("FetchFile: %v", err)
 		}
 		if got := strings.TrimSpace(string(out)); got != "0.0.1" {
 			t.Errorf("VERSION at @-- = %q, want 0.0.1", got)

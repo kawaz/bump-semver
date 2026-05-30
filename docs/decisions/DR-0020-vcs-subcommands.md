@@ -122,7 +122,7 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - **`vcs get current-branch` 一意性**:
   - git: `git symbolic-ref --short HEAD`。DETACHED HEAD は exit 4 (merge / rebase / cherry-pick 進行中の追加判定は次 PR で `.git/MERGE_HEAD` 等を probe して足す)
   - jj: `heads(::@ & bookmarks())` の template で名前を集める。0 件 / 複数件 はいずれも exit 4
-- **`vcsKind` (DR-0008/0016) との一本化**: PR-1 は新規 `vcsBackend` interface を**並置追加**にとどめ、既存 `vcs:` 入力モード (`vcsFetchFile` / `vcsListTags` / `vcsLatestTag` / `resolveVcsInput`) の callers を backend に流し込む refactor は別途まとめて行う (現状の TDD/test 群が `vcsKind` 受け取り前提で組まれており、安全な banking のため新規 interface の green 確定が先)。journal の「移行は PR-7」と本 DR 確定方針 (= 一本化) の重みは PR-7 の一括 refactor で両立させる
+- **`vcsKind` (DR-0008/0016) との一本化**: PR-1 で実施済。`vcsBackend` interface に `Kind` / `Root` / `CurrentBranch` (新規) に加えて `FetchFile` / `ListTags` / `LatestTag` を載せ、`vcsFetchFile` / `vcsListTags` / `vcsLatestTag` 等の free function は廃止 (= 中身は backend メソッドに移管)。`resolveVcsInput` / `resolveVcsFunc` は `vcsBackend` を受け取る形に書き換え、`resolveInputs` も `detectVcs` ではなく `newVcsBackend` で backend を取得する。`vcsKind` は `--vcs jj|git|auto` の override-spec 型として残し、`parseVcsOverride` と `detectVcs` (probe-only) も継続。`vcsListTagsRemote` は `latestTagFromRemote` (常に `git ls-remote` を叩く free function) に名称変更 + 統合。journal の「移行は PR-7」は本 DR 確定方針 (一本化) で上書き済 — PR-1 段階で一本化完了
 - **Cargo workspace.package 補完 (DR-0021)** とのリリース順序: DR-0021 が patch リリース (v0.16.2) で land 済み。本 DR の PR-1 land 時は **minor bump** で次バージョンに乗せ、欠けがちな minor リリースのリズムも揃える
 
 ## 関連

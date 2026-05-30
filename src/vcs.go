@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,6 +19,11 @@ import (
 // jj wins over git when both are present (kawaz's git-bare + jj-workspace
 // layout has both `.jj` and `.git` at the repo root; we want jj semantics
 // in that case so revsets like `main@origin` work).
+//
+// vcsKind survives as the *override-spec type* parsed from `--vcs`
+// (DR-0008 / DR-0016). The runtime VCS handle is now the vcsBackend
+// interface (DR-0020); vcsKind only carries "what the user asked for"
+// until newVcsBackend turns it into a concrete backend.
 type vcsKind int
 
 const (
@@ -153,10 +157,14 @@ func vcsParseSpec(spec string) (rev, file string, isFunc bool, funcName string) 
 // mismatch errors can identify the input. The returned resolvedInput
 // has handler/file unset, so --write rejection in the bump path treats
 // vcs: inputs the same as VER inputs (they are read-only by design).
-func resolveVcsInput(spec string, otherFile string, vcs vcsKind) (resolvedInput, error) {
+//
+// backend is the resolved vcsBackend produced by newVcsBackend (DR-0020).
+// Caller is responsible for the lazy-detection (only build the backend
+// when at least one input is `vcs:`).
+func resolveVcsInput(spec string, otherFile string, backend vcsBackend) (resolvedInput, error) {
 	rev, file, isFunc, funcName := vcsParseSpec(spec)
 	if isFunc {
-		return resolveVcsFunc(spec, funcName, rev, vcs)
+		return resolveVcsFunc(spec, funcName, rev, backend)
 	}
 	if file == "" {
 		if otherFile == "" {
@@ -164,7 +172,7 @@ func resolveVcsInput(spec string, otherFile string, vcs vcsKind) (resolvedInput,
 		}
 		file = otherFile
 	}
-	content, err := vcsFetchFile(vcs, rev, file)
+	content, err := backend.FetchFile(rev, file)
 	if err != nil {
 		return resolvedInput{}, err
 	}
@@ -188,14 +196,21 @@ func resolveVcsInput(spec string, otherFile string, vcs vcsKind) (resolvedInput,
 
 // resolveVcsFunc handles function-shaped specs (`vcs:<name>(<args>)`).
 // MVP supports `latest-tag()` only.
-func resolveVcsFunc(spec, name, args string, vcs vcsKind) (resolvedInput, error) {
+func resolveVcsFunc(spec, name, args string, backend vcsBackend) (resolvedInput, error) {
 	switch name {
 	case "latest-tag":
 		// args is the inside of `latest-tag(...)`. Empty (or whitespace
-		// only) means "use cwd VCS"; non-empty is a remote repo spec
-		// resolved by expandRepoArg.
+		// only) means "use the local backend"; non-empty is a remote
+		// repo spec resolved by expandRepoArg and queried via git
+		// ls-remote (always git regardless of the local backend).
 		remoteURL := expandRepoArg(args)
-		v, err := vcsLatestTag(vcs, remoteURL)
+		var v Version
+		var err error
+		if remoteURL != "" {
+			v, err = latestTagFromRemote(remoteURL)
+		} else {
+			v, err = backend.LatestTag()
+		}
 		if err != nil {
 			return resolvedInput{}, fmt.Errorf("%s: %w", spec, err)
 		}
@@ -207,42 +222,6 @@ func resolveVcsFunc(spec, name, args string, vcs vcsKind) (resolvedInput, error)
 		}, nil
 	default:
 		return resolvedInput{}, fmt.Errorf("%s: unknown vcs function: %s()", spec, name)
-	}
-}
-
-// vcsFetchFile reads `file` at revision `rev` from the underlying VCS.
-//
-// jj path:  `jj file show -r <rev> <file>`
-//
-//	when <rev> looks like `<remote>/<bookmark>` (e.g. `origin/main`)
-//	and the first try fails, we retry with jj's native form
-//	`<bookmark>@<remote>` (e.g. `main@origin`). git users habitually
-//	write `origin/main` so we accept both spellings transparently.
-//
-// git path: `git show <rev>:<file>`. No fallback is needed.
-//
-// Errors from the VCS subprocess are surfaced verbatim (with stderr
-// included) so users see jj/git's own diagnostics. We do not try to
-// add hints — the user knows their VCS, and jj/git's messages are
-// usually more accurate than anything we could synthesize.
-func vcsFetchFile(vcs vcsKind, rev, file string) ([]byte, error) {
-	switch vcs {
-	case vcsJj:
-		out, err := runVcs("jj", "file", "show", "-r", rev, file)
-		if err == nil {
-			return out, nil
-		}
-		// Fallback: convert `origin/main` → `main@origin` and retry.
-		if alt, ok := altJjRev(rev); ok {
-			if out2, err2 := runVcs("jj", "file", "show", "-r", alt, file); err2 == nil {
-				return out2, nil
-			}
-		}
-		return nil, err
-	case vcsGit:
-		return runVcs("git", "show", rev+":"+file)
-	default:
-		return nil, fmt.Errorf("vcs not detected (set --vcs)")
 	}
 }
 
@@ -263,56 +242,30 @@ func altJjRev(rev string) (string, bool) {
 	return rev[i+1:] + "@" + rev[:i], true
 }
 
-// vcsListTags returns every tag known to the VCS, in whatever order
-// the VCS reports them. Caller is responsible for filtering / sorting.
-//
-// jj:  `jj log -r 'tags()' --no-graph -T '<one tag per line>'`
-//
-//	The template emits one line per tag name across all change
-//	commits with tags. We do not run `jj git fetch` here — DR-0008
-//	makes "no implicit network calls" an explicit decision.
-//
-// git: `git tag --list`
-func vcsListTags(vcs vcsKind) ([]string, error) {
-	switch vcs {
-	case vcsJj:
-		// `tags.map(|t| t.name() ++ "\n").join("")` gives one tag per
-		// line. Multiple changes with overlapping tags would emit each
-		// tag once per change; we de-duplicate after.
-		out, err := runVcs("jj", "log", "-r", "tags()", "--no-graph",
-			"-T", `tags.map(|t| t.name() ++ "\n").join("")`)
-		if err != nil {
-			return nil, err
-		}
-		return splitAndDedup(string(out)), nil
-	case vcsGit:
-		out, err := runVcs("git", "tag", "--list")
-		if err != nil {
-			return nil, err
-		}
-		return splitAndDedup(string(out)), nil
-	default:
-		return nil, fmt.Errorf("vcs not detected (set --vcs)")
+// latestTagFromRemote returns the SemVer-largest tag visible at the
+// remote URL via `git ls-remote --tags <url>`. The cwd VCS is
+// irrelevant — remote queries always go through git because both
+// the protocol and the ls-remote output format are git's.
+func latestTagFromRemote(url string) (Version, error) {
+	out, err := runBackendCmd("git", "ls-remote", "--tags", url)
+	if err != nil {
+		return Version{}, err
 	}
+	tags := parseLsRemoteTags(string(out))
+	return pickLatestSemverTag(tags)
 }
 
-// vcsListTagsRemote returns tag names visible via `git ls-remote --tags
-// <url>` against a remote repository (no cwd VCS state involved).
-//
-// Output format of `git ls-remote --tags <url>`:
+// parseLsRemoteTags extracts the tag name list from `git ls-remote
+// --tags` output. The format is:
 //
 //	<sha>\trefs/tags/<tag>
 //	<sha>\trefs/tags/<tag>^{}   (annotated tag's peeled commit)
 //
-// We strip the `refs/tags/` prefix and the `^{}` peeled-commit suffix so
-// the caller sees plain tag names matching `vcsListTags` output.
-func vcsListTagsRemote(url string) ([]string, error) {
-	out, err := runVcs("git", "ls-remote", "--tags", url)
-	if err != nil {
-		return nil, err
-	}
+// We strip the `refs/tags/` prefix and the `^{}` peeled-commit suffix
+// so the caller sees plain tag names matching ListTags output.
+func parseLsRemoteTags(out string) []string {
 	var tags []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -329,7 +282,7 @@ func vcsListTagsRemote(url string) ([]string, error) {
 		tag = strings.TrimSuffix(tag, "^{}") // peeled annotated tag
 		tags = append(tags, tag)
 	}
-	return splitAndDedup(strings.Join(tags, "\n")), nil
+	return splitAndDedup(strings.Join(tags, "\n"))
 }
 
 // splitAndDedup extracts non-empty lines and removes duplicates while
@@ -379,7 +332,7 @@ func expandRepoArg(arg string) string {
 	return s
 }
 
-// vcsLatestTag returns the SemVer-largest tag known to the VCS.
+// pickLatestSemverTag returns the SemVer-largest entry from `tags`.
 //
 // Tags that don't parse as semver (e.g. `my-build-2025-01-01`) are
 // silently ignored — this lets repos mix release tags with
@@ -390,18 +343,7 @@ func expandRepoArg(arg string) string {
 // SemVer order is determined by Version.Compare (DR-0006), so
 // pre-release tags rank below their corresponding release as
 // expected (`v1.0.0-rc.1` < `v1.0.0`).
-func vcsLatestTag(vcs vcsKind, remoteURL string) (Version, error) {
-	var tags []string
-	var err error
-	if remoteURL != "" {
-		// Remote query: cwd VCS is irrelevant, always `git ls-remote`.
-		tags, err = vcsListTagsRemote(remoteURL)
-	} else {
-		tags, err = vcsListTags(vcs)
-	}
-	if err != nil {
-		return Version{}, err
-	}
+func pickLatestSemverTag(tags []string) (Version, error) {
 	type parsed struct {
 		raw string
 		v   Version
@@ -432,23 +374,4 @@ func vcsLatestTag(vcs vcsKind, remoteURL string) (Version, error) {
 		return candidates[i].v.Compare(candidates[j].v) > 0
 	})
 	return candidates[0].v, nil
-}
-
-// runVcs runs an external VCS command and returns stdout. Stderr is
-// captured separately and folded into the error message so the user
-// sees the VCS's own diagnostic verbatim — that's almost always more
-// accurate than anything we could rephrase.
-func runVcs(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		errOut := strings.TrimSpace(stderr.String())
-		if errOut != "" {
-			return nil, fmt.Errorf("%s %s: %s", name, strings.Join(args, " "), errOut)
-		}
-		return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return out, nil
 }

@@ -188,7 +188,51 @@ func parseArgs(argv []string) (cliArgs, error) {
 			}
 			return out, nil
 		}
-		out.vcsArgs = append(out.vcsArgs, argv[2:]...)
+		// Split flags from positional vcsArgs. The vcs branch supports a
+		// curated subset of the global flags: --vcs (override), -q/-qq,
+		// --no-hint. Anything else is reported as an unknown option.
+		// Unlike the main flat-action grammar, we don't process --pre /
+		// --write etc. here — those are bump-only.
+		rest := argv[2:]
+		for i := 0; i < len(rest); i++ {
+			a := rest[i]
+			switch {
+			case a == "--vcs":
+				if out.vcsSet {
+					return cliArgs{}, fmt.Errorf("--vcs specified twice")
+				}
+				if i+1 >= len(rest) {
+					return cliArgs{}, fmt.Errorf("--vcs requires a value (jj, git, or auto)")
+				}
+				out.vcs = rest[i+1]
+				out.vcsSet = true
+				i++
+			case strings.HasPrefix(a, "--vcs="):
+				if out.vcsSet {
+					return cliArgs{}, fmt.Errorf("--vcs specified twice")
+				}
+				out.vcs = strings.TrimPrefix(a, "--vcs=")
+				out.vcsSet = true
+			case a == "-q", a == "--quiet":
+				out.quiet = true
+			case a == "-qq", a == "--quiet-all":
+				out.quietAll = true
+			case a == "--no-hint":
+				out.noHint = true
+			case a == "--":
+				out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
+				i = len(rest)
+			case strings.HasPrefix(a, "-") && a != "-":
+				return cliArgs{}, fmt.Errorf("unknown option: %s", a)
+			default:
+				out.vcsArgs = append(out.vcsArgs, a)
+			}
+		}
+		if out.vcsSet {
+			if _, err := parseVcsOverride(out.vcs); err != nil {
+				return cliArgs{}, err
+			}
+		}
 		return out, nil
 	}
 	if argv[0] == "compare" {
@@ -471,7 +515,7 @@ type stdinReadState struct {
 // component (it borrows from a sibling FILE-origin input). Empty
 // string means "no sibling to borrow from", which is an error for
 // vcs: rev-mode specs.
-func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *stdinReadState, vcs vcsKind, borrowedFile string) (resolvedInput, error) {
+func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *stdinReadState, backend vcsBackend, borrowedFile string) (resolvedInput, error) {
 	if arg == "-" {
 		if !st.consumed {
 			st.consumed = true
@@ -490,7 +534,7 @@ func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *
 	}
 
 	if strings.HasPrefix(arg, "vcs:") {
-		return resolveVcsInput(arg, borrowedFile, vcs)
+		return resolveVcsInput(arg, borrowedFile, backend)
 	}
 
 	if strings.HasPrefix(arg, "cmd:") {
@@ -717,23 +761,31 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsErr(stderr, args, err)
 	}
 
+	// -q / -qq both suppress the stdout value (the exit code carries the
+	// information the caller actually needs in scripted contexts).
+	emit := func(s string) {
+		if args.quiet || args.quietAll {
+			return
+		}
+		fmt.Fprintln(stdout, s)
+	}
 	switch key {
 	case "backend":
-		fmt.Fprintln(stdout, b.Kind())
+		emit(b.Kind())
 		return nil
 	case "root":
 		root, err := b.Root()
 		if err != nil {
 			return emitVcsErr(stderr, args, err)
 		}
-		fmt.Fprintln(stdout, root)
+		emit(root)
 		return nil
 	case "current-branch":
 		name, err := b.CurrentBranch()
 		if err != nil {
 			return emitVcsErr(stderr, args, err)
 		}
-		fmt.Fprintln(stdout, name)
+		emit(name)
 		return nil
 	}
 	// Unreachable: key was validated against vcsGetKeys above.
@@ -1103,13 +1155,13 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 	// Detect VCS lazily — only when at least one input is `vcs:`.
 	// Detecting up-front would error out in repos that don't use
 	// `vcs:` syntax, even though they're valid bump-semver targets.
-	vcs := vcsAuto
+	var backend vcsBackend
 	if hasVcs {
-		v, err := detectVcs(vcsOverride)
+		b, err := newVcsBackend(vcsOverride)
 		if err != nil {
 			return nil, err
 		}
-		vcs = v
+		backend = b
 	}
 
 	st := stdinReadState{}
@@ -1125,7 +1177,7 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 		// path from the first FILE-origin sibling. We pass the
 		// borrow source unconditionally; resolveVcsInput uses it
 		// only when the spec actually omits the file part.
-		ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, vcs, fileForBorrow)
+		ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, backend, fileForBorrow)
 		if err != nil {
 			return nil, err
 		}

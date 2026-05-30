@@ -134,24 +134,29 @@ vcs tag delete NAME [--remote origin]  # 冪等 (不在でも成功)
 - **`IsClean` 実装**:
   - git: `git diff --quiet` (unstaged) AND `git diff --cached --quiet` (staged) を両方確認。どちらか exit 1 が出れば dirty。**untracked は除外** (= `git diff` 既定挙動を踏襲)。`exec.Cmd.Output()` だと exit 1 を error 扱いしてしまうため、新規 helper `runBackendExitCode` を追加 (exit code を error 区別して返す)
   - jj: `jj log -r @ --no-graph -T 'empty'` で `true` / `false` を直接読む。template keyword の boolean を文字列で受け取る。jj は read で自動 snapshot するため、新規ファイルも `@` に取り込まれ → dirty 扱い (= git との非対称、意図的)
-  - ※ PR-2.1 (v0.25.2) で template を `if(parents.len() > 1, "true", empty)` に置換 — マージコミット (parents > 1) を内容関係なく clean と判定するよう更新。詳細は下記 PR-2.1 セクション参照
+  - ※ PR-2.1 (v0.25.2) で template を `if(parents.len() > 1, "true", empty)` に置換し evil merge を clean 扱いに変えたが、kawaz 意図の誤読だったため PR-2.2 (v0.25.3) で完全 revert。本 PR-2 実装 (`empty` 単体) が canonical。詳細は下記 PR-2.1/PR-2.2 セクション参照
 - **`runVcsCmdIs` 配線**: `parseArgs` の `isKnownVerb` に `"is"` を追加、`runVcsCmd` の switch に case 追加、`actionHelpTexts["vcs is"]` 登録の 3 点。これで `vcs is` / `vcs is --help` / `vcs is <pred>` がそれぞれ help / dispatch される
 - **PR-1 で導入した helper の再利用**: `emitVcsUsage` (exit 2 + stderr)、`emitVcsErr` (backend 由来 exit を保持しつつ stderr 出力) はそのまま流用。predicate-false だけは「stderr 何も出さない」要件のため helper を通さず `&exitErr{code: exitCodeFalse}` を直接 return
 
-### PR-2.1 (vcs is clean — マージコミット対応) 実装メモ (2026-05-31 確定)
+### PR-2.1 (vcs is clean — マージコミット対応、誤読により revert) メモ (2026-05-31 訂正)
 
-- **背景 (kawaz 指摘)**: PR-2 の jj 判定 (`jj log -r @ -T 'empty'` のみ) は粗すぎた。jj の `empty` template は parent-relative (= 「@ の tree が @- 親群のマージと一致するか」) なので、**マージコミット (parents > 1) で tree が変化していれば dirty** と判定されてしまう。kawaz の方針: 「マージコミット自体は意味があり jj の change graph 上で意味のある描画される commit なので、内容に関わらず clean 扱いすべき」
-- **判定ロジック**: template を `if(parents.len() > 1, "true", empty)` に置換 (`runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", \`if(parents.len() > 1, "true", empty)\`)`)。parents > 1 で短絡して `"true"` を返し、それ以外は従来通り `empty` template にフォールバック。出力は引き続き `"true"` / `"false"` の二択なので Go 側の switch は不変
-- **PR-2 との挙動差 (実機マトリクス)**:
-  - 通常 empty (parents=1, empty=true) → clean (変化なし)
-  - 通常 non-empty (parents=1, empty=false) → dirty (変化なし)
-  - マージ empty (parents>1, empty=true) → clean (変化なし。PR-2 でも偶発的に clean だった)
-  - マージ non-empty (parents>1, empty=false = evil merge) → **dirty → clean** (本 PR-2.1 で flip)
-- **PR-2.1 が flip する唯一のセル**: evil merge の判定のみ。empty merge は PR-2 時点で既に clean だった (jj の `empty` 仕様により parents>1 でも tree が「親群のマージと一致」すれば empty=true になる)
-- **konflicted merge / root commit エッジ**: 「conflicted merge」は parents>1 で短絡して clean を返す (本 PR スコープ外、kawaz 指摘なし。将来要件があれば conflicted 判定を別途追加)。`root()` (parents=0) は `parents.len() > 1` が false → `empty` 評価 → "true" (= clean)。`@` が root() を指すことは通常無いので無影響
-- **commitOpts.staged の empty-gate (`commit` 経路)**: `jjBackend.Commit` が `--staged` モードで使う pre-gate (= 同じく `jj log -r @ -T 'empty'`) は **本 PR-2.1 では変更しない**。あれは「empty commit を作らない」ためのガード (= 異なる predicate)、`IsClean` とは別目的。merge commit 上で `vcs commit -m MSG --staged` が呼ばれるケースが将来発生したら別途検討
-- **PR-7 ハマり所との関係 (補足)**: PR-7 の subagent が遭遇した「DR.md commit を `@` に置いたまま `pkf run bump-version` を呼ぶと `vcs:ensure-clean` で落ちた」ケースは parents=1 の non-empty commit (通常の編集 commit) であり、本 PR-2.1 では挙動変化なし (引き続き dirty)。当該ケースで `jj new` を挟む対応は妥当。本 PR-2.1 はあくまで「マージコミットは clean」という kawaz の独立した方針を実装したもの
-- **テスト**: `vcs_backend_test.go` に `jjMergeFixture` (`setupJjRepo` の上に branchA / branchB の bookmark を作り、`jj new A B` でマージコミットを @ に立てる) を追加し、`TestJjBackend_IsClean_MergeEmpty` (regression pin) と `TestJjBackend_IsClean_MergeNonEmpty` (本 PR で flip するセル) の 2 つで実機検証
+- **訂正**: PR-2.1 (v0.25.2) は kawaz 意図の **誤読** だった。kawaz の発言「マージコミット自体は意味があり存在して良い為、clean 判定に問題があると考えるべきです。empty change の条件に親コミット数も含めるべきでしょ」を「evil merge も clean 扱いすべき」と解釈して `if(parents.len() > 1, "true", empty)` 短絡を入れたが、kawaz の正しい意図は「**empty merge は元から clean で合っている** (jj の `empty` template が parent-relative で、merge の tree が親群のマージと一致すれば empty=true になる)」というもの。evil merge (parents>1, non-empty) は **dirty が正解**
+- **PR-2.2 (v0.25.3) で完全 revert**: template を `empty` 単体に戻す (PR-2 元実装)。`TestJjBackend_IsClean_MergeNonEmpty` の assert は「clean」→「dirty」に逆向き修正。`TestJjBackend_IsClean_MergeEmpty` は PR-2 元実装でも pass するため維持 (= empty merge → clean を pin する regression test として残す)
+- **判定マトリクス (PR-2.2 後 = canonical)**:
+  - 通常 empty (parents=1, empty=true) → clean
+  - 通常 non-empty (parents=1, empty=false) → dirty
+  - merge empty (parents>1, tree == merge-of-parents → empty=true) → clean (`empty` template の parent-relative 仕様で自然に clean)
+  - merge non-empty / evil merge (parents>1, empty=false) → **dirty** (一時 PR-2.1 で clean に flip していたものを PR-2.2 で revert)
+- **学び**: kawaz の指摘「empty change の条件に親コミット数も含めるべき」は「**empty 判定が merge を考慮できているか確認しろ**」という意味であり、`empty` template の parent-relative 仕様 (jj 一次情報) を確認したら問題ないことが判明する話だった。「条件を追加する変更が要る」と早合点した
+- **PR-7 ハマり所との関係 (再確認)**: PR-7 の subagent が遭遇した「VERSION 更新分が dirty と判定されて `vcs:ensure-clean` で落ちた」ケースは parents=1 の non-empty commit (通常の編集 commit) であり、**正常動作**。`jj new` で empty @ を作って commit する対応は適切。PR-2.1 はこのケースとは無関係な誤判断だった
+
+### PR-2.2 (PR-2.1 完全 revert) 実装メモ (2026-05-31 確定)
+
+- **revert スコープ**: PR-2.1 で変更した全 commit (`fix(vcs)` / `test(vcs)` / `docs(help)` / `docs(readme)` / `docs(dr-0020)`) の意味を巻き戻す。実体は hand-edit (= `jj revert` ではない: `MergeEmpty` test は維持、`MergeNonEmpty` test は assert を反転、ドキュメントは PR-2.1 を「誤読として revert」と訂正する形で残す)
+- **判定ロジック**: `jjBackend.IsClean` の template を PR-2 元の `empty` 単体に戻す。switch ブランチと "unexpected output" メッセージ文字列も PR-2 元 (`jj log -r @ -T empty: unexpected output %q`) に復旧
+- **テスト**: `TestJjBackend_IsClean_MergeNonEmpty` の assert を「IsClean = true want false (evil merge: parents>1 with extra tree edits is dirty)」に変更。`TestJjBackend_IsClean_MergeEmpty` は無変更で維持 (empty merge → clean を pin)。`jjMergeFixture` も再利用継続
+- **ドキュメント**: help.go / README / README-ja から PR-2.1 の merge 言及を削除して PR-2 表現に戻す。本 DR は PR-2.1 セクションを「誤読により revert」と訂正する形で残し、新規 PR-2.2 セクション (本セクション) で経緯と canonical な判定マトリクスを記録 (削除ではなく訂正 — `claude-config-dir-isolation` でいう「片面確認」を避けるため、誤った判断と訂正の両方を grep 可能な形で残す)
+- **PR-2.2 land 日**: 2026-05-31
 
 ### PR-3 (vcs diff) 実装メモ (2026-05-30 確定)
 
@@ -470,14 +475,16 @@ release.yml を初めて流す**構造になる。よって次の release 完走
 | PR-5.1 | non-ff hint 削除 / `jj git export` retry + 復旧 hint / push passthrough | v0.22.x |
 | PR-6 | `vcs tag push --rev REV NAME` / `vcs tag delete NAME` | v0.25.0 |
 | **PR-7** | **セルフドッグフード (本 PR)** | **v0.25.1 (本 release)** |
-| PR-2.1 | `vcs is clean` jj 判定にマージコミット短絡を追加 (kawaz 指摘 bugfix) | v0.25.2 |
+| PR-2.1 | `vcs is clean` jj 判定にマージコミット短絡を追加 (kawaz 意図の誤読、PR-2.2 で revert) | v0.25.2 |
+| PR-2.2 | PR-2.1 完全 revert (`empty` 単体に戻す、evil merge は dirty) | v0.25.3 |
 
 DR-0020 はこれで設計 → 実装 → ドッグフードの 3 段を完了。以降の vcs 関連
 変更は本 DR の延長 (= verb 追加 / 既存 verb 改修) として bug fix / 改善 PR で
 回す。
 
 - **PR-7 land 日**: 2026-05-30
-- **PR-2.1 land 日**: 2026-05-31
+- **PR-2.1 land 日**: 2026-05-31 (誤読、PR-2.2 で revert)
+- **PR-2.2 land 日**: 2026-05-31
 
 ## 関連
 

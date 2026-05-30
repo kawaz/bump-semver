@@ -17,6 +17,8 @@ jobs:
           cache: true
       - name: Install pkl (needed by lint:pkl)
         uses: pkl-community/setup-pkl@v0
+        with:
+          pkl-version: "0.31.1"
       - name: Install just
         uses: extractions/setup-just@v3
       - run: just ci

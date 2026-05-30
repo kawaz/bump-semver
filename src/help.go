@@ -481,7 +481,7 @@ Examples:
 const helpVcsDiff = `bump-semver vcs diff — print the patch between REV and the working copy [DR-0020]
 
 Usage:
-  bump-semver vcs diff REV [PATH..]
+  bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
 
 Arguments:
   REV          The revision to compare against (git: any rev-spec like
@@ -493,21 +493,37 @@ Arguments:
 
 Notes:
   - git: runs 'git diff REV [-- PATH..]' (one-rev form = REV vs working
-    copy, including uncommitted changes).
-  - jj:  runs 'jj diff --from REV --to @ [-- PATH..]' (same semantics —
-    REV vs working copy).
+    copy, including uncommitted changes). With -s, runs 'git diff
+    --name-status REV [-- PATH..]'.
+  - jj:  runs 'jj diff --from REV --to @ [-- PATH..]'. With -s, runs
+    'jj diff --summary' and normalizes the native '<CODE> <path>'
+    (space) to '<CODE>\\t<path>' (tab) so output is uniform across
+    backends. M/A/D codes are the supported scope.
   - The patch text is written verbatim to stdout (no re-formatting).
   - A path present in REV but deleted in @ is NOT shown when named
     explicitly (os.Stat filters it). The full diff (no PATH) still
     shows the deletion.
 
+Verb Options:
+  -s, --name-status      Emit one '<CODE>\\t<path>' line per changed
+                         file (M/A/D) instead of the raw patch.
+                         Mirrors 'git diff --name-status'.
+
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
-  -q, --quiet            Suppress stdout (exit code still carries success/failure)
-  -qq, --quiet-all       Suppress stdout, hint, and error output
+  -q, --quiet            On 'vcs diff', overloaded to mirror 'git diff
+                         --quiet': suppress stdout AND reflect diff
+                         presence in the exit code (0 = no diff, 1 = diff
+                         present). With -s, -q wins (stdout empty, exit
+                         still reflects presence). Use 'vcs diff -q REV
+                         -- VERSION && echo unchanged' to script "no
+                         changes since REV?".
+  -qq, --quiet-all       Same exit-code semantics as -q, plus suppress
+                         error output.
 
 Exit codes:
-  0   success (patch on stdout, possibly empty)
+  0   no diff (with -q) OR patch written successfully (default / -s)
+  1   diff present (with -q / -qq only)
   2   usage error (REV missing — currently surfaces as the help text)
   3   VCS subprocess error (not a repo, unresolvable REV)
 
@@ -516,6 +532,9 @@ Examples:
   bump-semver vcs diff main@origin VERSION      # what changed in VERSION vs remote main
   bump-semver vcs diff HEAD~1 src lib           # subtree-scoped diff
   bump-semver vcs diff @-                       # jj: diff since @- (parent change)
+  bump-semver vcs diff -s HEAD~1                # M/A/D file list (git --name-status format)
+  bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
+                                                # exit 0 ⇔ no diff in VERSION
 `
 
 // actionHelpTexts dispatches per-action help. Keys are CLI action

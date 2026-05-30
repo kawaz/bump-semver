@@ -2738,3 +2738,107 @@ func TestRun_VcsDiff_Quiet_AllPathsNonexistent_ExitsZero(t *testing.T) {
 		}
 	})
 }
+
+// --- v0.20.2 bugfix: verb-aware flag rejection ---------------------------
+//
+// PR-3.1 (v0.20.1) introduced `-s/--name-status` for `vcs diff` but the
+// shared parser also silently accepted it for `vcs get` / `vcs is` (no-op).
+// This violates kawaz CLI design (rules/cli-design-preferences.md: unknown
+// flags must exit 2 with a usage hint, so typos are caught). The fix gates
+// `-s/--name-status` to the `diff` verb; other verbs hit the generic
+// unknown-flag rejection.
+
+// TestRun_VcsGet_RejectNameStatusShort: `vcs get -s root` must exit 2
+// (verb-local flag for diff, not valid on get).
+func TestRun_VcsGet_RejectNameStatusShort(t *testing.T) {
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "get", "-s", "root"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected usage error for `vcs get -s`")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+	}
+	if !strings.Contains(stderr.String(), "unknown flag") {
+		t.Errorf("expected stderr to mention 'unknown flag', got: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "-s") {
+		t.Errorf("expected stderr to name the offending flag '-s', got: %q", stderr.String())
+	}
+}
+
+// TestRun_VcsGet_RejectNameStatusLong: long form must also exit 2.
+func TestRun_VcsGet_RejectNameStatusLong(t *testing.T) {
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "get", "--name-status", "root"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected usage error for `vcs get --name-status`")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+	}
+	if !strings.Contains(stderr.String(), "--name-status") {
+		t.Errorf("expected stderr to name '--name-status', got: %q", stderr.String())
+	}
+}
+
+// TestRun_VcsIs_RejectNameStatusShort: same for `vcs is`.
+func TestRun_VcsIs_RejectNameStatusShort(t *testing.T) {
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "is", "-s", "clean"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected usage error for `vcs is -s`")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+	}
+}
+
+// TestRun_VcsIs_RejectNameStatusLong: long form for `vcs is`.
+func TestRun_VcsIs_RejectNameStatusLong(t *testing.T) {
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "is", "--name-status", "clean"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected usage error for `vcs is --name-status`")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+	}
+}
+
+// TestRun_VcsGet_RejectUnknownFlag: a completely unknown flag is also
+// rejected (covers the generic catch-all, not just -s/--name-status).
+func TestRun_VcsGet_RejectUnknownFlag(t *testing.T) {
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "get", "--foobar", "root"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected usage error for `vcs get --foobar`")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+	}
+	if !strings.Contains(stderr.String(), "--foobar") {
+		t.Errorf("expected stderr to name '--foobar', got: %q", stderr.String())
+	}
+}
+
+// TestRun_VcsGet_GlobalQuietStillAccepted: regression guard — global
+// `-q` must still work for `vcs get` (it's a global flag, not verb-local).
+func TestRun_VcsGet_GlobalQuietStillAccepted(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "-q", "backend"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get -q backend: %v", err)
+		}
+	})
+}

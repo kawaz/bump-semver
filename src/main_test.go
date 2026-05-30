@@ -3157,3 +3157,302 @@ func TestRun_VcsGet_GlobalQuietStillAccepted(t *testing.T) {
 		}
 	})
 }
+
+// --- DR-0020 PR-5: vcs fetch / vcs push dispatcher tests ------------------
+
+// TestRun_VcsFetch_DefaultOrigin: `vcs fetch` (no args) targets origin.
+func TestRun_VcsFetch_DefaultOrigin(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "fetch"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("vcs fetch: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsFetch_NamedRemote: `vcs fetch <remote>` targets the given
+// remote.
+func TestRun_VcsFetch_NamedRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "fetch", "origin"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("vcs fetch origin: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsFetch_NonexistentRemote: bad remote name → exit 3.
+func TestRun_VcsFetch_NonexistentRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "fetch", "nonexistent"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil {
+			t.Fatal("expected error for nonexistent remote")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exit %d, got: %v", exitCodeVCSExec, err)
+		}
+	})
+}
+
+// TestRun_VcsFetch_TooManyArgs: `vcs fetch` accepts at most one positional.
+func TestRun_VcsFetch_TooManyArgs(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "fetch", "origin", "extra"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil {
+			t.Fatal("expected usage error")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit 2, got: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsFetch_UnknownFlag: `vcs fetch --branch X` is rejected at the
+// parser layer (--branch is push-only).
+func TestRun_VcsFetch_UnknownFlag(t *testing.T) {
+	err := run([]string{"vcs", "fetch", "--branch", "main"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected usage error")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit 2, got: %v", err)
+	}
+}
+
+// TestRun_VcsPush_Branch: `vcs push --branch main` pushes to origin.
+func TestRun_VcsPush_Branch(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--branch", "main"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("vcs push --branch main: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsPush_BookmarkAlias: `vcs push --bookmark main` is an alias of
+// `--branch main`.
+func TestRun_VcsPush_BookmarkAlias(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--bookmark", "main"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("vcs push --bookmark main: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsPush_MissingName: `vcs push` with no --branch/--bookmark is
+// a usage error (NAME required, no auto-detection by design).
+func TestRun_VcsPush_MissingName(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil {
+			t.Fatal("expected usage error for missing --branch/--bookmark")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+			t.Errorf("expected exit 2, got: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsPush_BranchAndBookmarkBothSet: setting both --branch and
+// --bookmark on the same invocation is a usage error (they're aliases of
+// one field, double-set rejected).
+func TestRun_VcsPush_BranchAndBookmarkBothSet(t *testing.T) {
+	err := run([]string{"vcs", "push", "--branch", "main", "--bookmark", "main"},
+		bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected usage error for --branch + --bookmark")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit 2, got: %v", err)
+	}
+}
+
+// TestRun_VcsPush_RemoteFlag: `--remote NAME` overrides the default origin.
+func TestRun_VcsPush_RemoteFlag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--branch", "main", "--remote", "origin"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("vcs push --branch main --remote origin: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsPush_BadRemote: nonexistent remote → exit 3.
+func TestRun_VcsPush_BadRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--branch", "main", "--remote", "nonexistent"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil {
+			t.Fatal("expected error for nonexistent remote")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exit %d, got: %v", exitCodeVCSExec, err)
+		}
+	})
+}
+
+// TestRun_VcsPush_NonFastForward: divergent remote → exit 5 + hint mentions
+// "diverged".
+func TestRun_VcsPush_NonFastForward(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	divergeBareViaAttacker(t, bare)
+	if err := writeFile(filepath.Join(work, "local.txt"), "local\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, work, "git", "add", "local.txt")
+	runIn(t, work, "git", "commit", "-qm", "local-only")
+	withCwd(t, work, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--branch", "main"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected non-ff failure")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeNonFastForward {
+			t.Errorf("expected exit %d, got: %v", exitCodeNonFastForward, err)
+		}
+		if !strings.Contains(stderr.String(), "diverged") {
+			t.Errorf("expected 'diverged' hint in stderr, got: %q", stderr.String())
+		}
+	})
+}
+
+// TestRun_VcsPush_NothingToPush: idempotent success when remote already
+// has it.
+func TestRun_VcsPush_NothingToPush(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--branch", "main"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("idempotent push should succeed, got: %v", err)
+		}
+	})
+}
+
+// TestRun_VcsPush_RejectForce: `--force` is intentionally not provided —
+// any attempt is a usage error.
+func TestRun_VcsPush_RejectForce(t *testing.T) {
+	err := run([]string{"vcs", "push", "--branch", "main", "--force"},
+		bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected usage error for --force")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit 2, got: %v", err)
+	}
+}
+
+// TestRun_VcsPush_UnknownVerbFlag: a verb-local flag on the wrong verb
+// (e.g. --tags) is rejected at the parser layer.
+func TestRun_VcsPush_UnknownFlag(t *testing.T) {
+	err := run([]string{"vcs", "push", "--branch", "main", "--tags"},
+		bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected usage error for --tags")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeUsage {
+		t.Errorf("expected exit 2, got: %v", err)
+	}
+}
+
+// TestRun_VcsHelp_FetchPush: `vcs --help` includes fetch / push in the
+// verb list.
+func TestRun_VcsHelp_FetchPush(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"vcs", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("vcs --help: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "fetch") {
+		t.Errorf("vcs help should mention 'fetch', got: %q", out)
+	}
+	if !strings.Contains(out, "push") {
+		t.Errorf("vcs help should mention 'push', got: %q", out)
+	}
+}
+
+// TestRun_VcsFetchHelp / TestRun_VcsPushHelp: per-verb help works.
+func TestRun_VcsFetchHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"vcs", "fetch", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("vcs fetch --help: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "fetch") {
+		t.Errorf("vcs fetch help should mention 'fetch', got: %q", stdout.String())
+	}
+}
+
+func TestRun_VcsPushHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	err := run([]string{"vcs", "push", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("vcs push --help: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "--branch") {
+		t.Errorf("vcs push help should mention --branch, got: %q", out)
+	}
+	if !strings.Contains(out, "--bookmark") {
+		t.Errorf("vcs push help should mention --bookmark (alias), got: %q", out)
+	}
+}

@@ -496,3 +496,71 @@ func TestVcsFetchFile_Jj(t *testing.T) {
 		}
 	})
 }
+
+// setupGitRepoWithRemote wraps setupGitRepo by also creating a sibling
+// `bare.git` directory next to the workdir and adding it as `origin`.
+// The bare starts empty; tests that want a pre-populated remote should
+// push the main branch as part of their arrange phase. Returns the work
+// directory (matching setupGitRepo's contract) and the bare path so tests
+// can introspect or mutate the remote.
+//
+// PR-5 needs an actual remote to exercise fetch/push end-to-end. A bare
+// repo at a local filesystem path satisfies git/jj's protocol expectations
+// without going over the network and without violating the "no real
+// git/jj push outside fixtures" constraint.
+func setupGitRepoWithRemote(t *testing.T, tags []string, fileVersion string) (workDir, bareDir string) {
+	t.Helper()
+	workDir = setupGitRepo(t, tags, fileVersion)
+	// Place the bare repo as a sibling to the workDir under its own
+	// parent (t.TempDir creates a per-test root for setupGitRepo; we add
+	// the bare under that same parent so cleanup is automatic).
+	bareDir = filepath.Join(filepath.Dir(workDir), "bare.git")
+	runIn(t, filepath.Dir(workDir), "git", "init", "--bare", "-q", "bare.git")
+	runIn(t, workDir, "git", "remote", "add", "origin", bareDir)
+	return workDir, bareDir
+}
+
+// setupJjRepoWithRemote is the jj-flavoured counterpart to
+// setupGitRepoWithRemote — same layout (colocated git+jj workdir +
+// sibling bare.git) with origin pre-wired on the git side. jj sees the
+// remote via the colocated git store, so `jj git fetch --remote origin`
+// and `jj git push --remote origin` Just Work.
+func setupJjRepoWithRemote(t *testing.T, tags []string, fileVersion string) (workDir, bareDir string) {
+	t.Helper()
+	workDir = setupJjRepo(t, tags, fileVersion)
+	bareDir = filepath.Join(filepath.Dir(workDir), "bare.git")
+	runIn(t, filepath.Dir(workDir), "git", "init", "--bare", "-q", "bare.git")
+	runIn(t, workDir, "git", "remote", "add", "origin", bareDir)
+	return workDir, bareDir
+}
+
+// preloadBareWith pushes the work-dir's main branch to the bare so the
+// bare starts in a "remote already has this history" state. Useful for
+// fetch tests (where we want some refs to fetch) and forward-push tests
+// (so the next push is a forward, not a new-branch creation).
+func preloadBareWith(t *testing.T, workDir string) {
+	t.Helper()
+	runIn(t, workDir, "git", "push", "-q", "origin", "main:main")
+}
+
+// divergeBareViaAttacker simulates a "remote was pushed to by someone
+// else" scenario: it clones the bare, adds a divergent commit, and force-
+// pushes back. After this the local workDir's main is one commit behind
+// the bare on a divergent line — exactly the non-ff setup `vcs push`
+// must reject with exit 5.
+func divergeBareViaAttacker(t *testing.T, bareDir string) {
+	t.Helper()
+	parent := filepath.Dir(bareDir)
+	attacker := filepath.Join(parent, "attacker")
+	runIn(t, parent, "git", "clone", "-q", bareDir, attacker)
+	runIn(t, attacker, "git", "config", "user.name", "Attacker")
+	runIn(t, attacker, "git", "config", "user.email", "att@example.com")
+	runIn(t, attacker, "git", "config", "commit.gpgsign", "false")
+	if err := writeFile(filepath.Join(attacker, "diverge.txt"), "diverged on remote\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, attacker, "git", "add", "diverge.txt")
+	runIn(t, attacker, "git", "commit", "-qm", "divergent")
+	// Force-push so the bare's main now points at the attacker's tip.
+	runIn(t, attacker, "git", "push", "-q", "--force", "origin", "main:main")
+}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1213,4 +1215,279 @@ func exitCodeOf(err error) int {
 		return -1
 	}
 	return -1
+}
+
+// --- DR-0020 PR-5: Fetch / Push backend tests -----------------------------
+//
+// Fixtures use a local bare repo as `origin` (file-path remote). This
+// satisfies git/jj's protocol expectations without any network and
+// without violating the project rule "no real git/jj push outside
+// fixtures". The bare lives next to the work directory under the test's
+// own t.TempDir tree, so cleanup is automatic.
+//
+// Tests deliberately exercise behaviour, not exit-code constants on
+// success — those are responsibilities of the dispatcher layer
+// (runVcsCmdFetch / runVcsCmdPush), tested in main_test.go. Here we
+// check that Push surfaces a non-ff condition as the dedicated
+// nonFastForwardError sentinel so the dispatcher can map it to exit 5.
+
+// TestGitBackend_Fetch_DefaultRemote: `Fetch("origin")` against a
+// pre-loaded bare succeeds with no error and ends "Nothing changed"
+// (we don't verify subprocess stderr here — the contract is just
+// "no error").
+func TestGitBackend_Fetch_DefaultRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.Fetch("origin"); err != nil {
+			t.Fatalf("Fetch(origin): %v", err)
+		}
+	})
+}
+
+// TestGitBackend_Fetch_NonexistentRemote: an unknown remote name surfaces
+// as an *exitErr with exitCodeVCSExec so the dispatcher exits 3.
+func TestGitBackend_Fetch_NonexistentRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.Fetch("nonexistent")
+		if err == nil {
+			t.Fatal("Fetch(nonexistent) should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// TestJjBackend_Fetch_DefaultRemote: jj fetches via the underlying git
+// store (colocated repo). Round-trips through `jj git fetch --remote
+// origin`.
+func TestJjBackend_Fetch_DefaultRemote(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.Fetch("origin"); err != nil {
+			t.Fatalf("Fetch(origin): %v", err)
+		}
+	})
+}
+
+// TestJjBackend_Fetch_NonexistentRemote: jj reports "No matching remotes"
+// as exit 1 — we wrap it as exitCodeVCSExec.
+func TestJjBackend_Fetch_NonexistentRemote(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Fetch("nonexistent")
+		if err == nil {
+			t.Fatal("Fetch(nonexistent) should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// TestGitBackend_Push_NewBranch: pushing a fresh branch to an empty bare
+// is a "new branch" creation; git exits 0. We then verify the bare's
+// ref points at the same commit as the local main.
+func TestGitBackend_Push_NewBranch(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+	})
+	// Verify bare now has refs/heads/main pointing to the same SHA.
+	localSHA, err := runBackendCmdIn(work, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("local rev-parse: %v", err)
+	}
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse: %v", err)
+	}
+	if strings.TrimSpace(string(localSHA)) != strings.TrimSpace(string(bareSHA)) {
+		t.Errorf("bare main = %q, want local main = %q",
+			strings.TrimSpace(string(bareSHA)), strings.TrimSpace(string(localSHA)))
+	}
+}
+
+// TestGitBackend_Push_NothingToPush: when the remote already has the
+// same commit, git exits 0 ("Everything up-to-date") and our wrapper
+// surfaces that as a clean nil — the DR-0020 idempotency rule.
+func TestGitBackend_Push_NothingToPush(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Errorf("Push on up-to-date remote should succeed, got: %v", err)
+		}
+	})
+}
+
+// TestGitBackend_Push_NonFastForward: remote moved on a divergent line;
+// our push must be rejected and surface as nonFastForwardError so the
+// dispatcher can map to exit 5.
+func TestGitBackend_Push_NonFastForward(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
+	preloadBareWith(t, work)
+	divergeBareViaAttacker(t, bare)
+	// Local makes its own commit on top of its old main so we have a
+	// divergent push attempt (bare's tip is the attacker's commit).
+	if err := writeFile(filepath.Join(work, "local.txt"), "local change\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, work, "git", "add", "local.txt")
+	runIn(t, work, "git", "commit", "-qm", "local-only")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin"})
+		if err == nil {
+			t.Fatal("Push to diverged remote should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeNonFastForward {
+			t.Errorf("expected exitCodeNonFastForward (5), got: %v", err)
+		}
+	})
+}
+
+// TestGitBackend_Push_BadRemote: unknown remote name → exit 3.
+func TestGitBackend_Push_BadRemote(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	withCwd(t, work, func() {
+		b := &gitBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "nonexistent"})
+		if err == nil {
+			t.Fatal("Push to nonexistent remote should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec, got: %v", err)
+		}
+	})
+}
+
+// TestJjBackend_Push_NewBookmark: pushing a new bookmark to an empty bare
+// succeeds (jj 0.41 handles new bookmarks without --allow-new).
+func TestJjBackend_Push_NewBookmark(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	// Create a bookmark named "main" pointing at @- (the second commit).
+	runIn(t, work, "jj", "bookmark", "create", "main", "-r", "@-")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+	})
+	// Verify bare now has refs/heads/main.
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(bareSHA)) == "" {
+		t.Errorf("bare should have main after push")
+	}
+}
+
+// TestJjBackend_Push_NothingToPush: remote already has it → success.
+func TestJjBackend_Push_NothingToPush(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "create", "main", "-r", "@-")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		// First push gets it onto the remote.
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Fatalf("Push #1: %v", err)
+		}
+		// Second push is the idempotent no-op.
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Errorf("Push #2 (no-op) should succeed, got: %v", err)
+		}
+	})
+}
+
+// TestJjBackend_Push_NonFastForward: remote moved on a divergent line via
+// the attacker fixture; jj's stale-info rejection surfaces as
+// exitCodeNonFastForward.
+func TestJjBackend_Push_NonFastForward(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "create", "main", "-r", "@-")
+	// First push to register the bookmark on the remote.
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		if err := b.Push(pushOpts{name: "main", remote: "origin"}); err != nil {
+			t.Fatalf("setup Push: %v", err)
+		}
+	})
+	// Diverge bare via attacker.
+	divergeBareViaAttacker(t, bare)
+	// Local advances its bookmark on a divergent line.
+	if err := writeFile(filepath.Join(work, "local.txt"), "local change\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, work, "jj", "commit", "-m", "local-only")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@-")
+	withCwd(t, work, func() {
+		b := &jjBackend{}
+		err := b.Push(pushOpts{name: "main", remote: "origin"})
+		if err == nil {
+			t.Fatal("Push to diverged remote should fail")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeNonFastForward {
+			t.Errorf("expected exitCodeNonFastForward (5), got: %v", err)
+		}
+	})
+}
+
+// runBackendCmdIn is a test-only helper that runs name/args in dir and
+// returns the trimmed output. Mirrors runBackendCmd (which uses cwd)
+// but lets us inspect a bare repo without chdir-ing.
+func runBackendCmdIn(dir string, name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	return cmd.Output()
 }

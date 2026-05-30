@@ -27,6 +27,7 @@ bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
+bump-semver vcs commit -m MSG <PATH..|--staged> | --amend [-m MSG]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -83,9 +84,12 @@ bump-semver compare lt-minor Cargo.toml vcs:origin/main       # only minor-or-be
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
+bump-semver vcs commit -m MSG PATH..
+bump-semver vcs commit -m MSG --staged
+bump-semver vcs commit --amend [-m MSG]
 ```
 
-A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`). Further verbs (`vcs commit`, `vcs push`, `vcs tag`) will follow as the design rolls out. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults). Further verbs (`vcs push`, `vcs tag`) will follow as the design rolls out. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
 
 **`vcs get <key>`** — emit a value on stdout:
 
@@ -129,6 +133,32 @@ bump-semver vcs diff HEAD~1 src lib           # subtree-scoped diff
 bump-semver vcs diff -s HEAD~1                # M/A/D file list (git --name-status format)
 bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
                                               # exit 0 ⇔ no diff in VERSION
+```
+
+**`vcs commit`** — three commit modes with opinionated safety defaults.
+
+| Mode | Behaviour |
+|---|---|
+| `-m MSG PATH..` | Stage + commit each existing path's working-tree content. Nonexistent paths silently dropped (declarative convergence). All-nonexistent / no real change → exit 0 with no commit (idempotent) |
+| `-m MSG --staged` | Commit every staged/dirty change in one shot. **git**: commits the index. **jj**: commits the whole `@` snapshot (jj auto-stages). No content → exit 0, idempotent |
+| `--amend [-m MSG]` | Fold the current change into the previous commit. With `-m`: rewrite the message; without: preserve it (no-edit). Message-only amend with no current change is a legal explicit rewrite |
+
+**`-a` / `--all` is intentionally not provided** (DR-0020 safety). jj's auto-staged worldview makes `-a`'s unstaged-grab semantic too easy to trip on; use `--staged` (commit all current changes) or pass `PATH..` explicitly. Calling `-a` exits 2 with a hint pointing at `--staged` / `PATH..`.
+
+The empty-no-op rule for path / `--staged` modes makes this snippet portable across languages:
+
+```bash
+# Commit whatever version-bearing files exist & changed; safe if some don't apply
+bump-semver vcs commit -m "bump version" VERSION Cargo.toml package.json pyproject.toml
+```
+
+Exit codes for `vcs commit`: `0` success or idempotent no-op; `2` usage error (missing `-m`, `-a` rejected, `--staged + PATH`, no-mode); `3` VCS subprocess error (not a repo, commit failed).
+
+```bash
+bump-semver vcs commit -m "bump 1.2.3" VERSION         # commit just VERSION
+bump-semver vcs commit --staged -m "release: 1.2.3"     # commit everything staged
+bump-semver vcs commit --amend                          # absorb into previous, keep msg
+bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # rewrite previous msg
 ```
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.

@@ -91,12 +91,15 @@ bump-version level="patch": ensure-clean
 push: ci check-translations check-version-bumped
     #!/usr/bin/env bash
     set -euo pipefail
-    # jj convention: bookmark on @- (the committed parent), @ stays as a fresh
-    # empty working copy. For git this is a no-op (jj not detected).
+    # Dogfood DR-0020 PR-5.2: --jj-bookmark-auto-advance handles the jj
+    # bookmark advance (clean → @-, dirty → @) inside `vcs push` itself.
+    # The flag is jj-specific (exit 2 on git by design), so branch on
+    # `vcs is jj` rather than passing it unconditionally.
     if bump-semver vcs is jj; then
-      jj bookmark set main -r @-
+      bump-semver vcs push --branch main --jj-bookmark-auto-advance
+    else
+      bump-semver vcs push --branch main
     fi
-    bump-semver vcs push --branch main
 
 # ---------- utility passthroughs ----------
 

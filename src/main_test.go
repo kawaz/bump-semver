@@ -3077,45 +3077,79 @@ func TestRun_VcsCommit_Paths_Jj(t *testing.T) {
 	})
 }
 
-// TestRun_VcsCommit_Amend_WithPath_Rejected: `--amend PATH..` must
-// reject with exit 2 (DR-0020 safety: silent path-ignore would be the
-// 巻き込み事故 the "path 必須" philosophy guards against).
-func TestRun_VcsCommit_Amend_WithPath_Rejected(t *testing.T) {
+// TestRun_VcsCommit_Amend_WithPath_Git: `--amend PATH..` folds only
+// the listed paths into the previous commit (DR-0020 PR-4.1 — commit /
+// amend symmetry: the only difference is "new commit vs absorb into
+// previous", not which path modes are accepted).
+func TestRun_VcsCommit_Amend_WithPath_Git(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
 	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edit\n"); err != nil {
+		t.Fatal(err)
+	}
 	withCwd(t, dir, func() {
-		var stderr bytes.Buffer
-		err := run([]string{"vcs", "commit", "--amend", "VERSION"},
-			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
-		if err == nil {
-			t.Fatal("expected --amend PATH to reject")
+		err := run([]string{"vcs", "commit", "--amend", "-m", "amended+path", "VERSION"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs commit --amend PATH: %v", err)
 		}
-		var ee *exitErr
-		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
-			t.Errorf("expected exit %d (usage), got: %v", exitCodeUsage, err)
+		out, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if got := strings.TrimSpace(string(out)); got != "amended+path" {
+			t.Errorf("HEAD subject after amend = %q, want 'amended+path'", got)
 		}
-		if !strings.Contains(stderr.String(), "--amend") {
-			t.Errorf("error should explain the --amend grammar, got: %q", stderr.String())
+		// other.txt must remain untracked (not folded into HEAD).
+		stat, _ := runBackendCmd("git", "status", "--short")
+		if !strings.Contains(string(stat), "other.txt") {
+			t.Errorf("other.txt should remain dirty after path-scoped amend, status=%q", string(stat))
 		}
 	})
 }
 
-// TestRun_VcsCommit_Amend_WithStaged_Rejected: `--amend --staged` is
-// rejected for symmetry (silently-accepted no-op flag would be a UX
-// trap; the MVP amend grammar is `--amend [-m MSG]` only).
-func TestRun_VcsCommit_Amend_WithStaged_Rejected(t *testing.T) {
+// TestRun_VcsCommit_Amend_WithStaged_Git: `--amend --staged` folds the
+// entire current change (= bare amend behaviour, since the staged index
+// IS the fold-into-previous source for git) and is accepted as an
+// explicit synonym for bare `--amend` (DR-0020 PR-4.1 symmetry).
+func TestRun_VcsCommit_Amend_WithStaged_Git(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "VERSION")
+	withCwd(t, dir, func() {
+		err := run([]string{"vcs", "commit", "--amend", "--staged", "-m", "amended+staged"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs commit --amend --staged: %v", err)
+		}
+		out, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if got := strings.TrimSpace(string(out)); got != "amended+staged" {
+			t.Errorf("HEAD subject after amend --staged = %q, want 'amended+staged'", got)
+		}
+	})
+}
+
+// TestRun_VcsCommit_Amend_PathAndStaged_Rejected: `--amend PATH..
+// --staged` is still rejected (step 2 / path+staged exclusivity is
+// amend-agnostic — only step 3.5 was removed for PR-4.1).
+func TestRun_VcsCommit_Amend_PathAndStaged_Rejected(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		var stderr bytes.Buffer
-		err := run([]string{"vcs", "commit", "--amend", "--staged"},
+		err := run([]string{"vcs", "commit", "--amend", "--staged", "-m", "x", "VERSION"},
 			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
 		if err == nil {
-			t.Fatal("expected --amend --staged to reject")
+			t.Fatal("expected --amend --staged PATH triple-combo to reject")
 		}
 		var ee *exitErr
 		if !errors.As(err, &ee) || ee.code != exitCodeUsage {

@@ -1200,6 +1200,285 @@ func TestJjBackend_Commit_Amend_WithMessage(t *testing.T) {
 	})
 }
 
+// --- DR-0020 PR-4.1: amend + paths / amend + staged backend tests --------
+//
+// PR-4 had a parser-level reject for `--amend PATH..` / `--amend
+// --staged`. PR-4.1 removes that gate: amend and non-amend modes are
+// completely symmetric on which path selectors they accept (the only
+// difference is "new commit vs absorb into previous"). These tests pin
+// the backend semantics for each accepted combination.
+
+// TestGitBackend_Commit_Amend_Paths: `--amend -m MSG -- PATHS` folds
+// ONLY the listed paths' working-tree content into HEAD; unrelated
+// dirty / untracked files stay dirty / untracked.
+func TestGitBackend_Commit_Amend_Paths(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "amend+v", paths: []string{"VERSION"}}); err != nil {
+			t.Fatalf("Commit amend+paths: %v", err)
+		}
+		// HEAD contains the bumped VERSION and the new subject.
+		msg, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if got := strings.TrimSpace(string(msg)); got != "amend+v" {
+			t.Errorf("HEAD subject = %q, want 'amend+v'", got)
+		}
+		// other.txt must remain untracked (not folded).
+		stat, _ := runBackendCmd("git", "status", "--short")
+		if !strings.Contains(string(stat), "other.txt") {
+			t.Errorf("other.txt should remain dirty after path-scoped amend, status=%q", string(stat))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_Paths_NoEdit: `--amend -- PATHS` (no -m)
+// preserves the previous commit's message while folding the path.
+func TestGitBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	prevMsg, _ := runBackendCmd("git", "-C", dir, "log", "-1", "--pretty=%s")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, noEdit: true, paths: []string{"VERSION"}}); err != nil {
+			t.Fatalf("Commit amend+paths no-edit: %v", err)
+		}
+		msg, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if strings.TrimSpace(string(msg)) != strings.TrimSpace(string(prevMsg)) {
+			t.Errorf("amend --no-edit should preserve message, got %q want %q",
+				strings.TrimSpace(string(msg)), strings.TrimSpace(string(prevMsg)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_Paths_NewFile: an untracked file passed
+// as PATH must be picked up (mirroring non-amend path mode — without a
+// preceding `git add` the diff gate would miss it).
+func TestGitBackend_Commit_Amend_Paths_NewFile(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "NEW.txt"), "fresh\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "amend+new", paths: []string{"NEW.txt"}}); err != nil {
+			t.Fatalf("Commit amend+new: %v", err)
+		}
+		out, _ := runBackendCmd("git", "log", "-1", "--name-only", "--pretty=")
+		if !strings.Contains(string(out), "NEW.txt") {
+			t.Errorf("expected NEW.txt in amended HEAD, got: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_Paths_NonexistentOnly: all-nonexistent
+// PATH list during amend → no-op, no HEAD movement (mirrors non-amend
+// path-mode declarative convergence; differs from bare `--amend` which
+// is an ungated explicit rewrite).
+func TestGitBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}}); err != nil {
+			t.Errorf("nonexistent-only amend Commit should succeed (idempotent), got: %v", err)
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("HEAD should not advance for nonexistent-only amend, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_Staged: amend + staged (no paths) folds
+// the index = bare-amend behaviour. Explicit synonym for `--amend` in
+// the PR-4.1 commit/amend symmetry.
+func TestGitBackend_Commit_Amend_Staged(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "VERSION")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, staged: true, message: "amend+staged"}); err != nil {
+			t.Fatalf("Commit amend+staged: %v", err)
+		}
+		out, _ := runBackendCmd("git", "log", "-1", "--pretty=%s")
+		if got := strings.TrimSpace(string(out)); got != "amend+staged" {
+			t.Errorf("HEAD subject = %q, want 'amend+staged'", got)
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_Paths: amend + PATHS squashes only the
+// listed paths from @ into @-; other @ changes remain in @.
+func TestJjBackend_Commit_Amend_Paths(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "squashed", paths: []string{"VERSION"}}); err != nil {
+			t.Fatalf("Commit amend+paths (jj): %v", err)
+		}
+		// @- now has 'squashed' as description and includes VERSION.
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description.first_line()")
+		if got := strings.TrimSpace(string(desc)); got != "squashed" {
+			t.Errorf("@- description = %q, want 'squashed'", got)
+		}
+		// other.txt must still be dirty in @ (not folded).
+		dirty, _ := runBackendCmd("jj", "diff", "--summary")
+		if !strings.Contains(string(dirty), "other.txt") {
+			t.Errorf("other.txt should remain dirty in @ after path-scoped amend, summary=%q", string(dirty))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_Paths_NoEdit: amend + PATHS without -m
+// preserves @-'s description (using --use-destination-message to avoid
+// the editor-prompt-on-combined-description trap that bare jj squash
+// hits when both @ and @- have descriptions).
+func TestJjBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		// Give @ a description so we can detect any combined-description
+		// prompt regression (without -u, squash would prompt here).
+		runIn(t, dir, "jj", "describe", "-m", "wip-desc")
+		prevDesc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, noEdit: true, paths: []string{"VERSION"}}); err != nil {
+			t.Fatalf("Commit amend+paths no-edit (jj): %v", err)
+		}
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
+		if strings.TrimSpace(string(desc)) != strings.TrimSpace(string(prevDesc)) {
+			t.Errorf("amend --no-edit should preserve @- description, got %q want %q",
+				strings.TrimSpace(string(desc)), strings.TrimSpace(string(prevDesc)))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_Paths_NonexistentOnly: all-nonexistent
+// PATH list during amend → no-op, @- and @ unchanged.
+func TestJjBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		beforeParent, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
+		beforeWc, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}}); err != nil {
+			t.Errorf("nonexistent-only amend Commit should succeed (idempotent), got: %v", err)
+		}
+		afterParent, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
+		afterWc, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		if string(beforeParent) != string(afterParent) || string(beforeWc) != string(afterWc) {
+			t.Errorf("expected @ and @- unchanged for nonexistent-only amend (jj)")
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_Staged: amend + staged (no paths) folds
+// the entire @ change into @- (= same effect as bare amend; explicit
+// synonym for PR-4.1 symmetry).
+func TestJjBackend_Commit_Amend_Staged(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edit\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, staged: true, message: "amend+staged"}); err != nil {
+			t.Fatalf("Commit amend+staged (jj): %v", err)
+		}
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description.first_line()")
+		if got := strings.TrimSpace(string(desc)); got != "amend+staged" {
+			t.Errorf("@- description = %q, want 'amend+staged'", got)
+		}
+		// Both files folded into @-.
+		summary, _ := runBackendCmd("jj", "diff", "--summary", "--from", "@--", "--to", "@-")
+		if !strings.Contains(string(summary), "VERSION") || !strings.Contains(string(summary), "other.txt") {
+			t.Errorf("@- should include both files, got summary=%q", string(summary))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_NoEdit_BothHaveDesc: regression guard for
+// the editor-prompt-on-combined-description trap. When both @ and @-
+// carry descriptions and @ is fully absorbed into @-, bare jj squash
+// would otherwise pop an editor (Failed to edit description in non-
+// interactive callers). PR-4.1 switches the no-edit path to
+// --use-destination-message to make this deterministic.
+func TestJjBackend_Commit_Amend_NoEdit_BothHaveDesc(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		// Give @ a description so squash's combined-description heuristic
+		// would prompt without --use-destination-message.
+		runIn(t, dir, "jj", "describe", "-m", "wip-feature")
+		prevDesc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
+		b := &jjBackend{}
+		// staged: true → bare-style amend (fold entire @).
+		if err := b.Commit(commitOpts{amend: true, noEdit: true, staged: true}); err != nil {
+			t.Fatalf("Commit amend no-edit (both have desc): %v", err)
+		}
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description")
+		if strings.TrimSpace(string(desc)) != strings.TrimSpace(string(prevDesc)) {
+			t.Errorf("no-edit amend should preserve @- description, got %q want %q",
+				strings.TrimSpace(string(desc)), strings.TrimSpace(string(prevDesc)))
+		}
+	})
+}
+
 // exitCodeOf extracts the carried exit code from an *exitErr (or returns
 // -1 if err is not an *exitErr). Test-local helper.
 func exitCodeOf(err error) int {

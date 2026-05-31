@@ -248,6 +248,18 @@ func parseCompareOp(s string) (base, precision string, ok bool) {
 	return "", "", false
 }
 
+// parseArgs is the top-level CLI dispatcher. It handles the no-argv /
+// --version / --help / --help-full short-circuits and then delegates to
+// a verb-specific subparser:
+//
+//   - `vcs`     → parseVcsArgs    (two-tier verb family, DR-0020)
+//   - `compare` → parseCompareArgs (predicate-only command, DR-0006)
+//   - <action>  → parseBumpArgs    (the flat bump/get family)
+//
+// All three subparsers return `(cliArgs, error)` so the dispatcher is a
+// uniform fan-out. The shared bump/compare flag loop lives in
+// parseSharedFlags; the vcs branch keeps its own verb-gated loop
+// (intentionally — see the comment at the top of parseVcsArgs).
 func parseArgs(argv []string) (cliArgs, error) {
 	if len(argv) == 0 {
 		return cliArgs{kind: "help"}, nil
@@ -272,303 +284,387 @@ func parseArgs(argv []string) (cliArgs, error) {
 		return cliArgs{kind: "helpFull"}, nil
 	}
 
-	out := cliArgs{}
-	var rest []string
 	if argv[0] == "vcs" {
-		// `vcs` is a two-tier subcommand (vcs <verb> [args...]) — we
-		// parse it specially because the existing flat-action grammar
-		// doesn't fit. Help routing:
-		//
-		//   bump-semver vcs            → show vcs parent help
-		//   bump-semver vcs --help     → show vcs parent help
-		//   bump-semver vcs get        → show vcs get help (no key given)
-		//   bump-semver vcs <verb> --help → show vcs <verb> help
-		//   bump-semver vcs <verb> <args...> → dispatch to runVcsCmd
-		out.kind = "vcs"
-		if len(argv) == 1 {
-			return cliArgs{kind: "helpAction", action: "vcs"}, nil
-		}
-		if argv[1] == "--help" || argv[1] == "-h" {
-			return cliArgs{kind: "helpAction", action: "vcs"}, nil
-		}
-		out.vcsVerb = argv[1]
-		// Per-verb help only for known verbs — unknown verbs must
-		// surface as an exit-2 error, not as a silent help fallthrough.
-		// We route them to runVcsCmd which emits the proper usage error.
-		isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"
-		// PR-6: `vcs tag` is the first two-tier verb. Sub-verb capture
-		// lives here so flag scanning can gate `--rev` / `--allow-move`
-		// on it the same way the single-tier verbs gate their flags.
-		//
-		// Help routing for tag:
-		//   vcs tag                                 → vcs tag help
-		//   vcs tag --help / -h                     → vcs tag help
-		//   vcs tag <subverb>                       → vcs tag <subverb> help
-		//   vcs tag <subverb> --help / -h           → vcs tag <subverb> help
-		//   vcs tag <subverb> <args>                → dispatch
-		// Unknown <subverb> falls through to runVcsCmd which reports
-		// the exit-2 usage error (mirroring unknown top-level verb
-		// handling above).
-		tagSubVerbStart := 2 // index where the sub-verb / args begin
-		if out.vcsVerb == "tag" {
-			if len(argv) == 2 {
-				return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
-			}
-			if argv[2] == "--help" || argv[2] == "-h" {
-				return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
-			}
-			out.vcsTag.SubVerb = argv[2]
-			isKnownSub := out.vcsTag.SubVerb == "push" || out.vcsTag.SubVerb == "delete"
-			if len(argv) == 3 {
-				if isKnownSub {
-					return cliArgs{
-						kind:   "helpAction",
-						action: "vcs tag " + out.vcsTag.SubVerb,
-					}, nil
-				}
-				// Unknown sub-verb with no further args: still send to
-				// dispatcher so the exit-2 usage error fires (no silent
-				// help fallthrough).
-				return out, nil
-			}
-			if argv[3] == "--help" || argv[3] == "-h" {
-				if isKnownSub {
-					return cliArgs{
-						kind:   "helpAction",
-						action: "vcs tag " + out.vcsTag.SubVerb,
-					}, nil
-				}
-				return out, nil
-			}
-			tagSubVerbStart = 3
-		} else {
-			if len(argv) == 2 {
-				if isKnownVerb {
-					return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
-				}
-				return out, nil
-			}
-			if argv[2] == "--help" || argv[2] == "-h" {
-				if isKnownVerb {
-					return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
-				}
-				return out, nil
-			}
-		}
-		// Split flags from positional vcsArgs. The vcs branch supports a
-		// curated subset of the global flags: --vcs (override), -q/-qq,
-		// --no-hint. `-s/--name-status` is verb-local to `vcs diff`.
-		// Anything else is reported as an unknown flag (exit 2, names the
-		// verb in the hint so typos like `vcs get -s root` are caught).
-		// Unlike the main flat-action grammar, we don't process --pre /
-		// --write etc. here — those are bump-only.
-		//
-		// Design rationale: there is exactly one verb-local flag, so a
-		// `(verb == "diff")` guard inline is simpler than a verb→flags
-		// table. If verb-local flags grow, refactor to a table keyed by
-		// verb (see DR-0020 implementation notes).
-		rest := argv[tagSubVerbStart:]
-		for i := 0; i < len(rest); i++ {
-			a := rest[i]
-			switch {
-			case a == "--vcs":
-				if out.vcsBase.Override != nil {
-					return cliArgs{}, fmt.Errorf("--vcs specified twice")
-				}
-				if i+1 >= len(rest) {
-					return cliArgs{}, fmt.Errorf("--vcs requires a value (jj, git, or auto)")
-				}
-				out.vcsBase.Override = ptr(rest[i+1])
-				i++
-			case strings.HasPrefix(a, "--vcs="):
-				if out.vcsBase.Override != nil {
-					return cliArgs{}, fmt.Errorf("--vcs specified twice")
-				}
-				out.vcsBase.Override = ptr(strings.TrimPrefix(a, "--vcs="))
-			case a == "-q", a == "--quiet":
-				out.output.Quiet = true
-			case a == "-qq", a == "--quiet-all":
-				out.output.QuietAll = true
-			case (a == "-s" || a == "--name-status") && out.vcsVerb == "diff":
-				// Verb-local to `vcs diff` only. For other verbs this
-				// case is skipped and the generic unknown-flag catch-all
-				// below rejects with exit 2.
-				out.vcsDiff.NameStatus = true
-			case a == "-m" && out.vcsVerb == "commit":
-				// Verb-local to `vcs commit`. Takes a value.
-				if out.vcsCommit.Message != nil {
-					return cliArgs{}, fmt.Errorf("-m specified twice")
-				}
-				if i+1 >= len(rest) {
-					return cliArgs{}, fmt.Errorf("-m requires a value (commit message)")
-				}
-				out.vcsCommit.Message = ptr(rest[i+1])
-				i++
-			case strings.HasPrefix(a, "-m=") && out.vcsVerb == "commit":
-				if out.vcsCommit.Message != nil {
-					return cliArgs{}, fmt.Errorf("-m specified twice")
-				}
-				out.vcsCommit.Message = ptr(strings.TrimPrefix(a, "-m="))
-			case a == "--message" && out.vcsVerb == "commit":
-				if out.vcsCommit.Message != nil {
-					return cliArgs{}, fmt.Errorf("--message specified twice")
-				}
-				if i+1 >= len(rest) {
-					return cliArgs{}, fmt.Errorf("--message requires a value")
-				}
-				out.vcsCommit.Message = ptr(rest[i+1])
-				i++
-			case strings.HasPrefix(a, "--message=") && out.vcsVerb == "commit":
-				if out.vcsCommit.Message != nil {
-					return cliArgs{}, fmt.Errorf("--message specified twice")
-				}
-				out.vcsCommit.Message = ptr(strings.TrimPrefix(a, "--message="))
-			case a == "--staged" && out.vcsVerb == "commit":
-				out.vcsCommit.Staged = true
-			case a == "--amend" && out.vcsVerb == "commit":
-				out.vcsCommit.Amend = true
-			case (a == "-a" || a == "--all") && out.vcsVerb == "commit":
-				// Captured here only so we can give a tailored exit-2
-				// rejection in runVcsCmdCommit (instead of the generic
-				// "unknown flag" message). DR-0020: -a is intentionally
-				// non-provided to prevent unstaged-grab accidents in
-				// jj's auto-staged world.
-				out.vcsCommit.DashA = true
-			// --- DR-0020 PR-5: vcs fetch / vcs push flags --------------
-			//
-			// --branch and --bookmark are aliases of one field for `vcs
-			// push`. We don't track which spelling the user typed
-			// (downstream only cares about the value), but we DO reject
-			// "both spellings supplied" via the same already-set rule
-			// applied to every other value-taking flag — surprising the
-			// user with "your --branch was overwritten by --bookmark"
-			// would be worse than a sharp usage error.
-			//
-			// --remote is shared between fetch and push (both verbs
-			// accept it). Anything else is the parser's generic
-			// unknown-flag catch-all.
-			case (a == "--branch" || a == "--bookmark") && out.vcsVerb == "push":
-				if out.vcsPush.Name != nil {
-					return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
-				}
-				if i+1 >= len(rest) {
-					return cliArgs{}, fmt.Errorf("%s requires a value (the branch/bookmark name)", a)
-				}
-				out.vcsPush.Name = ptr(rest[i+1])
-				i++
-			case (strings.HasPrefix(a, "--branch=") || strings.HasPrefix(a, "--bookmark=")) && out.vcsVerb == "push":
-				if out.vcsPush.Name != nil {
-					return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
-				}
-				eq := strings.IndexByte(a, '=')
-				out.vcsPush.Name = ptr(a[eq+1:])
-			case a == "--remote" && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
-				if out.vcsPush.Remote != nil {
-					return cliArgs{}, fmt.Errorf("--remote specified twice")
-				}
-				if i+1 >= len(rest) {
-					return cliArgs{}, fmt.Errorf("--remote requires a value")
-				}
-				out.vcsPush.Remote = ptr(rest[i+1])
-				i++
-			case strings.HasPrefix(a, "--remote=") && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
-				if out.vcsPush.Remote != nil {
-					return cliArgs{}, fmt.Errorf("--remote specified twice")
-				}
-				out.vcsPush.Remote = ptr(strings.TrimPrefix(a, "--remote="))
-			// DR-0020 PR-5.2: --jj-bookmark-auto-advance (vcs push only,
-			// jj backend only). Boolean opt-in. Parsed here so the
-			// parser doesn't emit "unknown flag for 'vcs push'"; the
-			// jj-vs-git semantic check happens in runVcsCmdPush after
-			// backend detection (= exit 2 with a hint naming the flag
-			// and the jj-specific reason, instead of the generic
-			// unknown-flag message).
-			case a == "--jj-bookmark-auto-advance" && out.vcsVerb == "push":
-				out.vcsPush.JjBookmarkAutoAdvance = true
-			// --- DR-0020 PR-6: vcs tag push flags ----------------------
-			//
-			// `--rev` carries the target revision for `vcs tag push`;
-			// `--allow-move` opts into moving an existing tag (DR-0020
-			// line 71). Both are verb-local to `vcs tag push` — when
-			// the sub-verb is `delete` or anything else, the generic
-			// unknown-flag catch-all below rejects them with exit 2,
-			// preserving the "wrong verb for this flag" guardrail that
-			// caught typos like `vcs get -s root` for PR-3.
-			case a == "--rev" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
-				if out.vcsTag.Rev != nil {
-					return cliArgs{}, fmt.Errorf("--rev specified twice")
-				}
-				if i+1 >= len(rest) {
-					return cliArgs{}, fmt.Errorf("--rev requires a value (the target revision)")
-				}
-				out.vcsTag.Rev = ptr(rest[i+1])
-				i++
-			case strings.HasPrefix(a, "--rev=") && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
-				if out.vcsTag.Rev != nil {
-					return cliArgs{}, fmt.Errorf("--rev specified twice")
-				}
-				out.vcsTag.Rev = ptr(strings.TrimPrefix(a, "--rev="))
-			case a == "--allow-move" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
-				out.vcsTag.AllowMove = true
-			case a == "--no-hint":
-				out.output.NoHint = true
-			case a == "--":
-				out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
-				i = len(rest)
-			case strings.HasPrefix(a, "-") && a != "-":
-				verbLabel := out.vcsVerb
-				if out.vcsVerb == "tag" && out.vcsTag.SubVerb != "" {
-					verbLabel = "tag " + out.vcsTag.SubVerb
-				}
-				return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", verbLabel, a)
-			default:
-				out.vcsArgs = append(out.vcsArgs, a)
-			}
-		}
-		if out.vcsBase.Override != nil {
-			if _, err := parseVcsOverride(*out.vcsBase.Override); err != nil {
-				return cliArgs{}, err
-			}
-		}
-		return out, nil
+		return parseVcsArgs(argv)
 	}
 	if argv[0] == "compare" {
-		// `bump-semver compare --help` / `compare -h`: アクション固有 help
-		// に短絡 (OP の解釈は始めない)。OP 後に置かれた `--help` は通常の
-		// rest 走査で拾う。
-		if len(argv) >= 2 && (argv[1] == "--help" || argv[1] == "-h") {
-			return cliArgs{kind: "helpAction", action: "compare"}, nil
-		}
-		out.kind = "compare"
-		if len(argv) < 2 {
-			return cliArgs{}, fmt.Errorf("compare requires an operator (eq|lt|le|gt|ge, optionally with -major / -minor / -patch suffix)")
-		}
-		op := argv[1]
-		base, precision, ok := parseCompareOp(op)
-		if !ok {
-			return cliArgs{}, fmt.Errorf("unknown compare operator: %s (expected eq|lt|le|gt|ge, optionally with -major / -minor / -patch suffix)", op)
-		}
-		out.compareOp = base
-		out.comparePrecision = precision
-		rest = argv[2:]
-	} else {
-		out.kind = "bump"
-		if !bumpActions[argv[0]] {
-			return cliArgs{}, fmt.Errorf("unknown action: %s (expected one of major|minor|patch|pre|get|compare)", argv[0])
-		}
-		out.action = argv[0]
-		rest = argv[1:]
+		return parseCompareArgs(argv)
 	}
-	// `bump-semver <action> --help` / `<action> -h` (compare の OP 後も含む):
-	// rest 先頭で検出してアクション固有 help に短絡。
-	if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
-		helpAction := out.action
-		if out.kind == "compare" {
-			helpAction = "compare"
-		}
-		return cliArgs{kind: "helpAction", action: helpAction}, nil
-	}
+	return parseBumpArgs(argv)
+}
 
+// parseVcsArgs parses `vcs <verb> [<subverb>] [flags...] [args...]`
+// (DR-0020). The vcs branch has its own flag loop because each value-
+// taking flag (-m, --branch, --rev, --remote, --allow-move, ...) is
+// verb-gated on `vcsVerb` (and for `tag`, also on `vcsTag.SubVerb`).
+// Unifying it with the shared bump/compare loop would require a verb→
+// flags lookup table that is more complex than the current explicit
+// switch-case; see DR-0020 implementation notes.
+func parseVcsArgs(argv []string) (cliArgs, error) {
+	// `vcs` is a two-tier subcommand (vcs <verb> [args...]) — we
+	// parse it specially because the existing flat-action grammar
+	// doesn't fit. Help routing:
+	//
+	//   bump-semver vcs            → show vcs parent help
+	//   bump-semver vcs --help     → show vcs parent help
+	//   bump-semver vcs get        → show vcs get help (no key given)
+	//   bump-semver vcs <verb> --help → show vcs <verb> help
+	//   bump-semver vcs <verb> <args...> → dispatch to runVcsCmd
+	out := cliArgs{kind: "vcs"}
+	if len(argv) == 1 {
+		return cliArgs{kind: "helpAction", action: "vcs"}, nil
+	}
+	if argv[1] == "--help" || argv[1] == "-h" {
+		return cliArgs{kind: "helpAction", action: "vcs"}, nil
+	}
+	out.vcsVerb = argv[1]
+	// Per-verb help only for known verbs — unknown verbs must
+	// surface as an exit-2 error, not as a silent help fallthrough.
+	// We route them to runVcsCmd which emits the proper usage error.
+	isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"
+	// PR-6: `vcs tag` is the first two-tier verb. Sub-verb capture
+	// lives here so flag scanning can gate `--rev` / `--allow-move`
+	// on it the same way the single-tier verbs gate their flags.
+	//
+	// Help routing for tag:
+	//   vcs tag                                 → vcs tag help
+	//   vcs tag --help / -h                     → vcs tag help
+	//   vcs tag <subverb>                       → vcs tag <subverb> help
+	//   vcs tag <subverb> --help / -h           → vcs tag <subverb> help
+	//   vcs tag <subverb> <args>                → dispatch
+	// Unknown <subverb> falls through to runVcsCmd which reports
+	// the exit-2 usage error (mirroring unknown top-level verb
+	// handling above).
+	tagSubVerbStart := 2 // index where the sub-verb / args begin
+	if out.vcsVerb == "tag" {
+		if len(argv) == 2 {
+			return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
+		}
+		if argv[2] == "--help" || argv[2] == "-h" {
+			return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
+		}
+		out.vcsTag.SubVerb = argv[2]
+		isKnownSub := out.vcsTag.SubVerb == "push" || out.vcsTag.SubVerb == "delete"
+		if len(argv) == 3 {
+			if isKnownSub {
+				return cliArgs{
+					kind:   "helpAction",
+					action: "vcs tag " + out.vcsTag.SubVerb,
+				}, nil
+			}
+			// Unknown sub-verb with no further args: still send to
+			// dispatcher so the exit-2 usage error fires (no silent
+			// help fallthrough).
+			return out, nil
+		}
+		if argv[3] == "--help" || argv[3] == "-h" {
+			if isKnownSub {
+				return cliArgs{
+					kind:   "helpAction",
+					action: "vcs tag " + out.vcsTag.SubVerb,
+				}, nil
+			}
+			return out, nil
+		}
+		tagSubVerbStart = 3
+	} else {
+		if len(argv) == 2 {
+			if isKnownVerb {
+				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+			}
+			return out, nil
+		}
+		if argv[2] == "--help" || argv[2] == "-h" {
+			if isKnownVerb {
+				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
+			}
+			return out, nil
+		}
+	}
+	// Split flags from positional vcsArgs. The vcs branch supports a
+	// curated subset of the global flags: --vcs (override), -q/-qq,
+	// --no-hint. `-s/--name-status` is verb-local to `vcs diff`.
+	// Anything else is reported as an unknown flag (exit 2, names the
+	// verb in the hint so typos like `vcs get -s root` are caught).
+	// Unlike the main flat-action grammar, we don't process --pre /
+	// --write etc. here — those are bump-only.
+	//
+	// Design rationale: there is exactly one verb-local flag, so a
+	// `(verb == "diff")` guard inline is simpler than a verb→flags
+	// table. If verb-local flags grow, refactor to a table keyed by
+	// verb (see DR-0020 implementation notes).
+	rest := argv[tagSubVerbStart:]
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--vcs":
+			if out.vcsBase.Override != nil {
+				return cliArgs{}, fmt.Errorf("--vcs specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--vcs requires a value (jj, git, or auto)")
+			}
+			out.vcsBase.Override = ptr(rest[i+1])
+			i++
+		case strings.HasPrefix(a, "--vcs="):
+			if out.vcsBase.Override != nil {
+				return cliArgs{}, fmt.Errorf("--vcs specified twice")
+			}
+			out.vcsBase.Override = ptr(strings.TrimPrefix(a, "--vcs="))
+		case a == "-q", a == "--quiet":
+			out.output.Quiet = true
+		case a == "-qq", a == "--quiet-all":
+			out.output.QuietAll = true
+		case (a == "-s" || a == "--name-status") && out.vcsVerb == "diff":
+			// Verb-local to `vcs diff` only. For other verbs this
+			// case is skipped and the generic unknown-flag catch-all
+			// below rejects with exit 2.
+			out.vcsDiff.NameStatus = true
+		case a == "-m" && out.vcsVerb == "commit":
+			// Verb-local to `vcs commit`. Takes a value.
+			if out.vcsCommit.Message != nil {
+				return cliArgs{}, fmt.Errorf("-m specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("-m requires a value (commit message)")
+			}
+			out.vcsCommit.Message = ptr(rest[i+1])
+			i++
+		case strings.HasPrefix(a, "-m=") && out.vcsVerb == "commit":
+			if out.vcsCommit.Message != nil {
+				return cliArgs{}, fmt.Errorf("-m specified twice")
+			}
+			out.vcsCommit.Message = ptr(strings.TrimPrefix(a, "-m="))
+		case a == "--message" && out.vcsVerb == "commit":
+			if out.vcsCommit.Message != nil {
+				return cliArgs{}, fmt.Errorf("--message specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--message requires a value")
+			}
+			out.vcsCommit.Message = ptr(rest[i+1])
+			i++
+		case strings.HasPrefix(a, "--message=") && out.vcsVerb == "commit":
+			if out.vcsCommit.Message != nil {
+				return cliArgs{}, fmt.Errorf("--message specified twice")
+			}
+			out.vcsCommit.Message = ptr(strings.TrimPrefix(a, "--message="))
+		case a == "--staged" && out.vcsVerb == "commit":
+			out.vcsCommit.Staged = true
+		case a == "--amend" && out.vcsVerb == "commit":
+			out.vcsCommit.Amend = true
+		case (a == "-a" || a == "--all") && out.vcsVerb == "commit":
+			// Captured here only so we can give a tailored exit-2
+			// rejection in runVcsCmdCommit (instead of the generic
+			// "unknown flag" message). DR-0020: -a is intentionally
+			// non-provided to prevent unstaged-grab accidents in
+			// jj's auto-staged world.
+			out.vcsCommit.DashA = true
+		// --- DR-0020 PR-5: vcs fetch / vcs push flags --------------
+		//
+		// --branch and --bookmark are aliases of one field for `vcs
+		// push`. We don't track which spelling the user typed
+		// (downstream only cares about the value), but we DO reject
+		// "both spellings supplied" via the same already-set rule
+		// applied to every other value-taking flag — surprising the
+		// user with "your --branch was overwritten by --bookmark"
+		// would be worse than a sharp usage error.
+		//
+		// --remote is shared between fetch and push (both verbs
+		// accept it). Anything else is the parser's generic
+		// unknown-flag catch-all.
+		case (a == "--branch" || a == "--bookmark") && out.vcsVerb == "push":
+			if out.vcsPush.Name != nil {
+				return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("%s requires a value (the branch/bookmark name)", a)
+			}
+			out.vcsPush.Name = ptr(rest[i+1])
+			i++
+		case (strings.HasPrefix(a, "--branch=") || strings.HasPrefix(a, "--bookmark=")) && out.vcsVerb == "push":
+			if out.vcsPush.Name != nil {
+				return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
+			}
+			eq := strings.IndexByte(a, '=')
+			out.vcsPush.Name = ptr(a[eq+1:])
+		case a == "--remote" && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
+			if out.vcsPush.Remote != nil {
+				return cliArgs{}, fmt.Errorf("--remote specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--remote requires a value")
+			}
+			out.vcsPush.Remote = ptr(rest[i+1])
+			i++
+		case strings.HasPrefix(a, "--remote=") && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
+			if out.vcsPush.Remote != nil {
+				return cliArgs{}, fmt.Errorf("--remote specified twice")
+			}
+			out.vcsPush.Remote = ptr(strings.TrimPrefix(a, "--remote="))
+		// DR-0020 PR-5.2: --jj-bookmark-auto-advance (vcs push only,
+		// jj backend only). Boolean opt-in. Parsed here so the
+		// parser doesn't emit "unknown flag for 'vcs push'"; the
+		// jj-vs-git semantic check happens in runVcsCmdPush after
+		// backend detection (= exit 2 with a hint naming the flag
+		// and the jj-specific reason, instead of the generic
+		// unknown-flag message).
+		case a == "--jj-bookmark-auto-advance" && out.vcsVerb == "push":
+			out.vcsPush.JjBookmarkAutoAdvance = true
+		// --- DR-0020 PR-6: vcs tag push flags ----------------------
+		//
+		// `--rev` carries the target revision for `vcs tag push`;
+		// `--allow-move` opts into moving an existing tag (DR-0020
+		// line 71). Both are verb-local to `vcs tag push` — when
+		// the sub-verb is `delete` or anything else, the generic
+		// unknown-flag catch-all below rejects them with exit 2,
+		// preserving the "wrong verb for this flag" guardrail that
+		// caught typos like `vcs get -s root` for PR-3.
+		case a == "--rev" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
+			if out.vcsTag.Rev != nil {
+				return cliArgs{}, fmt.Errorf("--rev specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--rev requires a value (the target revision)")
+			}
+			out.vcsTag.Rev = ptr(rest[i+1])
+			i++
+		case strings.HasPrefix(a, "--rev=") && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
+			if out.vcsTag.Rev != nil {
+				return cliArgs{}, fmt.Errorf("--rev specified twice")
+			}
+			out.vcsTag.Rev = ptr(strings.TrimPrefix(a, "--rev="))
+		case a == "--allow-move" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
+			out.vcsTag.AllowMove = true
+		case a == "--no-hint":
+			out.output.NoHint = true
+		case a == "--":
+			out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
+			i = len(rest)
+		case strings.HasPrefix(a, "-") && a != "-":
+			verbLabel := out.vcsVerb
+			if out.vcsVerb == "tag" && out.vcsTag.SubVerb != "" {
+				verbLabel = "tag " + out.vcsTag.SubVerb
+			}
+			return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", verbLabel, a)
+		default:
+			out.vcsArgs = append(out.vcsArgs, a)
+		}
+	}
+	if out.vcsBase.Override != nil {
+		if _, err := parseVcsOverride(*out.vcsBase.Override); err != nil {
+			return cliArgs{}, err
+		}
+	}
+	return out, nil
+}
+
+// parseCompareArgs parses `compare OP[-prec] [flags...] inputs...`
+// (DR-0006 / DR-0023 / DR-0017). The flag loop is shared with
+// parseBumpArgs (see parseSharedFlags) — bump-only flags (`--write`,
+// `--pre`, `--build-metadata`, `--json`) are accepted by the shared
+// loop and then rejected here in the compare-specific validity tail.
+// That keeps the rejection error messages ("--write is not valid with
+// compare" etc.) consistent with the pre-refactor behaviour rather
+// than degrading them to the generic "unknown option:" form.
+func parseCompareArgs(argv []string) (cliArgs, error) {
+	// `bump-semver compare --help` / `compare -h`: アクション固有 help
+	// に短絡 (OP の解釈は始めない)。OP 後に置かれた `--help` は通常の
+	// rest 走査で拾う。
+	if len(argv) >= 2 && (argv[1] == "--help" || argv[1] == "-h") {
+		return cliArgs{kind: "helpAction", action: "compare"}, nil
+	}
+	if len(argv) < 2 {
+		return cliArgs{}, fmt.Errorf("compare requires an operator (eq|lt|le|gt|ge, optionally with -major / -minor / -patch suffix)")
+	}
+	op := argv[1]
+	base, precision, ok := parseCompareOp(op)
+	if !ok {
+		return cliArgs{}, fmt.Errorf("unknown compare operator: %s (expected eq|lt|le|gt|ge, optionally with -major / -minor / -patch suffix)", op)
+	}
+	out := cliArgs{kind: "compare", compareOp: base, comparePrecision: precision}
+	rest := argv[2:]
+	if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+		return cliArgs{kind: "helpAction", action: "compare"}, nil
+	}
+	out, err := parseSharedFlags(out, rest)
+	if err != nil {
+		return cliArgs{}, err
+	}
+	// --- compare-specific validity tail --------------------------------
+	if out.write {
+		return cliArgs{}, fmt.Errorf("--write is not valid with compare")
+	}
+	if out.bump.Pre != nil {
+		return cliArgs{}, fmt.Errorf("--pre is not valid with compare")
+	}
+	if out.bump.BuildMetadata != nil {
+		return cliArgs{}, fmt.Errorf("--build-metadata is not valid with compare")
+	}
+	// DR-0007: compare is a predicate-only command — exit code is
+	// the answer, stdout is intentionally empty. There is nothing
+	// to render as JSON.
+	if out.output.JSON {
+		return cliArgs{}, fmt.Errorf("compare does not support --json")
+	}
+	// DR-0023: compare accepts F1 + N OTHERS (N>=1). The legacy
+	// 2-input form (`compare OP F1 F2`) is the N=1 case.
+	if len(out.inputs) < 2 {
+		return cliArgs{}, fmt.Errorf("compare requires at least two inputs (BASE OTHERS...), got %d", len(out.inputs))
+	}
+	return out, nil
+}
+
+// parseBumpArgs parses `<action> [flags...] inputs...` for the flat
+// bump/get family (major / minor / patch / pre / get). The flag loop is
+// shared with parseCompareArgs (see parseSharedFlags); get-specific
+// rejections (`--write` / `--pre` / `--build-metadata` not valid with
+// get) and the at-least-one-input requirement live in the bump
+// validity tail.
+func parseBumpArgs(argv []string) (cliArgs, error) {
+	if !bumpActions[argv[0]] {
+		return cliArgs{}, fmt.Errorf("unknown action: %s (expected one of major|minor|patch|pre|get|compare)", argv[0])
+	}
+	out := cliArgs{kind: "bump", action: argv[0]}
+	rest := argv[1:]
+	if len(rest) > 0 && (rest[0] == "--help" || rest[0] == "-h") {
+		return cliArgs{kind: "helpAction", action: out.action}, nil
+	}
+	out, err := parseSharedFlags(out, rest)
+	if err != nil {
+		return cliArgs{}, err
+	}
+	// --- bump-specific validity tail -----------------------------------
+	if out.action == "get" {
+		if out.write {
+			return cliArgs{}, fmt.Errorf("--write is not valid with get")
+		}
+		if out.bump.Pre != nil {
+			return cliArgs{}, fmt.Errorf("--pre is not valid with get (use --no-pre to strip)")
+		}
+		if out.bump.BuildMetadata != nil {
+			return cliArgs{}, fmt.Errorf("--build-metadata is not valid with get (use --no-build-metadata to strip)")
+		}
+	}
+	if len(out.inputs) == 0 {
+		return cliArgs{}, fmt.Errorf("at least one input (FILE | VER | -) is required")
+	}
+	return out, nil
+}
+
+// parseSharedFlags is the flag loop shared by parseCompareArgs and
+// parseBumpArgs. It accepts every flag permissively — bump-only flags
+// (`--write`, `--pre`, `--build-metadata`, `--no-pre`,
+// `--no-build-metadata`) are parsed even under `compare` and then
+// rejected in parseCompareArgs's validity tail with a verb-specific
+// message ("--write is not valid with compare"). Splitting the loop
+// per-verb would degrade those rejections to the generic
+// "unknown option:" form, which long-standing tests pin verbatim.
+//
+// Common exclusivity / value-validity checks (--pre vs --no-pre, empty
+// values, `--vcs` value validation) run at the end of this helper so
+// both verbs inherit them identically.
+func parseSharedFlags(out cliArgs, rest []string) (cliArgs, error) {
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
@@ -654,8 +750,7 @@ func parseArgs(argv []string) (cliArgs, error) {
 		}
 	}
 
-	// --- exclusivity / validity checks ---------------------------------
-
+	// --- exclusivity / value-validity checks (shared by bump + compare)
 	if out.bump.Pre != nil && out.bump.NoPre {
 		return cliArgs{}, fmt.Errorf("--pre and --no-pre are mutually exclusive")
 	}
@@ -672,46 +767,6 @@ func parseArgs(argv []string) (cliArgs, error) {
 		if _, err := parseVcsOverride(*out.vcsBase.Override); err != nil {
 			return cliArgs{}, err
 		}
-	}
-
-	if out.kind == "compare" {
-		if out.write {
-			return cliArgs{}, fmt.Errorf("--write is not valid with compare")
-		}
-		if out.bump.Pre != nil {
-			return cliArgs{}, fmt.Errorf("--pre is not valid with compare")
-		}
-		if out.bump.BuildMetadata != nil {
-			return cliArgs{}, fmt.Errorf("--build-metadata is not valid with compare")
-		}
-		// DR-0007: compare is a predicate-only command — exit code is
-		// the answer, stdout is intentionally empty. There is nothing
-		// to render as JSON.
-		if out.output.JSON {
-			return cliArgs{}, fmt.Errorf("compare does not support --json")
-		}
-		// DR-0023: compare accepts F1 + N OTHERS (N>=1). The legacy
-		// 2-input form (`compare OP F1 F2`) is the N=1 case.
-		if len(out.inputs) < 2 {
-			return cliArgs{}, fmt.Errorf("compare requires at least two inputs (BASE OTHERS...), got %d", len(out.inputs))
-		}
-		return out, nil
-	}
-
-	// bump path.
-	if out.action == "get" {
-		if out.write {
-			return cliArgs{}, fmt.Errorf("--write is not valid with get")
-		}
-		if out.bump.Pre != nil {
-			return cliArgs{}, fmt.Errorf("--pre is not valid with get (use --no-pre to strip)")
-		}
-		if out.bump.BuildMetadata != nil {
-			return cliArgs{}, fmt.Errorf("--build-metadata is not valid with get (use --no-build-metadata to strip)")
-		}
-	}
-	if len(out.inputs) == 0 {
-		return cliArgs{}, fmt.Errorf("at least one input (FILE | VER | -) is required")
 	}
 	return out, nil
 }

@@ -38,14 +38,56 @@ type bumpOpts struct {
 	NoBuildMetadata bool
 }
 
+// outputVerbosity is an ordered enum capturing the -q / -qq / --no-hint
+// precedence as a single field. Each successive level adds suppression
+// on top of the previous one, so a simple `>=` comparison answers
+// "should we suppress X?". Design rationale: the original three
+// independent bools (Quiet / QuietAll / NoHint) had a precedence rule
+// (QuietAll > Quiet > NoHint) that every dispatch site re-derived via
+// hand-rolled boolean combinators, which was both noisy and easy to get
+// subtly wrong (e.g. forgetting a `|| QuietAll` when checking `Quiet`).
+// Collapsing to an ordered enum makes "raise to max" the only legal
+// transition in parseArgs and reduces each predicate to a single
+// comparison via the ShouldSuppress* helpers below.
+type outputVerbosity int
+
+const (
+	outputNormal   outputVerbosity = iota // no flag: nothing suppressed.
+	outputNoHint                          // --no-hint: hint suppressed only.
+	outputQuiet                           // -q / --quiet: stdout + hint suppressed.
+	outputQuietAll                        // -qq / --quiet-all: stdout + hint + stderr suppressed.
+)
+
+// raise sets *v to the higher of its current value and lvl. parseArgs
+// uses this at every flag-assignment site so the order of CLI flags
+// never downgrades the suppression level (e.g. `-qq -q` stays at
+// outputQuietAll, matching the historical "QuietAll dominates Quiet"
+// precedence).
+func (v *outputVerbosity) raise(lvl outputVerbosity) {
+	if lvl > *v {
+		*v = lvl
+	}
+}
+
+// ShouldSuppressHint reports whether the post-action hint line should be
+// silenced. True for --no-hint, -q, and -qq (any non-Normal level).
+func (v outputVerbosity) ShouldSuppressHint() bool { return v >= outputNoHint }
+
+// ShouldSuppressStdout reports whether the verb's primary stdout output
+// should be silenced. True for -q and -qq.
+func (v outputVerbosity) ShouldSuppressStdout() bool { return v >= outputQuiet }
+
+// ShouldSuppressError reports whether the verb's stderr error output
+// should be silenced. True only for -qq.
+func (v outputVerbosity) ShouldSuppressError() bool { return v >= outputQuietAll }
+
 // outputOpts groups the suppression / format-toggle flags shared across
 // every verb (bump, compare, vcs, version). DR-0007 (--json) and
-// Phase 5 (-q / -qq / --no-hint). Precedence: QuietAll > Quiet > NoHint.
+// Phase 5 (-q / -qq / --no-hint). JSON is intentionally a separate
+// axis: it's a format toggle, not a suppression level.
 type outputOpts struct {
-	Quiet    bool // -q / --quiet:     suppress stdout + hint
-	QuietAll bool // -qq / --quiet-all: also suppress error output
-	NoHint   bool // --no-hint:         suppress only the hint
-	JSON     bool // --json: structured single-line JSON output (DR-0007)
+	Verbosity outputVerbosity // -q / -qq / --no-hint (collapsed enum)
+	JSON      bool            // --json: structured single-line JSON output (DR-0007)
 }
 
 // vcsBaseOpts groups the --vcs override (DR-0008). Accepted via the
@@ -343,9 +385,9 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			}
 			out.vcsBase.Override = ptr(strings.TrimPrefix(a, "--vcs="))
 		case a == "-q", a == "--quiet":
-			out.output.Quiet = true
+			out.output.Verbosity.raise(outputQuiet)
 		case a == "-qq", a == "--quiet-all":
-			out.output.QuietAll = true
+			out.output.Verbosity.raise(outputQuietAll)
 		case (a == "-s" || a == "--name-status") && out.vcsVerb == "diff":
 			// Verb-local to `vcs diff` only. For other verbs this
 			// case is skipped and the generic unknown-flag catch-all
@@ -468,7 +510,7 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 		case a == "--allow-move" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
 			out.vcsTag.AllowMove = true
 		case a == "--no-hint":
-			out.output.NoHint = true
+			out.output.Verbosity.raise(outputNoHint)
 		case a == "--":
 			out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
 			i = len(rest)
@@ -645,12 +687,14 @@ func parseSharedFlags(out cliArgs, rest []string) (cliArgs, error) {
 		case a == "--no-hint":
 			// Idempotent: silently absorb duplicates rather than erroring,
 			// to match the "no-op flags are silently accepted" policy from
-			// Phase 5 (a -qq subsumes --no-hint anyway).
-			out.output.NoHint = true
+			// Phase 5 (a -qq subsumes --no-hint anyway). raise() also
+			// keeps a stronger level (e.g. -qq) from being downgraded by
+			// a later --no-hint.
+			out.output.Verbosity.raise(outputNoHint)
 		case a == "-q", a == "--quiet":
-			out.output.Quiet = true
+			out.output.Verbosity.raise(outputQuiet)
 		case a == "-qq", a == "--quiet-all":
-			out.output.QuietAll = true
+			out.output.Verbosity.raise(outputQuietAll)
 		case a == "--json":
 			// Idempotent: silently absorb duplicates. Same policy as
 			// --no-hint — boolean flags don't benefit from a strict

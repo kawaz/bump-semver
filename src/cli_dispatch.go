@@ -75,10 +75,10 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 // `-qq` to match every other DR-0010 hint (and every other v0.5.0
 // stderr-side hint).
 func emitErr(stderr io.Writer, args cliArgs, err error) error {
-	if !args.output.QuietAll {
+	if !args.output.Verbosity.ShouldSuppressError() {
 		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
 		var ufe *unsupportedFileError
-		if errors.As(err, &ufe) && !args.output.Quiet && !args.output.NoHint {
+		if errors.As(err, &ufe) && !args.output.Verbosity.ShouldSuppressHint() {
 			fmt.Fprintln(stderr, "hint: Open issue at https://github.com/kawaz/bump-semver/issues if support is needed.")
 		}
 	}
@@ -102,7 +102,7 @@ func emitErr(stderr io.Writer, args cliArgs, err error) error {
 // Both share the `hint:` prefix so a single grep / `--no-hint` flag
 // captures both.
 func emitFallbackHints(stderr io.Writer, args cliArgs, resolved []resolvedInput) {
-	if args.output.Quiet || args.output.QuietAll || args.output.NoHint {
+	if args.output.Verbosity.ShouldSuppressHint() {
 		return
 	}
 	for _, ri := range resolved {
@@ -203,7 +203,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		// emitErr (exit 2) because inconsistent inputs there are an
 		// error condition, not a queryable result.
 		if args.action == "get" {
-			if !args.output.QuietAll {
+			if !args.output.Verbosity.ShouldSuppressError() {
 				fmt.Fprintln(stderr, formatMismatchError("version", allVersions).Error())
 			}
 			return &exitErr{code: exitCodeFalse}
@@ -262,7 +262,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	// version is rendered as a single-line JSON object (DR-0007); the
 	// `name` field is populated from the cross-input-validated set of
 	// FILE-origin names (which DR-0004 already collapses to one value).
-	if !args.output.Quiet && !args.output.QuietAll {
+	if !args.output.Verbosity.ShouldSuppressStdout() {
 		if args.output.JSON {
 			var name *string
 			if len(allNames) > 0 {
@@ -316,7 +316,7 @@ func shouldShowHint(args cliArgs, resolved []resolvedInput) bool {
 	if args.write {
 		return false
 	}
-	if args.output.Quiet || args.output.QuietAll || args.output.NoHint {
+	if args.output.Verbosity.ShouldSuppressHint() {
 		return false
 	}
 	return countFileInputs(resolved) > 0

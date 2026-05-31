@@ -89,7 +89,7 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Predicate false: exit 1. -qq suppresses the per-OTHER listing
 	// (consistent with "quiet-all suppresses diagnostics"); -q alone
 	// leaves it intact so users still see why the assertion failed.
-	if !args.output.QuietAll {
+	if !args.output.Verbosity.ShouldSuppressError() {
 		for _, line := range failures {
 			fmt.Fprintln(stderr, line)
 		}

@@ -1515,47 +1515,55 @@ func TestParseArgs_QuietFlags(t *testing.T) {
 		{
 			"no-hint",
 			[]string{"patch", "1.2.3", "--no-hint"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{NoHint: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputNoHint}},
 		},
 		{
 			"quiet-short",
 			[]string{"patch", "1.2.3", "-q"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Quiet: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuiet}},
 		},
 		{
 			"quiet-long",
 			[]string{"patch", "1.2.3", "--quiet"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Quiet: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuiet}},
 		},
 		{
 			"quiet-all-short",
 			[]string{"patch", "1.2.3", "-qq"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{QuietAll: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
 			"quiet-all-long",
 			[]string{"patch", "1.2.3", "--quiet-all"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{QuietAll: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
 			"compare-with-quiet",
 			[]string{"compare", "eq", "1.2.3", "1.2.3", "-qq"},
-			cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}, output: outputOpts{QuietAll: true}},
+			cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
 			"get-with-quiet",
 			[]string{"get", "VERSION", "-q"},
-			cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}, output: outputOpts{Quiet: true}},
+			cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}, output: outputOpts{Verbosity: outputQuiet}},
 		},
 		{
+			// `-q -qq` should collapse to the stronger -qq (max wins).
+			// Also covers the descending case `-qq -q` via the raise()
+			// helper — both orderings settle on outputQuietAll.
 			"q-and-qq-coexist",
 			[]string{"patch", "1.2.3", "-q", "-qq"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Quiet: true, QuietAll: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
+		},
+		{
+			"qq-then-q-stays-at-qq",
+			[]string{"patch", "1.2.3", "-qq", "-q"},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
 			"no-hint-and-quiet-coexist",
 			[]string{"patch", "1.2.3", "--no-hint", "-q"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{NoHint: true, Quiet: true}},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuiet}},
 		},
 	}
 	for _, tc := range cases {

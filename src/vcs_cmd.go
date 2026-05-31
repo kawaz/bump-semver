@@ -83,7 +83,7 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 	// -q / -qq both suppress the stdout value (the exit code carries the
 	// information the caller actually needs in scripted contexts).
 	emit := func(s string) {
-		if args.output.Quiet || args.output.QuietAll {
+		if args.output.Verbosity.ShouldSuppressStdout() {
 			return
 		}
 		fmt.Fprintln(stdout, s)
@@ -244,7 +244,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	// -q (and -qq) trigger the predicate-only path: derive presence from
 	// name-status output (cheap; same shape feeds -s display). Doing this
 	// before -s keeps `-q` strictly authoritative when both are set.
-	if args.output.Quiet || args.output.QuietAll {
+	if args.output.Verbosity.ShouldSuppressStdout() {
 		ns, err := b.DiffNameStatus(rev, paths)
 		if err != nil {
 			return emitVcsErr(stderr, args, err)
@@ -503,7 +503,7 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 		remote:                remote,
 		jjBookmarkAutoAdvance: args.vcsPush.JjBookmarkAutoAdvance,
 	}
-	if !args.output.QuietAll && !args.output.Quiet {
+	if !args.output.Verbosity.ShouldSuppressStdout() {
 		opts.stdout = stdout
 		opts.stderr = stderr
 	}
@@ -618,7 +618,7 @@ func runVcsCmdTagPush(args cliArgs, stdout, stderr io.Writer) error {
 		Remote:    remote,
 		AllowMove: args.vcsTag.AllowMove,
 	}
-	if !args.output.QuietAll && !args.output.Quiet {
+	if !args.output.Verbosity.ShouldSuppressStdout() {
 		opts.Stdout = stdout
 		opts.Stderr = stderr
 	}
@@ -663,7 +663,7 @@ func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsErr(stderr, args, err)
 	}
 	opts := tagDeleteOpts{Name: name, Remote: remote}
-	if !args.output.QuietAll && !args.output.Quiet {
+	if !args.output.Verbosity.ShouldSuppressStdout() {
 		opts.Stdout = stdout
 		opts.Stderr = stderr
 	}
@@ -679,7 +679,7 @@ func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
 // future vcs errors need a different code path (exitCodeAmbiguous /
 // exitCodeVCSExec etc.) and we want a focused helper for those.
 func emitVcsUsage(stderr io.Writer, args cliArgs, err error) error {
-	if !args.output.QuietAll {
+	if !args.output.Verbosity.ShouldSuppressError() {
 		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
 	}
 	return &exitErr{code: exitCodeUsage, msg: err.Error()}
@@ -691,7 +691,7 @@ func emitVcsUsage(stderr io.Writer, args cliArgs, err error) error {
 // (exit 3), so a stray non-coded error doesn't silently downgrade into
 // the generic exit 2.
 func emitVcsErr(stderr io.Writer, args cliArgs, err error) error {
-	if !args.output.QuietAll {
+	if !args.output.Verbosity.ShouldSuppressError() {
 		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
 	}
 	var ee *exitErr

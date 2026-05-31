@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -150,7 +151,9 @@ func TestRun_PackageJsonAndLock_VersionMismatch(t *testing.T) {
 func TestRun_PackageLock_InternalNameMismatch(t *testing.T) {
 	t.Parallel()
 	// top-level $.name と $.packages[""].name が違う壊れた lockfile は
-	// main の name 整合性チェックで検出される
+	// main の name 整合性チェックで検出される。
+	// follow-up #35: get の name mismatch は exit 1 + stderr listing
+	// (version mismatch と同じ peer-equality 形)。
 	lock := `{
   "name": "foo",
   "version": "1.2.3",
@@ -161,8 +164,16 @@ func TestRun_PackageLock_InternalNameMismatch(t *testing.T) {
 }
 `
 	dir := tempWriteFiles(t, map[string]string{"package-lock.json": lock})
-	err := tryRun("get", dir+"/package-lock.json")
-	if err == nil || !strings.HasPrefix(err.Error(), "name mismatch:") {
-		t.Errorf("expected name mismatch, got: %v", err)
+	var stderr bytes.Buffer
+	err := run([]string{"get", dir + "/package-lock.json"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected name mismatch error")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeFalse {
+		t.Errorf("expected exit %d (predicate-false), got: %v", exitCodeFalse, err)
+	}
+	if !strings.HasPrefix(stderr.String(), "name mismatch:") {
+		t.Errorf("expected 'name mismatch:' on stderr, got: %q", stderr.String())
 	}
 }

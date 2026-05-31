@@ -127,8 +127,8 @@ VCS helpers (DR-0020):
 
 Exit codes:
   0   success (or predicate true)
-  1   predicate false (compare: per-OTHER detail on stderr; vcs is / get mismatch: source listing on stderr; suppress with -qq)
-  2   usage error (parse failure, mismatch, missing input, unknown verb/key, etc.)
+  1   predicate false (compare: per-OTHER detail on stderr; vcs is / get version|name mismatch: source listing on stderr; suppress with -qq)
+  2   usage error (parse failure, bump-time version|name mismatch, missing input, unknown verb/key, etc.)
   3   VCS subprocess error (vcs subcommands only — e.g. not in a repo)
   4   ambiguous answer (vcs subcommands only — e.g. detached HEAD)
   5   non-fast-forward push (vcs push — remote has diverged)
@@ -257,9 +257,10 @@ Usage:
   bump-semver get <INPUT...> [--json] [--no-pre] [--no-build-metadata]
 
 When multiple INPUTs are given, all sources are treated as equal
-peers and must agree; otherwise a "version mismatch:" listing is
-printed to stderr and the process exits 1 (DR-0023). exit 0 +
-single-line stdout on agreement makes the command safe to pipe.
+peers and must agree; otherwise a "version mismatch:" (or
+"name mismatch:" when package names diverge) listing is printed to
+stderr and the process exits 1 (DR-0023). exit 0 + single-line
+stdout on agreement makes the command safe to pipe.
 
 A file-omitted vcs:REV expands across every distinct sibling FILE
 path. 'get a b vcs:main' therefore reads four sources: a, b, the

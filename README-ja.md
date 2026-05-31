@@ -396,7 +396,7 @@ npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupport
 
 ### 複数 INPUT: 整合性検証
 
-複数 INPUT を渡すと 1 つの単位として処理される。全 INPUT 間で version は事前に一致している必要がある。不一致時の挙動は verb で異なる ([DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)): `get` は exit 1 + stderr に `version mismatch:` カラム整列リスト (述語偽の意味付け、全 source 対等); bump 系 (`major` / `minor` / `patch` / `pre`) は exit 2 + stderr の `bump-semver: version mismatch:` (内部不整合で動作拒否)。検出された package name も取れた範囲で整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
+複数 INPUT を渡すと 1 つの単位として処理される。全 INPUT 間で version は事前に一致している必要がある。不一致時の挙動は verb で異なる ([DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)): `get` は exit 1 + stderr に `version mismatch:` (package name が割れている場合は `name mismatch:`) カラム整列リスト (述語偽の意味付け、全 source 対等。version / name どちらの不一致でも `get` は同じ exit 1 規約); bump 系 (`major` / `minor` / `patch` / `pre`) は exit 2 + stderr の `bump-semver: version mismatch:` / `bump-semver: name mismatch:` (内部不整合で動作拒否)。検出された package name も version と同じく整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
 
 ```bash
 bump-semver patch package.json package-lock.json --write

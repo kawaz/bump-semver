@@ -84,10 +84,12 @@ precision suffix (DR-0017) 付きは末尾に `(major)` / `(minor)` / `(patch)` 
 
 - **全 source 対等** (= 正解 source なし、ピア検証)
 - 全 source 同値 → exit 0、stdout に value 1 つ
-- 不一致 → **exit 1** + stderr に `version mismatch:` カラム整列リスト (= 既存 `formatMismatchError` の文字列をそのまま再利用)
+- 不一致 → **exit 1** + stderr に `version mismatch:` / `name mismatch:` カラム整列リスト (= 既存 `formatMismatchError` の文字列をそのまま再利用)
 - stdout は常に空 (= 不一致時に「どれを採用したか」勝手に出さない)
 
-**注意**: bump 系 (`major` / `minor` / `patch` / `pre`) は引き続き **exit 2** で diagnostic は `bump-semver: version mismatch:` prefix 付き (= 内部不整合で動作拒否、ユーザに修正を促す意味付け)。get だけ exit code 規約を分離。
+**version mismatch と name mismatch は同じ規約** (follow-up #35 で訂正): 当初は version 不一致のみ exit 1、name 不一致は exit 2 (= 旧 emitErr 経路) だったが、「全 source 対等のピア検証」という get の責務はどちらの fields でも同じなので、name mismatch も exit 1 + stderr listing に揃えた。bump 系の name mismatch は引き続き exit 2 (= 書き込み拒否)。
+
+**注意**: bump 系 (`major` / `minor` / `patch` / `pre`) は引き続き **exit 2** で diagnostic は `bump-semver: version mismatch:` / `bump-semver: name mismatch:` prefix 付き (= 内部不整合で動作拒否、ユーザに修正を促す意味付け)。get だけ exit code 規約を分離。
 
 **Quiet flags**:
 
@@ -123,6 +125,8 @@ get a vcs:HEAD~1:b vcs:main
 get vcs:main vcs:v1
 # sibling 候補は空 → error: vcs: file is required (no file argument to borrow from)
 ```
+
+**Stderr label の具体化** (follow-up #35): peer-expand で展開された各 vcs source は、不一致時の stderr listing でも borrow 先の FILE を含めて `vcs:HEAD:VERSION` / `vcs:HEAD:b.json` のように区別表示される。当初は両 source とも `vcs:HEAD` のみ表示されてどちらが何の borrow か識別できなかったが、`resolveInputs` の peer-expand 分岐で `originFile = "vcs:REV:FILE"` (= 既存の vcs spec 形) に置換することで解決。spec 形なので人間にもツール (vcsParseSpec) にも自然な表記。
 
 **具体例** (compare の F1 借用、変更なし):
 

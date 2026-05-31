@@ -396,7 +396,7 @@ For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with
 
 ### Multiple INPUTs: cross-input consistency
 
-Pass multiple INPUTs to operate on them as a single unit. Versions across all INPUTs must already agree; otherwise a `version mismatch:` listing of every origin and value (column-aligned) is printed and the command fails. For `get` that failure is exit 1 with the listing on stderr (predicate-false semantics, [DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)); for bump actions (`major` / `minor` / `patch` / `pre`) it is exit 2 because the input set is internally inconsistent. Detected package names are also cross-checked when available, to guard against accidentally bumping files from a different project together; names are never written back.
+Pass multiple INPUTs to operate on them as a single unit. Versions across all INPUTs must already agree; otherwise a `version mismatch:` (or `name mismatch:` when package names diverge) listing of every origin and value (column-aligned) is printed and the command fails. For `get` that failure is exit 1 with the listing on stderr (predicate-false semantics, [DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)) — both version and name mismatches share this exit code under `get`; for bump actions (`major` / `minor` / `patch` / `pre`) it is exit 2 because the input set is internally inconsistent. Detected package names are cross-checked alongside versions to guard against accidentally bumping files from a different project together; names are never written back.
 
 ```bash
 bump-semver patch package.json package-lock.json --write

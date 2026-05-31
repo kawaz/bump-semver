@@ -42,16 +42,16 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"action-help-compare-op-then-help", []string{"compare", "eq", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
 		{"action-help-compare-precision-then-help", []string{"compare", "eq-major", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
 		// --vcs auto (DR-0016) happy path
-		{"vcs-flag-auto", []string{"patch", "1.2.3", "--vcs", "auto"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: "auto", OverrideSet: true}}},
+		{"vcs-flag-auto", []string{"patch", "1.2.3", "--vcs", "auto"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: ptr("auto")}}},
 		{"dash-dash-passthrough", []string{"patch", "--", "--weird-file.json"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"--weird-file.json"}}},
 		{"multi-file", []string{"get", "package.json", "package-lock.json"}, cliArgs{kind: "bump", action: "get", inputs: []string{"package.json", "package-lock.json"}}},
 		{"multi-file-write", []string{"patch", "a.json", "b.json", "c.json", "--write"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"a.json", "b.json", "c.json"}, write: true}},
 		// pre action with cross-cutting flags
-		{"pre-with-pre", []string{"pre", "1.2.3", "--pre", "rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, bump: bumpOpts{Pre: "rc.0", PreSet: true}}},
-		{"pre-with-pre-eq", []string{"pre", "1.2.3", "--pre=rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, bump: bumpOpts{Pre: "rc.0", PreSet: true}}},
+		{"pre-with-pre", []string{"pre", "1.2.3", "--pre", "rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, bump: bumpOpts{Pre: ptr("rc.0")}}},
+		{"pre-with-pre-eq", []string{"pre", "1.2.3", "--pre=rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, bump: bumpOpts{Pre: ptr("rc.0")}}},
 		{"pre-no-pre", []string{"pre", "1.2.3-rc.0", "--no-pre"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3-rc.0"}, bump: bumpOpts{NoPre: true}}},
-		{"patch-build-meta", []string{"patch", "1.2.3", "--build-metadata", "sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, bump: bumpOpts{BuildMetadata: "sha.abc", BuildMetadataSet: true}}},
-		{"patch-build-meta-eq", []string{"patch", "1.2.3", "--build-metadata=sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, bump: bumpOpts{BuildMetadata: "sha.abc", BuildMetadataSet: true}}},
+		{"patch-build-meta", []string{"patch", "1.2.3", "--build-metadata", "sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, bump: bumpOpts{BuildMetadata: ptr("sha.abc")}}},
+		{"patch-build-meta-eq", []string{"patch", "1.2.3", "--build-metadata=sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, bump: bumpOpts{BuildMetadata: ptr("sha.abc")}}},
 		{"patch-no-build-meta", []string{"patch", "1.2.3+x", "--no-build-metadata"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3+x"}, bump: bumpOpts{NoBuildMetadata: true}}},
 		// stdin marker
 		{"stdin-marker", []string{"patch", "-"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"-"}}},
@@ -64,8 +64,8 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"compare-lt-minor", []string{"compare", "lt-minor", "1.2.9", "1.3.0"}, cliArgs{kind: "compare", compareOp: "lt", comparePrecision: "minor", inputs: []string{"1.2.9", "1.3.0"}}},
 		{"compare-ge-patch", []string{"compare", "ge-patch", "1.2.3", "1.2.3-rc.0"}, cliArgs{kind: "compare", compareOp: "ge", comparePrecision: "patch", inputs: []string{"1.2.3", "1.2.3-rc.0"}}},
 		// DR-0008: vcs flag and vcs: inputs survive parseArgs intact
-		{"vcs-flag-jj", []string{"patch", "1.2.3", "--vcs", "jj"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: "jj", OverrideSet: true}}},
-		{"vcs-flag-git-eq", []string{"patch", "1.2.3", "--vcs=git"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: "git", OverrideSet: true}}},
+		{"vcs-flag-jj", []string{"patch", "1.2.3", "--vcs", "jj"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: ptr("jj")}}},
+		{"vcs-flag-git-eq", []string{"patch", "1.2.3", "--vcs=git"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: ptr("git")}}},
 		{"vcs-input-bump", []string{"patch", "vcs:HEAD"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"vcs:HEAD"}}},
 		{"vcs-input-compare", []string{"compare", "gt", "Cargo.toml", "vcs:latest-tag()"}, cliArgs{kind: "compare", compareOp: "gt", inputs: []string{"Cargo.toml", "vcs:latest-tag()"}}},
 	}

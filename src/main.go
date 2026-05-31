@@ -74,13 +74,18 @@ func (e *exitErr) ExitCode() int { return e.code }
 // bump path (runBump). The shape mirrors BumpOptions in semver.go but
 // stays parser-side; the bump path bridges into BumpOptions at the
 // call site. compare/get/vcs verbs ignore this sub-struct.
+//
+// Pre and BuildMetadata use *string so "unset" (nil) is structurally
+// distinguishable from "set to empty" (non-nil &""). The parser
+// rejects empty values explicitly so callers can safely treat a
+// non-nil pointer as a non-empty string, but the distinction matters
+// to runBump (which forwards PreSet/BuildMetadataSet into BumpOptions
+// for the bump semantics in semver.go).
 type bumpOpts struct {
-	Pre              string
-	PreSet           bool
-	NoPre            bool
-	BuildMetadata    string
-	BuildMetadataSet bool
-	NoBuildMetadata  bool
+	Pre             *string
+	NoPre           bool
+	BuildMetadata   *string
+	NoBuildMetadata bool
 }
 
 // outputOpts groups the suppression / format-toggle flags shared across
@@ -96,9 +101,13 @@ type outputOpts struct {
 // vcsBaseOpts groups the --vcs override (DR-0008). Accepted via the
 // global parser AND the vcs sub-parser; consumed by both runBump /
 // runCompare (via newVcsBackend) and every runVcsCmd* dispatcher.
+//
+// Override is *string so "unset" (nil) is distinguishable from
+// explicit "auto" (&"auto"); both fall through to parseVcsOverride =
+// vcsAuto, but keeping the distinction lets future code (e.g. a
+// `--vcs` echo in `bump --json`) report what the user actually typed.
 type vcsBaseOpts struct {
-	Override    string // "" / "auto" / "jj" / "git" (validated in parseArgs)
-	OverrideSet bool   // whether --vcs was supplied at all
+	Override *string // nil / "auto" / "jj" / "git" (validated in parseArgs)
 }
 
 // vcsDiffOpts groups verb-local flags for `vcs diff` (DR-0020 PR-3).
@@ -114,12 +123,16 @@ type vcsDiffOpts struct {
 // / PR-4.1). DashA is captured only so runVcsCmdCommit can emit a
 // tailored exit-2 rejection (DR-0020 safety: --staged is the supported
 // "all" mode, -a's unstaged-grab is intentionally absent).
+//
+// Message is *string so "no -m given" (nil) is distinguishable from
+// "-m '' given" (non-nil &""); the parser rejects bare -m but
+// runVcsCmdCommit needs the distinction for the --amend "keep
+// existing message" path (noEdit = amend && Message == nil).
 type vcsCommitOpts struct {
-	Message    string
-	MessageSet bool
-	Staged     bool
-	Amend      bool
-	DashA      bool
+	Message *string
+	Staged  bool
+	Amend   bool
+	DashA   bool
 }
 
 // vcsPushOpts groups verb-local flags for `vcs push` (DR-0020 PR-5 /
@@ -132,10 +145,8 @@ type vcsCommitOpts struct {
 // canonical, "bookmark" is the jj-flavoured alias). The parser treats
 // them as one slot — specifying both is an "already set" usage error.
 type vcsPushOpts struct {
-	Name      string
-	NameSet   bool
-	Remote    string
-	RemoteSet bool
+	Name   *string
+	Remote *string
 	// JjBookmarkAutoAdvance: jj-only opt-in. When true the dispatcher
 	// runs the bookmark auto-advance pre-step (clean → bookmark set to
 	// @-, dirty → bookmark set to @) before the push. The `--jj-`
@@ -158,8 +169,7 @@ type vcsPushOpts struct {
 // fetch / push / tag.
 type vcsTagOpts struct {
 	SubVerb   string
-	Rev       string
-	RevSet    bool
+	Rev       *string
 	AllowMove bool
 }
 
@@ -184,6 +194,25 @@ type cliArgs struct {
 	vcsCommit vcsCommitOpts
 	vcsPush   vcsPushOpts
 	vcsTag    vcsTagOpts
+}
+
+// ptr returns a pointer to v. It exists so verb-local opts that use
+// `*T` for "explicitly set" semantics can assign in one line:
+//
+//	out.vcsCommit.Message = ptr(value)
+//
+// instead of the two-line `tmp := v; field = &tmp` boilerplate.
+func ptr[T any](v T) *T { return &v }
+
+// derefOr returns *p when p is non-nil, otherwise def. Used at the
+// few sites that need a bare value from a `*string` opt and want
+// "unset → empty/default" semantics (e.g. forwarding the parser's
+// `*string` into a downstream struct whose field is still `string`).
+func derefOr[T any](p *T, def T) T {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 var bumpActions = map[string]bool{
@@ -343,21 +372,19 @@ func parseArgs(argv []string) (cliArgs, error) {
 			a := rest[i]
 			switch {
 			case a == "--vcs":
-				if out.vcsBase.OverrideSet {
+				if out.vcsBase.Override != nil {
 					return cliArgs{}, fmt.Errorf("--vcs specified twice")
 				}
 				if i+1 >= len(rest) {
 					return cliArgs{}, fmt.Errorf("--vcs requires a value (jj, git, or auto)")
 				}
-				out.vcsBase.Override = rest[i+1]
-				out.vcsBase.OverrideSet = true
+				out.vcsBase.Override = ptr(rest[i+1])
 				i++
 			case strings.HasPrefix(a, "--vcs="):
-				if out.vcsBase.OverrideSet {
+				if out.vcsBase.Override != nil {
 					return cliArgs{}, fmt.Errorf("--vcs specified twice")
 				}
-				out.vcsBase.Override = strings.TrimPrefix(a, "--vcs=")
-				out.vcsBase.OverrideSet = true
+				out.vcsBase.Override = ptr(strings.TrimPrefix(a, "--vcs="))
 			case a == "-q", a == "--quiet":
 				out.output.Quiet = true
 			case a == "-qq", a == "--quiet-all":
@@ -369,37 +396,33 @@ func parseArgs(argv []string) (cliArgs, error) {
 				out.vcsDiff.NameStatus = true
 			case a == "-m" && out.vcsVerb == "commit":
 				// Verb-local to `vcs commit`. Takes a value.
-				if out.vcsCommit.MessageSet {
+				if out.vcsCommit.Message != nil {
 					return cliArgs{}, fmt.Errorf("-m specified twice")
 				}
 				if i+1 >= len(rest) {
 					return cliArgs{}, fmt.Errorf("-m requires a value (commit message)")
 				}
-				out.vcsCommit.Message = rest[i+1]
-				out.vcsCommit.MessageSet = true
+				out.vcsCommit.Message = ptr(rest[i+1])
 				i++
 			case strings.HasPrefix(a, "-m=") && out.vcsVerb == "commit":
-				if out.vcsCommit.MessageSet {
+				if out.vcsCommit.Message != nil {
 					return cliArgs{}, fmt.Errorf("-m specified twice")
 				}
-				out.vcsCommit.Message = strings.TrimPrefix(a, "-m=")
-				out.vcsCommit.MessageSet = true
+				out.vcsCommit.Message = ptr(strings.TrimPrefix(a, "-m="))
 			case a == "--message" && out.vcsVerb == "commit":
-				if out.vcsCommit.MessageSet {
+				if out.vcsCommit.Message != nil {
 					return cliArgs{}, fmt.Errorf("--message specified twice")
 				}
 				if i+1 >= len(rest) {
 					return cliArgs{}, fmt.Errorf("--message requires a value")
 				}
-				out.vcsCommit.Message = rest[i+1]
-				out.vcsCommit.MessageSet = true
+				out.vcsCommit.Message = ptr(rest[i+1])
 				i++
 			case strings.HasPrefix(a, "--message=") && out.vcsVerb == "commit":
-				if out.vcsCommit.MessageSet {
+				if out.vcsCommit.Message != nil {
 					return cliArgs{}, fmt.Errorf("--message specified twice")
 				}
-				out.vcsCommit.Message = strings.TrimPrefix(a, "--message=")
-				out.vcsCommit.MessageSet = true
+				out.vcsCommit.Message = ptr(strings.TrimPrefix(a, "--message="))
 			case a == "--staged" && out.vcsVerb == "commit":
 				out.vcsCommit.Staged = true
 			case a == "--amend" && out.vcsVerb == "commit":
@@ -425,38 +448,34 @@ func parseArgs(argv []string) (cliArgs, error) {
 			// accept it). Anything else is the parser's generic
 			// unknown-flag catch-all.
 			case (a == "--branch" || a == "--bookmark") && out.vcsVerb == "push":
-				if out.vcsPush.NameSet {
+				if out.vcsPush.Name != nil {
 					return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
 				}
 				if i+1 >= len(rest) {
 					return cliArgs{}, fmt.Errorf("%s requires a value (the branch/bookmark name)", a)
 				}
-				out.vcsPush.Name = rest[i+1]
-				out.vcsPush.NameSet = true
+				out.vcsPush.Name = ptr(rest[i+1])
 				i++
 			case (strings.HasPrefix(a, "--branch=") || strings.HasPrefix(a, "--bookmark=")) && out.vcsVerb == "push":
-				if out.vcsPush.NameSet {
+				if out.vcsPush.Name != nil {
 					return cliArgs{}, fmt.Errorf("--branch/--bookmark specified twice")
 				}
 				eq := strings.IndexByte(a, '=')
-				out.vcsPush.Name = a[eq+1:]
-				out.vcsPush.NameSet = true
+				out.vcsPush.Name = ptr(a[eq+1:])
 			case a == "--remote" && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
-				if out.vcsPush.RemoteSet {
+				if out.vcsPush.Remote != nil {
 					return cliArgs{}, fmt.Errorf("--remote specified twice")
 				}
 				if i+1 >= len(rest) {
 					return cliArgs{}, fmt.Errorf("--remote requires a value")
 				}
-				out.vcsPush.Remote = rest[i+1]
-				out.vcsPush.RemoteSet = true
+				out.vcsPush.Remote = ptr(rest[i+1])
 				i++
 			case strings.HasPrefix(a, "--remote=") && (out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"):
-				if out.vcsPush.RemoteSet {
+				if out.vcsPush.Remote != nil {
 					return cliArgs{}, fmt.Errorf("--remote specified twice")
 				}
-				out.vcsPush.Remote = strings.TrimPrefix(a, "--remote=")
-				out.vcsPush.RemoteSet = true
+				out.vcsPush.Remote = ptr(strings.TrimPrefix(a, "--remote="))
 			// DR-0020 PR-5.2: --jj-bookmark-auto-advance (vcs push only,
 			// jj backend only). Boolean opt-in. Parsed here so the
 			// parser doesn't emit "unknown flag for 'vcs push'"; the
@@ -476,21 +495,19 @@ func parseArgs(argv []string) (cliArgs, error) {
 			// preserving the "wrong verb for this flag" guardrail that
 			// caught typos like `vcs get -s root` for PR-3.
 			case a == "--rev" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
-				if out.vcsTag.RevSet {
+				if out.vcsTag.Rev != nil {
 					return cliArgs{}, fmt.Errorf("--rev specified twice")
 				}
 				if i+1 >= len(rest) {
 					return cliArgs{}, fmt.Errorf("--rev requires a value (the target revision)")
 				}
-				out.vcsTag.Rev = rest[i+1]
-				out.vcsTag.RevSet = true
+				out.vcsTag.Rev = ptr(rest[i+1])
 				i++
 			case strings.HasPrefix(a, "--rev=") && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
-				if out.vcsTag.RevSet {
+				if out.vcsTag.Rev != nil {
 					return cliArgs{}, fmt.Errorf("--rev specified twice")
 				}
-				out.vcsTag.Rev = strings.TrimPrefix(a, "--rev=")
-				out.vcsTag.RevSet = true
+				out.vcsTag.Rev = ptr(strings.TrimPrefix(a, "--rev="))
 			case a == "--allow-move" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
 				out.vcsTag.AllowMove = true
 			case a == "--no-hint":
@@ -508,8 +525,8 @@ func parseArgs(argv []string) (cliArgs, error) {
 				out.vcsArgs = append(out.vcsArgs, a)
 			}
 		}
-		if out.vcsBase.OverrideSet {
-			if _, err := parseVcsOverride(out.vcsBase.Override); err != nil {
+		if out.vcsBase.Override != nil {
+			if _, err := parseVcsOverride(*out.vcsBase.Override); err != nil {
 				return cliArgs{}, err
 			}
 		}
@@ -561,42 +578,38 @@ func parseArgs(argv []string) (cliArgs, error) {
 			}
 			out.write = true
 		case a == "--pre":
-			if out.bump.PreSet {
+			if out.bump.Pre != nil {
 				return cliArgs{}, fmt.Errorf("--pre specified twice")
 			}
 			if i+1 >= len(rest) {
 				return cliArgs{}, fmt.Errorf("--pre requires a value")
 			}
-			out.bump.Pre = rest[i+1]
-			out.bump.PreSet = true
+			out.bump.Pre = ptr(rest[i+1])
 			i++
 		case strings.HasPrefix(a, "--pre="):
-			if out.bump.PreSet {
+			if out.bump.Pre != nil {
 				return cliArgs{}, fmt.Errorf("--pre specified twice")
 			}
-			out.bump.Pre = strings.TrimPrefix(a, "--pre=")
-			out.bump.PreSet = true
+			out.bump.Pre = ptr(strings.TrimPrefix(a, "--pre="))
 		case a == "--no-pre":
 			if out.bump.NoPre {
 				return cliArgs{}, fmt.Errorf("--no-pre specified twice")
 			}
 			out.bump.NoPre = true
 		case a == "--build-metadata":
-			if out.bump.BuildMetadataSet {
+			if out.bump.BuildMetadata != nil {
 				return cliArgs{}, fmt.Errorf("--build-metadata specified twice")
 			}
 			if i+1 >= len(rest) {
 				return cliArgs{}, fmt.Errorf("--build-metadata requires a value")
 			}
-			out.bump.BuildMetadata = rest[i+1]
-			out.bump.BuildMetadataSet = true
+			out.bump.BuildMetadata = ptr(rest[i+1])
 			i++
 		case strings.HasPrefix(a, "--build-metadata="):
-			if out.bump.BuildMetadataSet {
+			if out.bump.BuildMetadata != nil {
 				return cliArgs{}, fmt.Errorf("--build-metadata specified twice")
 			}
-			out.bump.BuildMetadata = strings.TrimPrefix(a, "--build-metadata=")
-			out.bump.BuildMetadataSet = true
+			out.bump.BuildMetadata = ptr(strings.TrimPrefix(a, "--build-metadata="))
 		case a == "--no-build-metadata":
 			if out.bump.NoBuildMetadata {
 				return cliArgs{}, fmt.Errorf("--no-build-metadata specified twice")
@@ -617,21 +630,19 @@ func parseArgs(argv []string) (cliArgs, error) {
 			// double-set check (no value is being lost).
 			out.output.JSON = true
 		case a == "--vcs":
-			if out.vcsBase.OverrideSet {
+			if out.vcsBase.Override != nil {
 				return cliArgs{}, fmt.Errorf("--vcs specified twice")
 			}
 			if i+1 >= len(rest) {
 				return cliArgs{}, fmt.Errorf("--vcs requires a value (jj, git, or auto)")
 			}
-			out.vcsBase.Override = rest[i+1]
-			out.vcsBase.OverrideSet = true
+			out.vcsBase.Override = ptr(rest[i+1])
 			i++
 		case strings.HasPrefix(a, "--vcs="):
-			if out.vcsBase.OverrideSet {
+			if out.vcsBase.Override != nil {
 				return cliArgs{}, fmt.Errorf("--vcs specified twice")
 			}
-			out.vcsBase.Override = strings.TrimPrefix(a, "--vcs=")
-			out.vcsBase.OverrideSet = true
+			out.vcsBase.Override = ptr(strings.TrimPrefix(a, "--vcs="))
 		case a == "--":
 			// Treat all remaining argv as inputs (lets paths starting with `-` through).
 			out.inputs = append(out.inputs, rest[i+1:]...)
@@ -645,20 +656,20 @@ func parseArgs(argv []string) (cliArgs, error) {
 
 	// --- exclusivity / validity checks ---------------------------------
 
-	if out.bump.PreSet && out.bump.NoPre {
+	if out.bump.Pre != nil && out.bump.NoPre {
 		return cliArgs{}, fmt.Errorf("--pre and --no-pre are mutually exclusive")
 	}
-	if out.bump.BuildMetadataSet && out.bump.NoBuildMetadata {
+	if out.bump.BuildMetadata != nil && out.bump.NoBuildMetadata {
 		return cliArgs{}, fmt.Errorf("--build-metadata and --no-build-metadata are mutually exclusive")
 	}
-	if out.bump.PreSet && out.bump.Pre == "" {
+	if out.bump.Pre != nil && *out.bump.Pre == "" {
 		return cliArgs{}, fmt.Errorf("--pre value cannot be empty, use --no-pre to remove")
 	}
-	if out.bump.BuildMetadataSet && out.bump.BuildMetadata == "" {
+	if out.bump.BuildMetadata != nil && *out.bump.BuildMetadata == "" {
 		return cliArgs{}, fmt.Errorf("--build-metadata value cannot be empty, use --no-build-metadata to remove")
 	}
-	if out.vcsBase.OverrideSet {
-		if _, err := parseVcsOverride(out.vcsBase.Override); err != nil {
+	if out.vcsBase.Override != nil {
+		if _, err := parseVcsOverride(*out.vcsBase.Override); err != nil {
 			return cliArgs{}, err
 		}
 	}
@@ -667,10 +678,10 @@ func parseArgs(argv []string) (cliArgs, error) {
 		if out.write {
 			return cliArgs{}, fmt.Errorf("--write is not valid with compare")
 		}
-		if out.bump.PreSet {
+		if out.bump.Pre != nil {
 			return cliArgs{}, fmt.Errorf("--pre is not valid with compare")
 		}
-		if out.bump.BuildMetadataSet {
+		if out.bump.BuildMetadata != nil {
 			return cliArgs{}, fmt.Errorf("--build-metadata is not valid with compare")
 		}
 		// DR-0007: compare is a predicate-only command — exit code is
@@ -692,10 +703,10 @@ func parseArgs(argv []string) (cliArgs, error) {
 		if out.write {
 			return cliArgs{}, fmt.Errorf("--write is not valid with get")
 		}
-		if out.bump.PreSet {
+		if out.bump.Pre != nil {
 			return cliArgs{}, fmt.Errorf("--pre is not valid with get (use --no-pre to strip)")
 		}
-		if out.bump.BuildMetadataSet {
+		if out.bump.BuildMetadata != nil {
 			return cliArgs{}, fmt.Errorf("--build-metadata is not valid with get (use --no-build-metadata to strip)")
 		}
 	}
@@ -1049,7 +1060,7 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 			fmt.Errorf("unknown vcs get key: %s (expected one of: %s)", key, strings.Join(vcsGetKeys, " / ")))
 	}
 
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1132,7 +1143,7 @@ func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
 			fmt.Errorf("unknown vcs is predicate: %s (expected one of: %s)", pred, strings.Join(vcsIsPreds, " / ")))
 	}
 
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1210,7 +1221,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	rev := args.vcsArgs[0]
 	paths := args.vcsArgs[1:]
 
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1303,7 +1314,7 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 			fmt.Errorf("vcs commit: --staged and PATH.. are mutually exclusive"))
 	}
 	// Step 3: -m required for !amend.
-	if !args.vcsCommit.Amend && !args.vcsCommit.MessageSet {
+	if !args.vcsCommit.Amend && args.vcsCommit.Message == nil {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs commit: -m MSG is required (unless --amend)"))
 	}
@@ -1317,7 +1328,7 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 	// accepted shapes (paths / --staged / bare / amend-of-each) into
 	// the backend implementations.
 	// Step 4: resolve backend.
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1342,10 +1353,10 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 	// Step 6: dispatch.
 	opts := commitOpts{
 		paths:   args.vcsArgs,
-		message: args.vcsCommit.Message,
+		message: derefOr(args.vcsCommit.Message, ""),
 		staged:  args.vcsCommit.Staged,
 		amend:   args.vcsCommit.Amend,
-		noEdit:  args.vcsCommit.Amend && !args.vcsCommit.MessageSet,
+		noEdit:  args.vcsCommit.Amend && args.vcsCommit.Message == nil,
 	}
 	if err := b.Commit(opts); err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1380,19 +1391,19 @@ func runVcsCmdFetch(args cliArgs, stdout, stderr io.Writer) error {
 	}
 	// Resolve REMOTE precedence: positional > --remote > "origin".
 	remote := "origin"
-	if args.vcsPush.RemoteSet {
-		remote = args.vcsPush.Remote
+	if args.vcsPush.Remote != nil {
+		remote = *args.vcsPush.Remote
 	}
 	if len(args.vcsArgs) == 1 {
 		// Positional and --remote together is over-specification; reject
 		// to avoid silent precedence surprises.
-		if args.vcsPush.RemoteSet {
+		if args.vcsPush.Remote != nil {
 			return emitVcsUsage(stderr, args,
 				fmt.Errorf("vcs fetch: REMOTE positional and --remote are mutually exclusive"))
 		}
 		remote = args.vcsArgs[0]
 	}
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1430,19 +1441,19 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs push does not accept positional arguments (use --branch/--bookmark NAME)"))
 	}
-	if !args.vcsPush.NameSet {
+	if args.vcsPush.Name == nil {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs push: --branch (or --bookmark) NAME is required"))
 	}
-	if args.vcsPush.Name == "" {
+	if *args.vcsPush.Name == "" {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs push: --branch/--bookmark value must not be empty"))
 	}
 	remote := "origin"
-	if args.vcsPush.RemoteSet {
-		remote = args.vcsPush.Remote
+	if args.vcsPush.Remote != nil {
+		remote = *args.vcsPush.Remote
 	}
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1474,7 +1485,7 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	// surfaces the wrapped error via formatPushError (which already
 	// folds git/jj's stderr into ee.msg).
 	opts := pushOpts{
-		name:                  args.vcsPush.Name,
+		name:                  *args.vcsPush.Name,
 		remote:                remote,
 		jjBookmarkAutoAdvance: args.vcsPush.JjBookmarkAutoAdvance,
 	}
@@ -1566,11 +1577,11 @@ func runVcsCmdTagPush(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs tag push: takes exactly one NAME, got %d", len(args.vcsArgs)))
 	}
-	if !args.vcsTag.RevSet {
+	if args.vcsTag.Rev == nil {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs tag push: --rev REV is required"))
 	}
-	if args.vcsTag.Rev == "" {
+	if *args.vcsTag.Rev == "" {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs tag push: --rev value must not be empty"))
 	}
@@ -1579,17 +1590,17 @@ func runVcsCmdTagPush(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag push: %w", err))
 	}
 	remote := "origin"
-	if args.vcsPush.RemoteSet {
-		remote = args.vcsPush.Remote
+	if args.vcsPush.Remote != nil {
+		remote = *args.vcsPush.Remote
 	}
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override)
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, ""))
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
 	opts := tagPushOpts{
 		Name:      name,
-		Rev:       args.vcsTag.Rev,
+		Rev:       *args.vcsTag.Rev,
 		Remote:    remote,
 		AllowMove: args.vcsTag.AllowMove,
 	}
@@ -1629,10 +1640,10 @@ func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag delete: %w", err))
 	}
 	remote := "origin"
-	if args.vcsPush.RemoteSet {
-		remote = args.vcsPush.Remote
+	if args.vcsPush.Remote != nil {
+		remote = *args.vcsPush.Remote
 	}
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override)
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, ""))
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -1766,7 +1777,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 	}
 
-	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // already validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // already validated in parseArgs
 	// peerExpand=true: bump/get want N-arg cross-source equality
 	// across all sibling FILE paths when a file-omitted vcs:REV is
 	// present (DR-0023). Compare uses peerExpand=false.
@@ -1839,12 +1850,15 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return emitErr(stderr, args, wrapOriginErr(origin.label(), cur, err))
 	}
+	// Bridge cliArgs.bump (*string) → BumpOptions (string + Set bool).
+	// BumpOptions stays as-is to avoid expanding the refactor blast
+	// radius into semver.go / its tests (PR-Simplify-1 is cliArgs-only).
 	opts := BumpOptions{
-		Pre:              args.bump.Pre,
-		PreSet:           args.bump.PreSet,
+		Pre:              derefOr(args.bump.Pre, ""),
+		PreSet:           args.bump.Pre != nil,
 		NoPre:            args.bump.NoPre,
-		BuildMetadata:    args.bump.BuildMetadata,
-		BuildMetadataSet: args.bump.BuildMetadataSet,
+		BuildMetadata:    derefOr(args.bump.BuildMetadata, ""),
+		BuildMetadataSet: args.bump.BuildMetadata != nil,
 		NoBuildMetadata:  args.bump.NoBuildMetadata,
 	}
 	newV, err := v.Bump(args.action, opts)

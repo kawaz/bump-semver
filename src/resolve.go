@@ -404,6 +404,18 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 					if err != nil {
 						return nil, err
 					}
+					// Follow-up #35: re-label the expanded source
+					// with its borrowed FILE so peer-expanded
+					// `vcs:REV` entries are distinguishable in
+					// mismatch stderr ("vcs:HEAD:VERSION" vs
+					// "vcs:HEAD:b.json", not two bare "vcs:HEAD"
+					// lines). The label uses the canonical
+					// `vcs:REV:FILE` spec form so it round-trips
+					// through vcsParseSpec.
+					ri.originFile = in + ":" + bf
+					for i := range ri.fields {
+						ri.fields[i].File = ri.originFile
+					}
 					out = append(out, ri)
 				}
 				continue

@@ -219,6 +219,18 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 	}
 	if _, ok := allSameValue(allNames); len(allNames) > 0 && !ok {
+		// DR-0023 / follow-up #35: same peer-equality model as
+		// the version-mismatch branch above — get treats all sources
+		// as equal peers, so a name disagreement is predicate-false
+		// (exit 1) with the per-source listing on stderr. Bump verbs
+		// still flow through emitErr (exit 2) because writing back
+		// inconsistent inputs is destructive.
+		if args.action == "get" {
+			if !args.output.Verbosity.ShouldSuppressError() {
+				fmt.Fprintln(stderr, formatMismatchError("name", allNames).Error())
+			}
+			return &exitErr{code: exitCodeFalse}
+		}
 		return emitErr(stderr, args, formatMismatchError("name", allNames))
 	}
 

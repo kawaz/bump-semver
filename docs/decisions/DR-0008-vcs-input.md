@@ -50,17 +50,26 @@ bump-semver compare gt FILE 'vcs:latest-tag()'  # 関数風、tag リストを s
 
 #### 借用ルール (確定仕様)
 
-借用元の選択は **位置順 (引数の左から最初の FILE 提供入力)**。借用源として有効なのは:
+借用元候補は **位置順 (引数の左から FILE 提供入力)**。借用源として有効なのは:
 
 - 実 FILE 起源の入力 (`Cargo.toml`)
 - `vcs:REV:FILE` 形式 (file を明示している vcs: 入力)
 
+verb によって借用形態が分かれる ([DR-0023](./DR-0023-n-arg-extension.md)):
+
+| verb | 借用挙動 |
+|---|---|
+| `get` / bump 系 (`peerExpand=true`) | FILE を省略した `vcs:REV` は **兄弟 FILE 全 path にピア展開**。`get a b vcs:main` は `{a, b, vcs:main:a, vcs:main:b}` の 4 source を生成 |
+| `compare` (`peerExpand=false`) | FILE を省略した `vcs:REV` は **常に BASE (= 第 1 引数) の path を借用**。`compare gt VERSION vcs:main vcs:v1.0.0` は両 OTHER が VERSION を借用 (= F1 基準の比較セマンティクスと一致) |
+
 具体例:
 
 ```
-Cargo.toml a.json vcs:origin/main          # vcs: は Cargo.toml (位置 1) を借用
-vcs:main:Cargo.toml vcs:staging            # vcs:staging は vcs:main の Cargo.toml を借用
-vcs:main vcs:staging                       # error: 借用源なし
+get a b vcs:main                            # peer-expand: 4 source (a, b, vcs:main:a, vcs:main:b)
+get Cargo.toml a.json vcs:origin/main       # 同上: 3 source × 1 borrow per file
+compare gt VERSION vcs:main vcs:v1.0.0      # 両 OTHER が VERSION の path を借用 (F1 起点)
+vcs:main:Cargo.toml vcs:staging             # vcs:staging は vcs:main の Cargo.toml を借用
+vcs:main vcs:staging                        # error: 借用源なし
 ```
 
 **「パース信頼度比較」は採用しない**。借用元判定は信頼度比較ではなく単純な位置順。理由はシンプル + 利用者から見て予測可能 (信頼度比較だと「なぜこれを選んだ?」が見えにくい)。
@@ -73,7 +82,7 @@ vcs:main vcs:staging                       # error: 借用源なし
 bump-semver get Cargo.toml vcs:main vcs:staging vcs:production
 ```
 
-`compare` は 2 入力固定なので最大 2 つ。
+`compare` は DR-0023 で `BASE + OTHER...` の N 引数化済 (F1 基準で全 OTHER を full-eval、失敗ペアごとに stderr 出力)。借用は F1 のみを参照するので、複数 path-less vcs OTHER も問題なく解決される。
 
 ### 関数モード (MVP は `latest-tag()` のみ)
 

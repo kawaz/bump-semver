@@ -690,9 +690,9 @@ func TestRun_HelpDispatch(t *testing.T) {
 		{"action-help-patch", []string{"patch", "--help"}, "bump-semver major | minor | patch — bump a SemVer component", ""},
 		{"action-help-pre", []string{"pre", "--help"}, "bump-semver pre — manage pre-release identifiers", ""},
 		{"action-help-get", []string{"get", "--help"}, "bump-semver get — print the current version", ""},
-		{"action-help-compare", []string{"compare", "--help"}, "bump-semver compare — compare two SemVer values", ""},
-		{"action-help-compare-with-op", []string{"compare", "eq", "--help"}, "bump-semver compare — compare two SemVer values", ""},
-		{"action-help-compare-with-precision-op", []string{"compare", "eq-major", "--help"}, "bump-semver compare — compare two SemVer values", ""},
+		{"action-help-compare", []string{"compare", "--help"}, "bump-semver compare — compare a base value to one or more others", ""},
+		{"action-help-compare-with-op", []string{"compare", "eq", "--help"}, "bump-semver compare — compare a base value to one or more others", ""},
+		{"action-help-compare-with-precision-op", []string{"compare", "eq-major", "--help"}, "bump-semver compare — compare a base value to one or more others", ""},
 	}
 	for _, tc := range cases {
 		tc := tc

@@ -23,7 +23,7 @@ Pre-built binaries for Linux / macOS / Windows (amd64, arm64) are also published
 ```
 bump-semver get <INPUT...>
 bump-semver <major|minor|patch|pre> <INPUT...> [--write]
-bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
+bump-semver compare <eq|lt|le|gt|ge|...> <BASE> <OTHER...>
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
@@ -57,22 +57,24 @@ Help comes in three tiers (v0.13.0+):
 ### compare subcommand
 
 ```
-bump-semver compare <OP> <INPUT> <INPUT>
+bump-semver compare <OP> <BASE> <OTHER...>
 ```
 
-`<OP>` is one of `eq` / `lt` / `le` / `gt` / `ge`. Comparison follows SemVer 2.0.0 ordering (build metadata excluded from ordering, prefix / sep differences normalised).
+`<OP>` is one of `eq` / `lt` / `le` / `gt` / `ge`. Comparison follows SemVer 2.0.0 ordering (build metadata excluded from ordering, prefix / sep differences normalised). `<BASE>` is the reference; every `<OTHER>` is checked independently as "BASE OP OTHER" ([DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)). The legacy two-input form is the N=1 case.
 
 | OP | True when |
 |---|---|
-| `eq` | first == second |
-| `lt` | first <  second |
-| `le` | first <= second |
-| `gt` | first >  second |
-| `ge` | first >= second |
+| `eq` | BASE == every OTHER |
+| `lt` | BASE <  every OTHER |
+| `le` | BASE <= every OTHER |
+| `gt` | BASE >  every OTHER |
+| `ge` | BASE >= every OTHER |
 
-Exit codes: `0` = true / `1` = false / `2` = error (`test` / `dpkg --compare-versions` convention).
+Exit codes: `0` = true / `1` = false / `2` = error (`test` / `dpkg --compare-versions` convention). On `1` each failing pair is described on stderr (e.g. `compare gt: VERSION (0.26.3) is not greater than O1=vcs:main@origin (0.27.0)`). Use `-qq` to suppress the per-OTHER listing.
 
 Each OP may carry a `-major` / `-minor` / `-patch` suffix that truncates the comparison ([DR-0017](./docs/decisions/DR-0017-compare-precision-suffix.md)). 5 bases × 4 precisions = 20 operators.
+
+When an OTHER's `vcs:REV` spec has no explicit FILE, BASE's path is borrowed: `compare gt VERSION vcs:main vcs:v1.0.0` reads `vcs:main:VERSION` and `vcs:v1.0.0:VERSION`.
 
 ```bash
 bump-semver compare eq Cargo.toml v1.2.3 && echo same
@@ -80,6 +82,7 @@ bump-semver compare lt 1.2.3-rc.1 1.2.3                       # exit 0 (rc < rel
 bump-semver compare eq-major 1.2.3 1.9.7                      # exit 0 (same major)
 bump-semver compare eq-patch 1.2.3 1.2.3-rc.1                 # exit 0 (pre-release ignored)
 bump-semver compare lt-minor Cargo.toml vcs:origin/main       # only minor-or-below bumps?
+bump-semver compare gt VERSION 'vcs:main@origin' 'vcs:v1.0.0' # ahead of both main and v1.0.0
 ```
 
 ### vcs subcommand
@@ -393,7 +396,7 @@ For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with
 
 ### Multiple INPUTs: cross-input consistency
 
-Pass multiple INPUTs to operate on them as a single unit. Versions across all INPUTs must already agree (otherwise: a `version mismatch:` error lists each origin and value, column-aligned). Detected package names are also cross-checked when available, to guard against accidentally bumping files from a different project together; names are never written back.
+Pass multiple INPUTs to operate on them as a single unit. Versions across all INPUTs must already agree; otherwise a `version mismatch:` listing of every origin and value (column-aligned) is printed and the command fails. For `get` that failure is exit 1 with the listing on stderr (predicate-false semantics, [DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)); for bump actions (`major` / `minor` / `patch` / `pre`) it is exit 2 because the input set is internally inconsistent. Detected package names are also cross-checked when available, to guard against accidentally bumping files from a different project together; names are never written back.
 
 ```bash
 bump-semver patch package.json package-lock.json --write
@@ -401,7 +404,7 @@ bump-semver get   .claude-plugin/plugin.json .claude-plugin/marketplace.json pac
 bump-semver patch 1.2.3 a.json b.json --write   # use VER as the "expected current value" for consistency, write bumped result to a/b
 ```
 
-`get` with multiple INPUTs works as a CI-friendly consistency check (no `--write` needed, just verifies that all detected version fields agree).
+`get` with multiple INPUTs works as a CI-friendly consistency check (no `--write` needed, just verifies that all detected version fields agree). A file-omitted `vcs:REV` peer-expands across every sibling FILE path, so `get a b vcs:main@origin` is a four-way check (`a`, `b`, `vcs:main@origin:a`, `vcs:main@origin:b`).
 
 With `--write`, only **FILE-origin inputs** are written back; VER and stdin inputs are reference values used for consistency checking only. Specifying `--write` without any FILE input is an error (`--write requires at least one FILE`).
 

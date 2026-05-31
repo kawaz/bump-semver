@@ -42,7 +42,7 @@ const fullHelpText = `bump-semver — focused semver bump CLI
 
 Usage:
   bump-semver <ACTION> <INPUT...> [flags]
-  bump-semver compare <OP> <INPUT> <INPUT> [flags]
+  bump-semver compare <OP> <BASE> <OTHER...> [flags]
   bump-semver --version
   bump-semver --help | --help-full
 
@@ -53,12 +53,12 @@ Actions (bump/read):
   pre     Pre-release counter advance / set / remove (see --pre / --no-pre)
   get     Print the current version (with optional --no-pre / --no-build-metadata)
 
-Compare (nested subcommand):
-  compare eq  INPUT INPUT     true if equal (SemVer 2.0.0 ordering, build metadata ignored)
-  compare lt  INPUT INPUT     true if first <  second
-  compare le  INPUT INPUT     true if first <= second
-  compare gt  INPUT INPUT     true if first >  second
-  compare ge  INPUT INPUT     true if first >= second
+Compare (nested subcommand, DR-0023: BASE plus one or more OTHERS):
+  compare eq  BASE OTHER...   true if BASE equals every OTHER (SemVer 2.0.0 ordering, build metadata ignored)
+  compare lt  BASE OTHER...   true if BASE <  every OTHER
+  compare le  BASE OTHER...   true if BASE <= every OTHER
+  compare gt  BASE OTHER...   true if BASE >  every OTHER
+  compare ge  BASE OTHER...   true if BASE >= every OTHER
   Optional -major / -minor / -patch suffix (DR-0017) truncates the comparison
   (e.g. eq-major 1.2.3 1.9.7 -> true). See: bump-semver compare --help
 
@@ -127,7 +127,7 @@ VCS helpers (DR-0020):
 
 Exit codes:
   0   success (or predicate true)
-  1   predicate false (compare / vcs is — silent on stderr)
+  1   predicate false (compare: per-OTHER detail on stderr; vcs is / get mismatch: source listing on stderr; suppress with -qq)
   2   usage error (parse failure, mismatch, missing input, unknown verb/key, etc.)
   3   VCS subprocess error (vcs subcommands only — e.g. not in a repo)
   4   ambiguous answer (vcs subcommands only — e.g. detached HEAD)
@@ -256,16 +256,22 @@ const helpGet = `bump-semver get — print the current version
 Usage:
   bump-semver get <INPUT...> [--json] [--no-pre] [--no-build-metadata]
 
-When multiple INPUTs are given, all extracted versions must agree;
-otherwise a "version mismatch:" error lists each origin and value.
-This is the read-side mirror of the bump actions and is safe to call
-with --json for piping into jq.
+When multiple INPUTs are given, all sources are treated as equal
+peers and must agree; otherwise a "version mismatch:" listing is
+printed to stderr and the process exits 1 (DR-0023). exit 0 +
+single-line stdout on agreement makes the command safe to pipe.
+
+A file-omitted vcs:REV expands across every distinct sibling FILE
+path. 'get a b vcs:main' therefore reads four sources: a, b, the
+snapshot of a at main, and the snapshot of b at main (DR-0008).
 
 Inputs (multiple, must agree):
   FILE                       supported file (basename auto-detected)
   VER                        raw semver string
   -                          read VER from stdin
   vcs:REV[:FILE]             read FILE at <REV> from jj or git
+                             (when FILE is omitted, expands across all
+                             sibling FILE paths — see Examples)
   vcs:latest-tag([REPO])     largest semver tag (cwd VCS or remote: owner/repo / URL)
   cmd:CMD                    run CMD via bash -c, take first non-empty stdout line as VER
                              (strips a leading 'v'; e.g. cmd:./bin/mytool --version)
@@ -278,9 +284,15 @@ Options:
   --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
   -q / -qq / --no-hint       Output suppression (see --help-full)
 
+Exit codes:
+  0   every source agrees
+  1   sources disagree (per-source listing on stderr)
+  2   error (parse failure, missing input, unknown flag, ...)
+
 Examples:
   bump-semver get VERSION
   bump-semver get Cargo.toml package.json package-lock.json   # cross-file agreement check
+  bump-semver get a b 'vcs:main@origin'                        # 4-way: a, b, vcs:main:a, vcs:main:b
   bump-semver get package.json --json | jq -r .semver
   bump-semver get 'vcs:latest-tag()'                          # largest semver tag (cwd)
   bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'            # remote (GitHub short)
@@ -291,10 +303,16 @@ Examples:
 // helpCompare documents the compare subcommand. The OP list is the
 // authoritative reference for which operators are supported — the
 // shortHelpText only shows it as `<eq|lt|le|gt|ge|...>` to stay short.
-const helpCompare = `bump-semver compare — compare two SemVer values (exit-code-driven)
+const helpCompare = `bump-semver compare — compare a base value to one or more others (exit-code-driven)
 
 Usage:
-  bump-semver compare <OP> <INPUT> <INPUT>
+  bump-semver compare <OP> <BASE> <OTHER...>
+
+BASE (the first input) is the reference; every OTHER is compared as
+"BASE OP OTHER". The legacy two-input form is the N=1 case. Each
+OTHER is evaluated independently — failures are listed on stderr
+without short-circuit, so a single invocation surfaces every failing
+relation (DR-0023).
 
 Operators (5 base × 4 precision = 20 total):
                 full       -major       -minor       -patch
@@ -314,7 +332,7 @@ Operators (5 base × 4 precision = 20 total):
   Build-metadata is always ignored (SemVer § 10). For numeric
   pre-release identifiers leading zeros are rejected (per spec).
 
-Inputs (exactly two):
+Inputs (BASE plus one or more OTHERS):
   FILE                       supported file (basename auto-detected)
   VER                        raw semver string
   -                          read VER from stdin
@@ -322,25 +340,29 @@ Inputs (exactly two):
   vcs:latest-tag([REPO])     largest semver tag (cwd VCS or remote: owner/repo / URL)
   cmd:CMD                    run CMD via bash -c, take first non-empty stdout line as VER
 
-  When a vcs: input has no explicit FILE component, the FILE is
-  borrowed from the first sibling input that provides one (DR-0008).
+  When an OTHER's vcs: spec has no explicit FILE component, it
+  borrows BASE's path (DR-0008 / DR-0023). 'compare gt VERSION
+  vcs:main vcs:v1.0.0' therefore reads vcs:main:VERSION and
+  vcs:v1.0.0:VERSION.
 
 Options:
   --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
-  -q / -qq / --no-hint       Output suppression (see --help-full)
+  -q / --no-hint             Suppress DR-0010 hints (per-OTHER failure list is preserved)
+  -qq                        Also suppress the per-OTHER failure list
 
   --write / --json / --pre / --build-metadata: rejected (compare is
   read-only and exit-code-driven, not value-output-driven).
 
 Exit codes:
-  0   predicate is true
-  1   predicate is false
+  0   every predicate is true
+  1   at least one predicate is false (per-OTHER detail on stderr)
   2   error (parse failure, missing input, unknown OP, etc.)
 
 Examples:
   bump-semver compare eq 1.2.3 1.2.3
   bump-semver compare lt 1.2.3-rc.1 1.2.3                    # exit 0 (rc.1 < 1.2.3)
   bump-semver compare gt Cargo.toml 'vcs:latest-tag()'       # is the local bump ahead of release? (CI)
+  bump-semver compare gt VERSION 'vcs:main@origin' 'vcs:v1.0.0'  # ahead of main AND of v1.0.0
   bump-semver compare lt Cargo.toml vcs:origin/main          # stale vs remote main? (pull needed)
   bump-semver compare eq Cargo.toml vcs:HEAD~1               # unchanged since prev commit?
   bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json

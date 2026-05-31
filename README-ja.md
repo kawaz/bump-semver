@@ -23,7 +23,7 @@ Linux / macOS / Windows (amd64, arm64) のビルド済みバイナリも GitHub 
 ```
 bump-semver get <INPUT...>
 bump-semver <major|minor|patch|pre> <INPUT...> [--write]
-bump-semver compare <eq|lt|le|gt|ge|...> <INPUT> <INPUT>
+bump-semver compare <eq|lt|le|gt|ge|...> <BASE> <OTHER...>
 bump-semver vcs get <root|backend|current-branch>
 bump-semver vcs is  <clean|dirty|git|jj>
 bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
@@ -57,22 +57,24 @@ bump-semver --help | --help-full
 ### compare サブコマンド
 
 ```
-bump-semver compare <OP> <INPUT> <INPUT>
+bump-semver compare <OP> <BASE> <OTHER...>
 ```
 
-`<OP>` は `eq` / `lt` / `le` / `gt` / `ge` のいずれか。SemVer 2.0.0 順序仕様準拠で比較する (build metadata は順序比較から除外、prefix / sep の違いは正規化)。
+`<OP>` は `eq` / `lt` / `le` / `gt` / `ge` のいずれか。SemVer 2.0.0 順序仕様準拠で比較する (build metadata は順序比較から除外、prefix / sep の違いは正規化)。`<BASE>` を基準に各 `<OTHER>` を個別に "BASE OP OTHER" として評価する ([DR-0023](./docs/decisions/DR-0023-n-arg-extension.md))。従来の 2 入力形式は N=1 ケースとして互換維持。
 
 | OP | 真となる条件 |
 |---|---|
-| `eq` | 第1引数 == 第2引数 |
-| `lt` | 第1引数 <  第2引数 |
-| `le` | 第1引数 <= 第2引数 |
-| `gt` | 第1引数 >  第2引数 |
-| `ge` | 第1引数 >= 第2引数 |
+| `eq` | BASE が全 OTHER と等しい |
+| `lt` | BASE が全 OTHER より小さい |
+| `le` | BASE が全 OTHER 以下 |
+| `gt` | BASE が全 OTHER より大きい |
+| `ge` | BASE が全 OTHER 以上 |
 
-終了コード: `0` = 真 / `1` = 偽 / `2` = エラー (`test` / `dpkg --compare-versions` 慣習)。
+終了コード: `0` = 真 / `1` = 偽 / `2` = エラー (`test` / `dpkg --compare-versions` 慣習)。`1` のときは失敗したペアごとに stderr へ詳細を 1 行ずつ出力する (`compare gt: VERSION (0.26.3) is not greater than O1=vcs:main@origin (0.27.0)` 形式、全 OTHER を評価しきってからまとめて出す)。`-qq` で抑制可能。
 
 OP には `-major` / `-minor` / `-patch` の suffix を付けて比較精度を切り詰められる ([DR-0017](./docs/decisions/DR-0017-compare-precision-suffix.md))。5 base × 4 precision = 20 OP。
+
+OTHER 側の `vcs:REV` で FILE を省略すると BASE の path を借用する: `compare gt VERSION vcs:main vcs:v1.0.0` は `vcs:main:VERSION` と `vcs:v1.0.0:VERSION` を読む。
 
 ```bash
 bump-semver compare eq Cargo.toml v1.2.3 && echo same
@@ -80,6 +82,7 @@ bump-semver compare lt 1.2.3-rc.1 1.2.3                       # exit 0 (rc < 確
 bump-semver compare eq-major 1.2.3 1.9.7                      # exit 0 (同じ major)
 bump-semver compare eq-patch 1.2.3 1.2.3-rc.1                 # exit 0 (pre-release 無視)
 bump-semver compare lt-minor Cargo.toml vcs:origin/main       # minor 以下しか動いてない?
+bump-semver compare gt VERSION 'vcs:main@origin' 'vcs:v1.0.0' # main と v1.0.0 のどちらより上か
 ```
 
 ### vcs サブコマンド
@@ -393,7 +396,7 @@ npm `package-lock.json` のみ特別扱い: lockfile v1 (npm 5/6) は `unsupport
 
 ### 複数 INPUT: 整合性検証
 
-複数 INPUT を渡すと 1 つの単位として処理される。全 INPUT 間で version は事前に一致している必要がある (不一致なら `version mismatch:` でカラム揃え縦列挙)。検出された package name も取れた範囲で整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
+複数 INPUT を渡すと 1 つの単位として処理される。全 INPUT 間で version は事前に一致している必要がある。不一致時の挙動は verb で異なる ([DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)): `get` は exit 1 + stderr に `version mismatch:` カラム整列リスト (述語偽の意味付け、全 source 対等); bump 系 (`major` / `minor` / `patch` / `pre`) は exit 2 + stderr の `bump-semver: version mismatch:` (内部不整合で動作拒否)。検出された package name も取れた範囲で整合性検証され、別プロジェクトのファイルを誤って一括 bump する事故を構造的に防ぐ。name は書き戻し対象ではない。
 
 ```bash
 bump-semver patch package.json package-lock.json --write
@@ -401,7 +404,7 @@ bump-semver get   .claude-plugin/plugin.json .claude-plugin/marketplace.json pac
 bump-semver patch 1.2.3 a.json b.json --write   # VER 引数で「期待値」を指定して整合性確認、結果は a/b に書き戻す
 ```
 
-複数 INPUT 指定時の `get` は CI 用の整合性チェックとして機能する (`--write` 不要、全 version が一致しているかだけ検証)。
+複数 INPUT 指定時の `get` は CI 用の整合性チェックとして機能する (`--write` 不要、全 version が一致しているかだけ検証)。FILE を省略した `vcs:REV` は兄弟 FILE 全 path にピア展開されるので、`get a b vcs:main@origin` は (`a`, `b`, `vcs:main@origin:a`, `vcs:main@origin:b`) の 4-way チェックになる。
 
 `--write` 時、書き戻し対象は **FILE 入力のみ**。VER / stdin 入力は参照値として整合性検証だけに使われる。`--write` 指定時に FILE 入力が 1 つもない場合はエラー (`--write requires at least one FILE`)。
 

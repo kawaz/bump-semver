@@ -25,6 +25,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0020](./DR-0020-vcs-subcommands.md) — `vcs` サブコマンド群 (git/jj 吸収のリリース/push 定型操作: get/is/diff/commit/push/tag)。未実装、ROADMAP 参照
 - [DR-0021](./DR-0021-cargo-workspace-package-version.md) — Cargo workspace の `[workspace.package].version` 対応 (`[package]` → `[workspace.package]` の OR フォールバック)。DR-0002 を supersede
 - [DR-0022](./DR-0022-justfile-re-adoption.md) — Justfile 回帰 (Taskfile.pkl + pkfire → Justfile + `bump-semver vcs` ドッグフード)。Taskfile.pkl は翻訳 check の shim としてのみ残存
+- [DR-0023](./DR-0023-n-arg-extension.md) — `get` / `compare` の N 引数化 + `vcs:` borrowing の N 個展開 (verb 別責務分離: get 対等ピア / compare F1 基準)
 
 ## Archived
 

@@ -41,7 +41,7 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args.inputs) < 2 {
 		return emitErr(stderr, args, fmt.Errorf("compare requires at least two inputs (BASE OTHERS...), got %d", len(args.inputs)))
 	}
-	vcsOverride, _ := parseVcsOverride(args.vcs) // already validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(args.vcsBase.Override) // already validated in parseArgs
 	// peerExpand=false: compare's borrow has always been "use F1's
 	// path", and that's exactly what DR-0023 requires for N OTHERS
 	// too — every file-omitted `vcs:REV` OTHER borrows F1's path.
@@ -85,7 +85,7 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Predicate false: exit 1. -qq suppresses the per-OTHER listing
 	// (consistent with "quiet-all suppresses diagnostics"); -q alone
 	// leaves it intact so users still see why the assertion failed.
-	if !args.quietAll {
+	if !args.output.QuietAll {
 		for _, line := range failures {
 			fmt.Fprintln(stderr, line)
 		}

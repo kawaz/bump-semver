@@ -25,8 +25,8 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"bump-ver", []string{"minor", "1.2.3"}, cliArgs{kind: "bump", action: "minor", inputs: []string{"1.2.3"}}},
 		{"version-flag", []string{"--version"}, cliArgs{kind: "version"}},
 		{"version-short", []string{"-V"}, cliArgs{kind: "version"}},
-		{"version-json", []string{"--version", "--json"}, cliArgs{kind: "version", json: true}},
-		{"version-json-short", []string{"-V", "--json"}, cliArgs{kind: "version", json: true}},
+		{"version-json", []string{"--version", "--json"}, cliArgs{kind: "version", output: outputOpts{JSON: true}}},
+		{"version-json-short", []string{"-V", "--json"}, cliArgs{kind: "version", output: outputOpts{JSON: true}}},
 		{"help-flag", []string{"--help"}, cliArgs{kind: "help"}},
 		{"help-short", []string{"-h"}, cliArgs{kind: "help"}},
 		{"help-full", []string{"--help-full"}, cliArgs{kind: "helpFull"}},
@@ -42,17 +42,17 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"action-help-compare-op-then-help", []string{"compare", "eq", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
 		{"action-help-compare-precision-then-help", []string{"compare", "eq-major", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
 		// --vcs auto (DR-0016) happy path
-		{"vcs-flag-auto", []string{"patch", "1.2.3", "--vcs", "auto"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcs: "auto", vcsSet: true}},
+		{"vcs-flag-auto", []string{"patch", "1.2.3", "--vcs", "auto"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: "auto", OverrideSet: true}}},
 		{"dash-dash-passthrough", []string{"patch", "--", "--weird-file.json"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"--weird-file.json"}}},
 		{"multi-file", []string{"get", "package.json", "package-lock.json"}, cliArgs{kind: "bump", action: "get", inputs: []string{"package.json", "package-lock.json"}}},
 		{"multi-file-write", []string{"patch", "a.json", "b.json", "c.json", "--write"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"a.json", "b.json", "c.json"}, write: true}},
 		// pre action with cross-cutting flags
-		{"pre-with-pre", []string{"pre", "1.2.3", "--pre", "rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, pre: "rc.0", preSet: true}},
-		{"pre-with-pre-eq", []string{"pre", "1.2.3", "--pre=rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, pre: "rc.0", preSet: true}},
-		{"pre-no-pre", []string{"pre", "1.2.3-rc.0", "--no-pre"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3-rc.0"}, noPre: true}},
-		{"patch-build-meta", []string{"patch", "1.2.3", "--build-metadata", "sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, buildMetadata: "sha.abc", buildMetadataSet: true}},
-		{"patch-build-meta-eq", []string{"patch", "1.2.3", "--build-metadata=sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, buildMetadata: "sha.abc", buildMetadataSet: true}},
-		{"patch-no-build-meta", []string{"patch", "1.2.3+x", "--no-build-metadata"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3+x"}, noBuildMetadata: true}},
+		{"pre-with-pre", []string{"pre", "1.2.3", "--pre", "rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, bump: bumpOpts{Pre: "rc.0", PreSet: true}}},
+		{"pre-with-pre-eq", []string{"pre", "1.2.3", "--pre=rc.0"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3"}, bump: bumpOpts{Pre: "rc.0", PreSet: true}}},
+		{"pre-no-pre", []string{"pre", "1.2.3-rc.0", "--no-pre"}, cliArgs{kind: "bump", action: "pre", inputs: []string{"1.2.3-rc.0"}, bump: bumpOpts{NoPre: true}}},
+		{"patch-build-meta", []string{"patch", "1.2.3", "--build-metadata", "sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, bump: bumpOpts{BuildMetadata: "sha.abc", BuildMetadataSet: true}}},
+		{"patch-build-meta-eq", []string{"patch", "1.2.3", "--build-metadata=sha.abc"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, bump: bumpOpts{BuildMetadata: "sha.abc", BuildMetadataSet: true}}},
+		{"patch-no-build-meta", []string{"patch", "1.2.3+x", "--no-build-metadata"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3+x"}, bump: bumpOpts{NoBuildMetadata: true}}},
 		// stdin marker
 		{"stdin-marker", []string{"patch", "-"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"-"}}},
 		// compare
@@ -64,8 +64,8 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"compare-lt-minor", []string{"compare", "lt-minor", "1.2.9", "1.3.0"}, cliArgs{kind: "compare", compareOp: "lt", comparePrecision: "minor", inputs: []string{"1.2.9", "1.3.0"}}},
 		{"compare-ge-patch", []string{"compare", "ge-patch", "1.2.3", "1.2.3-rc.0"}, cliArgs{kind: "compare", compareOp: "ge", comparePrecision: "patch", inputs: []string{"1.2.3", "1.2.3-rc.0"}}},
 		// DR-0008: vcs flag and vcs: inputs survive parseArgs intact
-		{"vcs-flag-jj", []string{"patch", "1.2.3", "--vcs", "jj"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcs: "jj", vcsSet: true}},
-		{"vcs-flag-git-eq", []string{"patch", "1.2.3", "--vcs=git"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcs: "git", vcsSet: true}},
+		{"vcs-flag-jj", []string{"patch", "1.2.3", "--vcs", "jj"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: "jj", OverrideSet: true}}},
+		{"vcs-flag-git-eq", []string{"patch", "1.2.3", "--vcs=git"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: "git", OverrideSet: true}}},
 		{"vcs-input-bump", []string{"patch", "vcs:HEAD"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"vcs:HEAD"}}},
 		{"vcs-input-compare", []string{"compare", "gt", "Cargo.toml", "vcs:latest-tag()"}, cliArgs{kind: "compare", compareOp: "gt", inputs: []string{"Cargo.toml", "vcs:latest-tag()"}}},
 	}
@@ -1515,47 +1515,47 @@ func TestParseArgs_QuietFlags(t *testing.T) {
 		{
 			"no-hint",
 			[]string{"patch", "1.2.3", "--no-hint"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, noHint: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{NoHint: true}},
 		},
 		{
 			"quiet-short",
 			[]string{"patch", "1.2.3", "-q"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, quiet: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Quiet: true}},
 		},
 		{
 			"quiet-long",
 			[]string{"patch", "1.2.3", "--quiet"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, quiet: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Quiet: true}},
 		},
 		{
 			"quiet-all-short",
 			[]string{"patch", "1.2.3", "-qq"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, quietAll: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{QuietAll: true}},
 		},
 		{
 			"quiet-all-long",
 			[]string{"patch", "1.2.3", "--quiet-all"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, quietAll: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{QuietAll: true}},
 		},
 		{
 			"compare-with-quiet",
 			[]string{"compare", "eq", "1.2.3", "1.2.3", "-qq"},
-			cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}, quietAll: true},
+			cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}, output: outputOpts{QuietAll: true}},
 		},
 		{
 			"get-with-quiet",
 			[]string{"get", "VERSION", "-q"},
-			cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}, quiet: true},
+			cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}, output: outputOpts{Quiet: true}},
 		},
 		{
 			"q-and-qq-coexist",
 			[]string{"patch", "1.2.3", "-q", "-qq"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, quiet: true, quietAll: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Quiet: true, QuietAll: true}},
 		},
 		{
 			"no-hint-and-quiet-coexist",
 			[]string{"patch", "1.2.3", "--no-hint", "-q"},
-			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, noHint: true, quiet: true},
+			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{NoHint: true, Quiet: true}},
 		},
 	}
 	for _, tc := range cases {

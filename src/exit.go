@@ -39,3 +39,14 @@ const (
 	// in a future PR. Defined here so the constant lives in one place.
 	exitCodeNonFastForward = 5
 )
+
+// exitErr carries an explicit exit code through the call stack so we
+// can distinguish "compare predicate is false" (exit 1) from "an error
+// occurred" (exit 2). Plain errors propagate as exit 2 in main.
+type exitErr struct {
+	code int
+	msg  string
+}
+
+func (e *exitErr) Error() string { return e.msg }
+func (e *exitErr) ExitCode() int { return e.code }

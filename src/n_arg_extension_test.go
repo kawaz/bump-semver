@@ -271,3 +271,124 @@ func TestRun_Compare_NOthers_BorrowFromF1_Git(t *testing.T) {
 		}
 	})
 }
+
+// --- follow-up #35: name mismatch on get → exit 1 + source listing ---------
+
+// `get` with two FILE inputs whose `name` fields disagree must behave
+// the same as a `version mismatch`: exit 1, stderr lists every source
+// + name value, stdout empty. Bump verbs (patch/minor/major) keep their
+// existing exit-2 behavior (see TestRun_MultiFile_NameMismatch in
+// main_test.go) because writing back inconsistent inputs is destructive.
+func TestRun_Get_NameMismatch_Exit1AndStderr(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	if err := os.WriteFile(a, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`{"name":"bar","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"get", a, b}, bytes.NewReader(nil), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected name mismatch error")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) {
+		t.Fatalf("expected *exitErr, got %T: %v", err, err)
+	}
+	if ee.code != exitCodeFalse {
+		t.Errorf("get name mismatch exit code = %d, want %d (follow-up #35: peer-equality)", ee.code, exitCodeFalse)
+	}
+	s := stderr.String()
+	if !strings.Contains(s, "name mismatch:") {
+		t.Errorf("stderr missing 'name mismatch:' header: %q", s)
+	}
+	if !strings.Contains(s, "foo") || !strings.Contains(s, "bar") {
+		t.Errorf("stderr should list both name values, got: %q", s)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout must be empty on mismatch, got: %q", stdout.String())
+	}
+}
+
+// -qq on get name mismatch suppresses the per-source stderr listing
+// (consistent with the "-qq suppresses diagnostics" contract and the
+// existing version-mismatch behavior).
+func TestRun_Get_NameMismatch_QuietAllSuppressesStderr(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	if err := os.WriteFile(a, []byte(`{"name":"foo","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte(`{"name":"bar","version":"1.2.3"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"get", a, b, "-qq"}, bytes.NewReader(nil), &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected name mismatch error")
+	}
+	var ee *exitErr
+	if !errors.As(err, &ee) || ee.code != exitCodeFalse {
+		t.Errorf("expected exit %d, got: %v", exitCodeFalse, err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("-qq must suppress name-mismatch stderr, got: %q", stderr.String())
+	}
+}
+
+// --- follow-up #35: peer-expand stderr labels are file-specific ------------
+
+// When `vcs:HEAD` peer-expands across multiple sibling FILE paths and
+// the snapshots disagree, the stderr `version mismatch:` listing must
+// label each expanded source with its borrowed in-file path so users
+// can tell them apart — `vcs:HEAD:VERSION` and `vcs:HEAD:b.json`, not
+// two indistinguishable `vcs:HEAD` lines.
+func TestRun_Get_PeerExpand_StderrLabelsAreFileSpecific_Git(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.2.3")
+	withCwd(t, dir, func() {
+		// Commit b.json at 1.2.3, then mutate working-tree b.json to 9.9.9.
+		// VERSION (working) = 1.2.3, b.json (working) = 9.9.9.
+		// vcs:HEAD peer-expands to vcs:HEAD:VERSION (1.2.3) and
+		// vcs:HEAD:b.json (1.2.3). The mismatch (9.9.9) drives the
+		// stderr listing.
+		b := filepath.Join(dir, "b.json")
+		if err := os.WriteFile(b, []byte(`{"version":"1.2.3"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runIn(t, dir, "git", "add", "b.json")
+		runIn(t, dir, "git", "commit", "-qm", "add b.json")
+		if err := os.WriteFile(b, []byte(`{"version":"9.9.9"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		var stdout, stderr bytes.Buffer
+		err := run([]string{"get", "VERSION", "b.json", "vcs:HEAD"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if err == nil {
+			t.Fatal("expected mismatch (working b.json=9.9.9 vs HEAD/VERSION=1.2.3)")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeFalse {
+			t.Errorf("expected exit %d, got: %v", exitCodeFalse, err)
+		}
+		s := stderr.String()
+		// Both peer-expanded vcs sources must appear with their
+		// borrowed in-file path appended, so they're distinguishable
+		// from each other in the column-aligned listing.
+		if !strings.Contains(s, "vcs:HEAD:VERSION") {
+			t.Errorf("stderr should label the VERSION-borrowed peer as 'vcs:HEAD:VERSION', got: %q", s)
+		}
+		if !strings.Contains(s, "vcs:HEAD:b.json") {
+			t.Errorf("stderr should label the b.json-borrowed peer as 'vcs:HEAD:b.json', got: %q", s)
+		}
+	})
+}

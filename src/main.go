@@ -125,7 +125,7 @@ type vcsDiffOpts struct {
 // "all" mode, -a's unstaged-grab is intentionally absent).
 //
 // Message is *string so "no -m given" (nil) is distinguishable from
-// "-m '' given" (non-nil &""); the parser rejects bare -m but
+// "-m empty" (non-nil pointer to ""); the parser rejects bare -m but
 // runVcsCmdCommit needs the distinction for the --amend "keep
 // existing message" path (noEdit = amend && Message == nil).
 type vcsCommitOpts struct {
@@ -1778,10 +1778,14 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // already validated in parseArgs
-	// peerExpand=true: bump/get want N-arg cross-source equality
+	// PeerExpand=true: bump/get want N-arg cross-source equality
 	// across all sibling FILE paths when a file-omitted vcs:REV is
-	// present (DR-0023). Compare uses peerExpand=false.
-	resolved, err := resolveInputs(args.inputs, stdin, args.write, vcsOverride, true)
+	// present (DR-0023). Compare uses PeerExpand=false.
+	resolved, err := resolveInputs(args.inputs, stdin, resolveInputsOpts{
+		Write:      args.write,
+		VCSKind:    vcsOverride,
+		PeerExpand: true,
+	})
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}
@@ -1986,7 +1990,30 @@ func countFileInputs(resolved []resolvedInput) int {
 //
 // When every vcs: input omits FILE *and* there's no real FILE-origin,
 // we error out — there's nothing to borrow from.
-func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcsKind, peerExpand bool) ([]resolvedInput, error) {
+// resolveInputsOpts packs the three behaviour flags that customise
+// resolveInputs. Previously these were three positional bool /
+// enum-after-bool arguments (`write, vcsOverride, peerExpand`) — easy
+// to swap at the call site without the compiler noticing. Keyed
+// struct construction at the two callers (runBump / runCompare) makes
+// each flag's role obvious.
+type resolveInputsOpts struct {
+	// Write toggles the "--write requested" assertion: when true, the
+	// stdin-pipe shortcut errors out (writing into a pipe is undefined).
+	Write bool
+	// VCSKind is the parsed --vcs override (vcsAuto when absent). The
+	// VCS itself is detected lazily — only when at least one input is
+	// `vcs:` — so non-vcs invocations don't error out in environments
+	// without a `.jj` / `.git` directory.
+	VCSKind vcsKind
+	// PeerExpand controls the file-omitted `vcs:REV` borrow shape
+	// (DR-0023):
+	//   - false (compare): borrow the *first* FILE-providing sibling
+	//   - true  (bump/get): expand to one resolved entry per distinct
+	//     sibling FILE path
+	PeerExpand bool
+}
+
+func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]resolvedInput, error) {
 	// Pre-classify each input. We need three buckets:
 	//   - "raw" (VER, `-`, or `vcs:`): contributes to <argv:N> indexing
 	//   - "file": exists on disk
@@ -2049,7 +2076,7 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 	// from stdin and treat the path as a name hint. vcs: inputs are
 	// not eligible for this shortcut.
 	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && isStdinPipe(stdin) {
-		if write {
+		if opts.Write {
 			return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
 		}
 		if pathHasAnyRule(inputs[0]) {
@@ -2066,7 +2093,7 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 	// `vcs:` syntax, even though they're valid bump-semver targets.
 	var backend vcsBackend
 	if hasVcs {
-		b, err := newVcsBackend(vcsOverride)
+		b, err := newVcsBackend(opts.VCSKind)
 		if err != nil {
 			return nil, err
 		}
@@ -2098,7 +2125,7 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 		//     file. Compare's F1 (= leftmost) is the comparison
 		//     base, so OTHERS borrowing F1's path is exactly the
 		//     "is OTHER's snapshot of F1 OP F1?" semantic.
-		if peerExpand && strings.HasPrefix(in, "vcs:") {
+		if opts.PeerExpand && strings.HasPrefix(in, "vcs:") {
 			if rev, file, isFunc, _ := vcsParseSpec(in); !isFunc && file == "" && len(borrowFiles) > 1 {
 				_ = rev
 				for _, bf := range borrowFiles {

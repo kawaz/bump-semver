@@ -42,10 +42,14 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return emitErr(stderr, args, fmt.Errorf("compare requires at least two inputs (BASE OTHERS...), got %d", len(args.inputs)))
 	}
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // already validated in parseArgs
-	// peerExpand=false: compare's borrow has always been "use F1's
+	// PeerExpand=false: compare's borrow has always been "use F1's
 	// path", and that's exactly what DR-0023 requires for N OTHERS
 	// too — every file-omitted `vcs:REV` OTHER borrows F1's path.
-	resolved, err := resolveInputs(args.inputs, stdin, false, vcsOverride, false)
+	resolved, err := resolveInputs(args.inputs, stdin, resolveInputsOpts{
+		Write:      false,
+		VCSKind:    vcsOverride,
+		PeerExpand: false,
+	})
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}

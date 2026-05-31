@@ -104,7 +104,10 @@ func TestParseArgs_Errors(t *testing.T) {
 		{"compare-with-pre", []string{"compare", "eq", "1.2.3", "1.2.3", "--pre", "rc.0"}},
 		{"compare-with-build-meta", []string{"compare", "eq", "1.2.3", "1.2.3", "--build-metadata", "sha"}},
 		{"compare-too-few", []string{"compare", "eq", "1.2.3"}},
-		{"compare-too-many", []string{"compare", "eq", "1.2.3", "1.2.3", "1.2.4"}},
+		// DR-0023: `compare OP F1 OTHERS...` accepts N>=1 OTHERS, so
+		// `compare eq A B C` is no longer an arity error (it's the N=2
+		// case). The legacy "too many" test row is intentionally
+		// removed.
 		{"compare-no-op", []string{"compare"}},
 		{"compare-bad-op", []string{"compare", "neq", "1.2.3", "1.2.3"}},
 		// DR-0017: precision suffix validation
@@ -1217,9 +1220,14 @@ func TestRun_Compare_QuietAllSuppressesError(t *testing.T) {
 	}
 }
 
-// Predicate-false compare keeps exit-1 behavior (no stderr regardless).
-func TestRun_Compare_QuietFlagsNoOpForPredicateFalse(t *testing.T) {
+// DR-0023: predicate-false compare emits a per-OTHER failure listing
+// on stderr (so users see *why* a multi-OTHER assertion failed). The
+// listing is preserved under -q (only DR-0010 hints are quiet there)
+// and suppressed under -qq (consistent with quiet-all suppressing
+// every diagnostic).
+func TestRun_Compare_PredicateFalse_StderrUnderQuiet(t *testing.T) {
 	t.Parallel()
+	// -q: per-OTHER listing still appears.
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"compare", "eq", "1.2.3", "1.2.4", "-q"}, bytes.NewReader(nil), &stdout, &stderr)
 	if err == nil {
@@ -1232,9 +1240,11 @@ func TestRun_Compare_QuietFlagsNoOpForPredicateFalse(t *testing.T) {
 	if ee.code != 1 {
 		t.Errorf("exit code = %d, want 1", ee.code)
 	}
-	if stderr.Len() != 0 || stdout.Len() != 0 {
-		t.Errorf("compare predicate-false should be silent, got stdout=%q stderr=%q",
-			stdout.String(), stderr.String())
+	if stdout.Len() != 0 {
+		t.Errorf("compare stdout must be empty, got: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "compare eq") || !strings.Contains(stderr.String(), "not equal to") {
+		t.Errorf("-q must preserve per-OTHER stderr, got: %q", stderr.String())
 	}
 }
 

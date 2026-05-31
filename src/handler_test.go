@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -404,15 +405,20 @@ func TestResolveRule_PbxprojMismatchSurfaces(t *testing.T) {
 	dir := tempWriteFiles(t, map[string]string{
 		"project.pbxproj": "MARKETING_VERSION = 1.2.3;\nMARKETING_VERSION = 1.2.4;\n",
 	})
-	err := tryRun("get", dir+"/project.pbxproj")
+	// DR-0023: get mismatch returns exit 1 with the diagnostic on
+	// stderr (not via err.Error()). Capture stderr to assert on the
+	// formatter output.
+	var stderr bytes.Buffer
+	err := run([]string{"get", dir + "/project.pbxproj"},
+		bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
 	if err == nil {
 		t.Fatal("expected version mismatch error, got nil")
 	}
-	if !strings.Contains(err.Error(), "version mismatch:") {
-		t.Errorf("error does not mention 'version mismatch:': %v", err)
+	if !strings.Contains(stderr.String(), "version mismatch:") {
+		t.Errorf("stderr does not mention 'version mismatch:': %q", stderr.String())
 	}
-	if !strings.Contains(err.Error(), "line:") {
-		t.Errorf("mismatch labels missing 'line:' annotation: %v", err)
+	if !strings.Contains(stderr.String(), "line:") {
+		t.Errorf("mismatch labels missing 'line:' annotation: %q", stderr.String())
 	}
 }
 

@@ -650,8 +650,10 @@ func parseArgs(argv []string) (cliArgs, error) {
 		if out.json {
 			return cliArgs{}, fmt.Errorf("compare does not support --json")
 		}
-		if len(out.inputs) != 2 {
-			return cliArgs{}, fmt.Errorf("compare requires exactly two inputs, got %d", len(out.inputs))
+		// DR-0023: compare accepts F1 + N OTHERS (N>=1). The legacy
+		// 2-input form (`compare OP F1 F2`) is the N=1 case.
+		if len(out.inputs) < 2 {
+			return cliArgs{}, fmt.Errorf("compare requires at least two inputs (BASE OTHERS...), got %d", len(out.inputs))
 		}
 		return out, nil
 	}
@@ -1736,7 +1738,10 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	vcsOverride, _ := parseVcsOverride(args.vcs) // already validated in parseArgs
-	resolved, err := resolveInputs(args.inputs, stdin, args.write, vcsOverride)
+	// peerExpand=true: bump/get want N-arg cross-source equality
+	// across all sibling FILE paths when a file-omitted vcs:REV is
+	// present (DR-0023). Compare uses peerExpand=false.
+	resolved, err := resolveInputs(args.inputs, stdin, args.write, vcsOverride, true)
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}
@@ -1769,6 +1774,20 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 	cur, ok := allSameValue(allVersions)
 	if !ok {
+		// DR-0023: get treats all sources as equal peers. A
+		// disagreement is a predicate-false outcome (exit 1) with the
+		// per-source listing on stderr — mirroring compare's
+		// false-with-diagnostic shape rather than the bump-time
+		// "internal data is wrong, refuse to act" exit 2. Genuine
+		// bump actions (major/minor/patch/pre) still flow through
+		// emitErr (exit 2) because inconsistent inputs there are an
+		// error condition, not a queryable result.
+		if args.action == "get" {
+			if !args.quietAll {
+				fmt.Fprintln(stderr, formatMismatchError("version", allVersions).Error())
+			}
+			return &exitErr{code: exitCodeFalse}
+		}
 		return emitErr(stderr, args, formatMismatchError("version", allVersions))
 	}
 
@@ -1904,19 +1923,27 @@ func countFileInputs(resolved []resolvedInput) int {
 // `vcs:` — so non-vcs invocations don't error out in environments
 // without a `.jj` / `.git` directory.
 //
-// File-borrowing for `vcs:REV` (no explicit FILE) takes the first
-// FILE-providing argument in **position order** (left-to-right). The
-// borrow source can be either:
+// File-borrowing for `vcs:REV` (no explicit FILE) has two modes
+// (DR-0023):
+//
+//   - peerExpand=false (compare): each file-omitted `vcs:REV`
+//     borrows the **first** FILE-providing sibling. Used by compare
+//     because its semantic is "F1 (base) vs each OTHER" — F1 always
+//     wins as the borrow source by construction.
+//
+//   - peerExpand=true (bump/get): each file-omitted `vcs:REV`
+//     expands to one resolved input per **distinct** sibling FILE
+//     path. This lets `get a b vcs:main` mean "compare a, b, and
+//     both files at main" with no shell loop.
+//
+// Borrow-source candidates (in both modes) are:
 //
 //   - a real FILE-origin input (`Cargo.toml`)
 //   - another `vcs:REV:FILE` input that names its file explicitly
 //
-// "Position order" was chosen over "highest-confidence parse" because
-// it's predictable from the user's perspective: the file that comes
-// first in the argv wins. When every vcs: input omits FILE *and*
-// there's no real FILE-origin, we error out — there's nothing to
-// borrow from.
-func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcsKind) ([]resolvedInput, error) {
+// When every vcs: input omits FILE *and* there's no real FILE-origin,
+// we error out — there's nothing to borrow from.
+func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcsKind, peerExpand bool) ([]resolvedInput, error) {
 	// Pre-classify each input. We need three buckets:
 	//   - "raw" (VER, `-`, or `vcs:`): contributes to <argv:N> indexing
 	//   - "file": exists on disk
@@ -1924,13 +1951,31 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 	// "raw" subsumes vcs because vcs: is not a path on disk; a `vcs:`
 	// arg should not be counted as a writable FILE either.
 	//
-	// The borrow target (fileForBorrow) is "first file-providing arg
-	// in position order". A `vcs:REV:FILE` qualifies because its FILE
-	// is unambiguous; a `vcs:REV` (no file) does not.
+	// The borrow target is "file-providing arg(s) in position order".
+	// A `vcs:REV:FILE` qualifies because its FILE is unambiguous; a
+	// `vcs:REV` (no file) does not.
+	//
+	// Two borrow-set representations are maintained because compare
+	// (peerExpand=false) uses only the *first* file (fileForBorrow),
+	// while bump/get (peerExpand=true) expands a file-omitted vcs:
+	// to one resolved entry per *distinct* sibling FILE path
+	// (borrowFiles).
 	isRaw := make([]bool, len(inputs))
 	rawCount := 0
 	hasVcs := false
 	var fileForBorrow string // first FILE-providing input, if any
+	var borrowFiles []string // every distinct FILE path, in position order
+	seenBorrow := make(map[string]bool)
+	addBorrow := func(file string) {
+		if file == "" || seenBorrow[file] {
+			return
+		}
+		seenBorrow[file] = true
+		borrowFiles = append(borrowFiles, file)
+		if fileForBorrow == "" {
+			fileForBorrow = file
+		}
+	}
 	for i, in := range inputs {
 		if in == "-" {
 			isRaw[i] = true
@@ -1944,16 +1989,12 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 			// `vcs:REV:FILE` (file-explicit) qualifies as a borrow
 			// source for downstream `vcs:REV` (file-omitted) args.
 			if _, file, isFunc, _ := vcsParseSpec(in); !isFunc && file != "" {
-				if fileForBorrow == "" {
-					fileForBorrow = file
-				}
+				addBorrow(file)
 			}
 			continue
 		}
 		if fi, err := os.Stat(in); err == nil && !fi.IsDir() {
-			if fileForBorrow == "" {
-				fileForBorrow = in
-			}
+			addBorrow(in)
 			continue // exists as a file
 		}
 		isRaw[i] = true
@@ -1999,9 +2040,34 @@ func resolveInputs(inputs []string, stdin io.Reader, write bool, vcsOverride vcs
 			argIdx = rawIdx
 		}
 		// vcs: rev-mode specs without a FILE component borrow the
-		// path from the first FILE-origin sibling. We pass the
-		// borrow source unconditionally; resolveVcsInput uses it
-		// only when the spec actually omits the file part.
+		// path from FILE-origin sibling(s). The expansion shape
+		// depends on peerExpand:
+		//
+		//   - peerExpand=true (bump/get): if the spec is a
+		//     file-omitted `vcs:REV` AND there are 2+ borrow files,
+		//     expand to one resolved entry per borrow file. This
+		//     turns `get a b vcs:main` into {a, b, vcs:main:a,
+		//     vcs:main:b}, the cross-source equality check users
+		//     want when comparing the working tree against a
+		//     historical snapshot for several files at once.
+		//
+		//   - peerExpand=false (compare): always borrow the *first*
+		//     file. Compare's F1 (= leftmost) is the comparison
+		//     base, so OTHERS borrowing F1's path is exactly the
+		//     "is OTHER's snapshot of F1 OP F1?" semantic.
+		if peerExpand && strings.HasPrefix(in, "vcs:") {
+			if rev, file, isFunc, _ := vcsParseSpec(in); !isFunc && file == "" && len(borrowFiles) > 1 {
+				_ = rev
+				for _, bf := range borrowFiles {
+					ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, backend, bf)
+					if err != nil {
+						return nil, err
+					}
+					out = append(out, ri)
+				}
+				continue
+			}
+		}
 		ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, backend, fileForBorrow)
 		if err != nil {
 			return nil, err

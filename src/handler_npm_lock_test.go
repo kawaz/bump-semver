@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -132,9 +133,17 @@ func TestRun_PackageJsonAndLock_VersionMismatch(t *testing.T) {
 }
 `
 	dir := tempWriteFiles(t, map[string]string{"package.json": pkg, "package-lock.json": lock})
-	err := tryRun("get", dir+"/package.json", dir+"/package-lock.json")
-	if err == nil || !strings.HasPrefix(err.Error(), "version mismatch:") {
-		t.Errorf("expected version mismatch, got: %v", err)
+	// DR-0023: get mismatch is exit 1 (predicate-false) with the
+	// per-source listing on stderr — the returned err carries the
+	// exit code, not the message text.
+	var stderr bytes.Buffer
+	err := run([]string{"get", dir + "/package.json", dir + "/package-lock.json"},
+		bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected version mismatch")
+	}
+	if !strings.HasPrefix(stderr.String(), "version mismatch:") {
+		t.Errorf("expected 'version mismatch:' on stderr, got: %q", stderr.String())
 	}
 }
 

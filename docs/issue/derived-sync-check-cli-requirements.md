@@ -535,11 +535,35 @@ vcs sync-check 'glob:{FROM1,FROM2}' TO[..]
 
 ### 10.8 subcommand path の議論
 
-- `vcs sync-check` (= VCS subverb、kawaz 例で使われた)
-- `bump-semver pair check` (= pair 配下)
-- `bump-semver derived check` (= derived 配下)
+#### 名前候補と各 trade-off
 
-VCS と直交 (= ファイル鮮度 check は VCS 機能じゃない) なので `vcs` 配下が適切かは spec 確定時に判断。
+| 候補 path | 想起される責務 | 良い点 | 弱い点 |
+|---|---|---|---|
+| `vcs sync-check` | VCS subverb、kawaz の最初の例 | 既存 vcs 配下と凝集 (= 鮮度比較が VCS 経由ならまとまる) | 「派生鮮度 check は VCS 機能か?」が直交。VCS と独立した派生関係 (= manifest / metadata 経路) を扱うと violate |
+| `pair check` (+ pair list 等) | source ↔ derived の **ペア関係**の操作 | 1.6 双方向 mapping 等の発展余地、「ペア」概念で正本 / 派生の両 view を扱える | 翻訳ペア由来の名残が見え、汎化視点 (= bundle / generated) で違和感。「ペアの check」が何の check かは別途修飾要 |
+| `derived check` (+ derived list 等) | derived ファイル群を主役にした operation | 「derived が古い」が直感的に出る、source は補助 | source 軸の操作 (= 「この source の派生群を列挙」) が逆向きで書きづらい |
+| `outdated` | 鮮度遅れ報告 verb | 1 verb で意図完結、make の `outdated` 慣習に乗れる | check / fix / list 等の verb 細分化を 1 階に並べる必要、subcommand 増 |
+| `freshness check / freshness report` | 鮮度概念を name に出す | "freshness" は鮮度 / staleness 文脈で広く通る、ドメイン用語明確 | やや形容詞名詞、`check` `report` の verb をぶら下げる |
+| `sync-status` | 同期状態の subcommand | git の `status` 連想、状態確認 verb として安定 | "sync" がやや曖昧 (= file sync / data sync 等他語と衝突) |
+| `staleness` / `stale` | 古さに焦点 | 直接的、英語として自然 | report mode に寄り過ぎ、auto-create / scaffold 等の発展は外れる |
+| `lag check` | 遅れ check | 短く読み手の負荷低い | カジュアル感、長期 spec で persona 不一致の可能性 |
+
+#### kawaz フィードバック (2026-06-02)
+
+> `sync-check` 微妙にしっくり来てないんだよな
+
+→ 名前確定は保留。上記候補から spec 確定時に選定。判断材料:
+- **派生関係の汎用性**を打ち出すなら `pair` / `derived` / `sync` 系のいずれか
+- **鮮度比較の機構を主役**にするなら `freshness` / `outdated` / `staleness` 系
+- VCS 機能との独立性 (= 派生関係は manifest / metadata 経路もある) を明示するなら、
+  少なくとも `vcs` 配下は避ける
+
+#### 副次論点
+
+- `check` (= boolean 判定 verb) と `report` (= 状態列挙 verb) を分けるか (= 案 H 参照)
+  → name 自体に check/report が含まれるかで設計差
+- top-level subcommand か 2 階層 subcommand か (= `bump-semver derived check` vs
+  `bump-semver derived-check`) は CLI 設計の好み (kawaz は子・孫 subcommand 容認)
 
 ### 10.9 Phase 分離
 

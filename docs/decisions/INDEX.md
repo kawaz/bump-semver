@@ -28,6 +28,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0023](./DR-0023-n-arg-extension.md) — `get` / `compare` の N 引数化 + `vcs:` borrowing の N 個展開 (verb 別責務分離: get 対等ピア / compare F1 基準)
 - [DR-0024](./DR-0024-glob-prefix.md) — `glob:<pattern>` 入力モード (タスクランナー多段引数渡しでの shell glob ブレ吸収。`*` / `**` / `[]` / `{}` / `~` + `--glob-*` 三種フラグ + no-match silent-skip)
 - [DR-0025](./DR-0025-auto-advance-description-check.md) — `--jj-bookmark-auto-advance` の description 必須 check (dirty branch で undescribed @ を target にする push reject ループを早期 fail + `jj describe` hint で抑止、判定は jj template engine 経由)
+- [DR-0026](./DR-0026-auto-advance-delegate-to-jj.md) — `autoAdvanceBookmark` を jj 公式 `jj bookmark advance` (jj 0.39+) に委譲。existence/ancestor/at-target chain ~50 行を削除、clean 時の at-@ short-circuit と DR-0025 description check のみ外側に残す
 
 ## Archived
 

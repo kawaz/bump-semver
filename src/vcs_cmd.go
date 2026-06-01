@@ -233,12 +233,31 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 			fmt.Errorf("vcs diff requires a REV (usage: vcs diff REV [PATH..])"))
 	}
 	rev := args.vcsArgs[0]
-	paths := args.vcsArgs[1:]
+	rawPaths := args.vcsArgs[1:]
+
+	// DR-0024: expand `glob:` selectors. selectorsGiven=true means the user
+	// supplied at least one path selector (literal or glob:); if the
+	// expansion collapses to an empty list we MUST short-circuit instead
+	// of calling b.Diff(rev, []) — the latter widens to "diff everything"
+	// (see gitBackend.Diff comment), violating the existing declarative-
+	// convergence rule that "selectors given but all-nonexistent → diff
+	// nothing".
+	paths, err := expandGlobInputs(rawPaths, args.glob)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	selectorsGiven := len(rawPaths) > 0
 
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
+	}
+
+	// Selectors given but expansion empty → short-circuit to "no diff".
+	// Both predicate and display modes return cleanly (exit 0, no stdout).
+	if selectorsGiven && len(paths) == 0 {
+		return nil
 	}
 
 	// -q (and -qq) trigger the predicate-only path: derive presence from
@@ -364,9 +383,25 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs commit: nothing to commit (%s)", hint))
 	}
+	// DR-0024: expand `glob:` selectors in PATH.. before dispatching to
+	// the backend. selectorsGiven=true means the user supplied at least
+	// one positional selector; if expansion is empty we short-circuit to
+	// "no-op success" — mirrors the existing all-nonexistent path
+	// behavior in gitBackend.Commit / jjBackend.Commit, plus avoids the
+	// "expanded paths means commit nothing was intended" case slipping
+	// into a different mode.
+	paths, err := expandGlobInputs(args.vcsArgs, args.glob)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	selectorsGiven := len(args.vcsArgs) > 0
+	if selectorsGiven && len(paths) == 0 && !args.vcsCommit.Staged && !args.vcsCommit.Amend {
+		// Path selectors collapsed to empty AND no other mode: no-op success.
+		return nil
+	}
 	// Step 6: dispatch.
 	opts := commitOpts{
-		paths:   args.vcsArgs,
+		paths:   paths,
 		message: derefOr(args.vcsCommit.Message, ""),
 		staged:  args.vcsCommit.Staged,
 		amend:   args.vcsCommit.Amend,

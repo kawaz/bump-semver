@@ -199,10 +199,74 @@ type cliArgs struct {
 	vcsCommit vcsCommitOpts
 	vcsPush   vcsPushOpts
 	vcsTag    vcsTagOpts
+	glob      globOpts
 }
 
 var bumpActions = map[string]bool{
 	"major": true, "minor": true, "patch": true, "pre": true, "get": true,
+}
+
+// parseBoolValue parses the value side of a `--flag=value` glob bool flag.
+// Accepts "true"/"false" (lowercase only — matches kawaz CLI norms; the
+// flag spec is exact, no permissive parsing). DR-0024.
+func parseBoolValue(flag, value string) (bool, error) {
+	switch value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s requires true or false, got %q", flag, value)
+	}
+}
+
+// parseGlobFlag dispatches a single `--glob-*` flag from the verb-shared
+// flag loop. Returns (matched, consumedNext, err): matched=false means the
+// caller should fall through to other branches.
+//
+// Design rationale: the `--glob-dotfile` / `--glob-gitignored` flags require
+// an explicit `true|false` value (no space form, only `--flag=value`). This
+// is a deliberate deviation from every other value-taking flag in this
+// codebase (which accept both space and `=` forms). The reason is that
+// "include dotfiles" / "exclude dotfiles" is exactly the kind of polarity
+// that single-flag toggles get wrong — see DR-0024 for the full rationale.
+// `--glob-ignorecase` is the third in the family and accepts optional value
+// (bare = true) because the verb name itself carries the polarity.
+func parseGlobFlag(a string, out *cliArgs) (matched bool, err error) {
+	switch {
+	case a == "--glob-dotfile":
+		return true, fmt.Errorf("--glob-dotfile requires =true or =false (e.g. --glob-dotfile=false)")
+	case strings.HasPrefix(a, "--glob-dotfile="):
+		v, perr := parseBoolValue("--glob-dotfile", strings.TrimPrefix(a, "--glob-dotfile="))
+		if perr != nil {
+			return true, perr
+		}
+		out.glob.Dotfile = v
+		return true, nil
+	case a == "--glob-gitignored":
+		return true, fmt.Errorf("--glob-gitignored requires =true or =false (e.g. --glob-gitignored=true)")
+	case strings.HasPrefix(a, "--glob-gitignored="):
+		v, perr := parseBoolValue("--glob-gitignored", strings.TrimPrefix(a, "--glob-gitignored="))
+		if perr != nil {
+			return true, perr
+		}
+		out.glob.Gitignored = ptr(v)
+		return true, nil
+	case a == "--glob-ignorecase":
+		// Bare form = true (= "turn it on"). The verb name's polarity
+		// removes the dotfile/gitignored ambiguity (= "ignore case" is
+		// itself a directional verb).
+		out.glob.IgnoreCase = true
+		return true, nil
+	case strings.HasPrefix(a, "--glob-ignorecase="):
+		v, perr := parseBoolValue("--glob-ignorecase", strings.TrimPrefix(a, "--glob-ignorecase="))
+		if perr != nil {
+			return true, perr
+		}
+		out.glob.IgnoreCase = v
+		return true, nil
+	}
+	return false, nil
 }
 
 var compareOps = map[string]bool{
@@ -582,6 +646,19 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			out.output.JSON = true
 		case a == "--no-hint":
 			out.output.Verbosity.raise(outputNoHint)
+		case strings.HasPrefix(a, "--glob-") && (out.vcsVerb == "diff" || out.vcsVerb == "commit"):
+			// DR-0024: --glob-* family is verb-local to diff/commit (the
+			// two vcs verbs that accept glob: selectors). Routed
+			// verb-aware so unrelated verbs (get/is/fetch/push/tag) reject
+			// the flag rather than silently accepting it.
+			matched, ferr := parseGlobFlag(a, &out)
+			if ferr != nil {
+				return cliArgs{}, ferr
+			}
+			if !matched {
+				verbLabel := out.vcsVerb
+				return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", verbLabel, a)
+			}
 		case a == "--":
 			out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
 			i = len(rest)
@@ -789,6 +866,19 @@ func parseSharedFlags(out cliArgs, rest []string) (cliArgs, error) {
 			// Treat all remaining argv as inputs (lets paths starting with `-` through).
 			out.inputs = append(out.inputs, rest[i+1:]...)
 			i = len(rest)
+		case strings.HasPrefix(a, "--glob-"):
+			// DR-0024: --glob-* family (--glob-dotfile / --glob-gitignored
+			// / --glob-ignorecase). Accepted under bump/compare/get; only
+			// meaningful when at least one input uses the `glob:` prefix
+			// but the flags are silently accepted regardless (parser
+			// stays uniform; the dispatcher reads them only when needed).
+			matched, ferr := parseGlobFlag(a, &out)
+			if ferr != nil {
+				return cliArgs{}, ferr
+			}
+			if !matched {
+				return cliArgs{}, fmt.Errorf("unknown option: %s", a)
+			}
 		case strings.HasPrefix(a, "-") && a != "-":
 			return cliArgs{}, fmt.Errorf("unknown option: %s", a)
 		default:

@@ -1,0 +1,232 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	doublestar "github.com/bmatcuk/doublestar/v4"
+	ignore "github.com/sabhiram/go-gitignore"
+)
+
+// globOpts groups the verb-shared `--glob-*` flags (DR-0024).
+//
+// Defaults (see DR-0024 for rationale):
+//   - Dotfile:    false (exclude dotfiles)        — required-value flag
+//   - Gitignored: true  (respect .gitignore)      — required-value flag (*bool: nil = default true)
+//   - IgnoreCase: false (case-sensitive)          — optional-value flag (bare flag = true)
+//
+// Dotfile/Gitignored take a required value (`=true`/`=false`) to remove the
+// "what does --glob-dotfile alone mean?" ambiguity. IgnoreCase follows the
+// established convention (bare flag = enable) because the verb name itself
+// carries the polarity.
+type globOpts struct {
+	Dotfile    bool  // --glob-dotfile=true|false (default false; include hidden when true)
+	Gitignored *bool // --glob-gitignored=true|false (default true; *bool so absent != false)
+	IgnoreCase bool  // --glob-ignorecase[=true|false] (default false; bare = true)
+}
+
+// Gitignored returns the resolved gitignored-respect setting (default true).
+func (g globOpts) GitignoredRespect() bool {
+	if g.Gitignored == nil {
+		return true
+	}
+	return *g.Gitignored
+}
+
+// hasGlobPrefix reports whether spec begins with the `glob:` selector prefix.
+func hasGlobPrefix(spec string) bool {
+	return strings.HasPrefix(spec, "glob:")
+}
+
+// parseGlobSpec strips the `glob:` prefix from spec. Empty patterns are
+// rejected — `glob:` with no body is a usage error.
+func parseGlobSpec(spec string) (string, error) {
+	if !hasGlobPrefix(spec) {
+		return "", fmt.Errorf("not a glob: spec: %q", spec)
+	}
+	pat := strings.TrimPrefix(spec, "glob:")
+	if pat == "" {
+		return "", fmt.Errorf("glob: pattern is empty")
+	}
+	return pat, nil
+}
+
+// expandTilde resolves a leading `~` / `~/...` to the user's home directory.
+// `~user/...` is intentionally unsupported (out of MVP scope, DR-0024); the
+// path is passed through unchanged so doublestar treats it as a literal.
+//
+// homeFn is injectable so tests can pin a fake home without HOME env mutation.
+func expandTilde(pat string, homeFn func() (string, error)) (string, error) {
+	if pat == "" || pat[0] != '~' {
+		return pat, nil
+	}
+	// `~user/...` form: not supported, pass through.
+	if len(pat) > 1 && pat[1] != '/' && pat[1] != filepath.Separator {
+		return pat, nil
+	}
+	home, err := homeFn()
+	if err != nil {
+		return "", fmt.Errorf("glob: cannot resolve ~ (home directory): %w", err)
+	}
+	if pat == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, pat[2:]), nil
+}
+
+// expandGlob expands a glob pattern (post-`glob:` strip) into a sorted, dedup'd
+// list of relative file paths.
+//
+// Behavior (DR-0024):
+//   - Uses doublestar v4 for `*` / `**` / `[...]` / `{a,b}` semantics.
+//   - `~` / `~/...` expanded via homeFn.
+//   - `--glob-dotfile=false` (default) → dotfile-bearing paths filtered out
+//     via doublestar's WithNoHidden.
+//   - `--glob-gitignored=true` (default) → paths matching .gitignore (if one
+//     exists at the search base) are filtered out. Fidelity: single-file
+//     .gitignore at the base only (no nested .gitignore, no core.excludesfile);
+//     adequate for kawaz's common case (= bump-semver targets sit at the repo
+//     root). See DR-0024 for the fidelity disclosure.
+//   - `--glob-ignorecase=true` → doublestar's WithCaseInsensitive (case
+//     sensitivity also depends on the underlying filesystem).
+//   - Directories are excluded (WithFilesOnly): glob: is a *file* selector.
+//   - No-match → empty slice, no error (silent skip, DR-0020 declarative
+//     convergence parity).
+//
+// Returned paths are filesystem-style (use the OS separator) and are NOT
+// canonicalized — kawaz callers want the same string the user could have
+// typed (so `glob:src/**/*.ts` → `src/a.ts`, not `/abs/.../src/a.ts`).
+func expandGlob(pat string, opts globOpts, homeFn func() (string, error)) ([]string, error) {
+	if pat == "" {
+		return nil, fmt.Errorf("glob: pattern is empty")
+	}
+	expanded, err := expandTilde(pat, homeFn)
+	if err != nil {
+		return nil, err
+	}
+	var dsOpts []doublestar.GlobOption
+	if !opts.Dotfile {
+		dsOpts = append(dsOpts, doublestar.WithNoHidden())
+	}
+	if opts.IgnoreCase {
+		dsOpts = append(dsOpts, doublestar.WithCaseInsensitive())
+	}
+	dsOpts = append(dsOpts, doublestar.WithFilesOnly())
+
+	// FilepathGlob handles absolute and relative patterns by splitting at
+	// the first meta into base + relative pattern, then calling Glob on
+	// os.DirFS(base). For us this means `src/**/*.ts` is searched against
+	// cwd's `src/` subtree, and absolute `~/foo/**` is searched after
+	// tilde-expand.
+	matches, err := doublestar.FilepathGlob(expanded, dsOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("glob:%s: %w", pat, err)
+	}
+	if opts.GitignoredRespect() {
+		matches = filterGitignored(matches, expanded)
+	}
+	// Deterministic order — stabilizes diff/compare output and tests.
+	sort.Strings(matches)
+	return uniqueStrings(matches), nil
+}
+
+// filterGitignored drops entries from matches that match the .gitignore file
+// at the glob base (best-effort fidelity, DR-0024). Failure to read .gitignore
+// is a silent no-op — glob: must continue to work outside a repo.
+func filterGitignored(matches []string, pattern string) []string {
+	if len(matches) == 0 {
+		return matches
+	}
+	base, _ := doublestar.SplitPattern(pattern)
+	if base == "" {
+		base = "."
+	}
+	gitignorePath := filepath.Join(base, ".gitignore")
+	ig, err := ignore.CompileIgnoreFile(gitignorePath)
+	if err != nil || ig == nil {
+		// .gitignore absent / unreadable → don't filter anything. This is
+		// the gracefully-degrades branch for non-repo use.
+		return matches
+	}
+	out := matches[:0]
+	for _, m := range matches {
+		// MatchesPath wants a path relative to the .gitignore file. We
+		// approximate by stripping the leading base/ prefix when present;
+		// matches may also be absolute (when pattern is absolute) — in
+		// that case strip base too.
+		rel := m
+		if strings.HasPrefix(m, base+string(filepath.Separator)) {
+			rel = strings.TrimPrefix(m, base+string(filepath.Separator))
+		}
+		if ig.MatchesPath(rel) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// uniqueStrings returns ss with consecutive duplicates removed. Caller must
+// pre-sort to make this an actual dedup (we do, in expandGlob).
+func uniqueStrings(ss []string) []string {
+	if len(ss) < 2 {
+		return ss
+	}
+	out := ss[:1]
+	for _, s := range ss[1:] {
+		if s != out[len(out)-1] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// defaultHomeFn is the default home directory lookup used by expandGlob in
+// production paths (tests substitute their own).
+func defaultHomeFn() (string, error) {
+	return os.UserHomeDir()
+}
+
+// anyGlob reports whether any item in inputs uses the `glob:` selector.
+func anyGlob(inputs []string) bool {
+	for _, in := range inputs {
+		if hasGlobPrefix(in) {
+			return true
+		}
+	}
+	return false
+}
+
+// expandGlobInputs walks inputs and expands each `glob:<pat>` selector into
+// the list of matched paths. Non-glob inputs pass through unchanged. The
+// resulting slice preserves position order (matches from each glob:
+// selector are spliced in at the glob: selector's position).
+//
+// A 0-match glob: selector contributes nothing to the output (silent skip).
+// This means a sole `bump-semver get glob:none.txt` ends up with 0 inputs;
+// the downstream "at least one input is required" check then surfaces as
+// the same exit-2 error the user would get from a literal missing FILE
+// list. That's the right level — the parser stays uniform, the dispatcher
+// owns the "did you give me anything?" assertion.
+func expandGlobInputs(inputs []string, opts globOpts) ([]string, error) {
+	out := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		if !hasGlobPrefix(in) {
+			out = append(out, in)
+			continue
+		}
+		pat, err := parseGlobSpec(in)
+		if err != nil {
+			return nil, err
+		}
+		matches, err := expandGlob(pat, opts, defaultHomeFn)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, matches...)
+	}
+	return out, nil
+}

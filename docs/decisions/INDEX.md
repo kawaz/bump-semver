@@ -26,6 +26,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0021](./DR-0021-cargo-workspace-package-version.md) — Cargo workspace の `[workspace.package].version` 対応 (`[package]` → `[workspace.package]` の OR フォールバック)。DR-0002 を supersede
 - [DR-0022](./DR-0022-justfile-re-adoption.md) — Justfile 回帰 (Taskfile.pkl + pkfire → Justfile + `bump-semver vcs` ドッグフード)。Taskfile.pkl は翻訳 check の shim としてのみ残存
 - [DR-0023](./DR-0023-n-arg-extension.md) — `get` / `compare` の N 引数化 + `vcs:` borrowing の N 個展開 (verb 別責務分離: get 対等ピア / compare F1 基準)
+- [DR-0024](./DR-0024-glob-prefix.md) — `glob:<pattern>` 入力モード (タスクランナー多段引数渡しでの shell glob ブレ吸収。`*` / `**` / `[]` / `{}` / `~` + `--glob-*` 三種フラグ + no-match silent-skip)
 
 ## Archived
 

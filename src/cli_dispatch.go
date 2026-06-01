@@ -161,9 +161,19 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		Write:      args.write,
 		VCSKind:    vcsOverride,
 		PeerExpand: true,
+		Glob:       args.glob,
 	})
 	if err != nil {
 		return emitErr(stderr, args, err)
+	}
+
+	// DR-0024: if every input was a `glob:` selector and all of them
+	// collapsed to 0 matches, resolved is empty here. Surface that as an
+	// exit-2 usage error (the parser-side "at least one input" gate sees
+	// the literal `glob:...` strings and accepts them; the actual file
+	// expansion happens inside resolveInputs).
+	if len(resolved) == 0 {
+		return emitErr(stderr, args, fmt.Errorf("no inputs after glob expansion (all glob: selectors matched 0 files)"))
 	}
 
 	// DR-0010: warn the user about confidence-1 fallback matches before

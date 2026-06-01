@@ -49,12 +49,17 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		Write:      false,
 		VCSKind:    vcsOverride,
 		PeerExpand: false,
+		Glob:       args.glob,
 	})
 	if err != nil {
 		return emitErr(stderr, args, err)
 	}
-	if len(resolved) != len(args.inputs) {
-		return emitErr(stderr, args, fmt.Errorf("compare: internal: expected %d resolved inputs, got %d", len(args.inputs), len(resolved)))
+	// DR-0024: glob: selectors may expand (peer expansion) or contract
+	// (0-match), so the resolved-count check now allows the shape "F1
+	// + at least one OTHER" rather than pinning to the literal input
+	// count.
+	if len(resolved) < 2 {
+		return emitErr(stderr, args, fmt.Errorf("compare requires at least two inputs after glob expansion, got %d", len(resolved)))
 	}
 
 	// DR-0010: surface confidence-1 fallback matches for compare too —

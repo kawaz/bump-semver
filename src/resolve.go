@@ -282,9 +282,24 @@ type resolveInputsOpts struct {
 	//   - true  (bump/get): expand to one resolved entry per distinct
 	//     sibling FILE path
 	PeerExpand bool
+	// Glob carries the parsed --glob-* flags (DR-0024). Read only when a
+	// `glob:` selector is present in inputs.
+	Glob globOpts
 }
 
 func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]resolvedInput, error) {
+	// DR-0024 pre-pass: expand any `glob:<pat>` selectors into their
+	// matched FILE paths. 0-match is silent — the glob: selector simply
+	// disappears from the input list (DR-0020 declarative-convergence
+	// parity with "FILE that doesn't exist" handling).
+	if anyGlob(inputs) {
+		expanded, err := expandGlobInputs(inputs, opts.Glob)
+		if err != nil {
+			return nil, err
+		}
+		inputs = expanded
+	}
+
 	// Pre-classify each input. We need three buckets:
 	//   - "raw" (VER, `-`, or `vcs:`): contributes to <argv:N> indexing
 	//   - "file": exists on disk

@@ -14,6 +14,16 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# Paths that, when changed since origin/main, require a VERSION bump
+# before push (consumed by check-version-bumped). Literal git pathspec:
+# `src/` catches all tracked changes under src/ — including deletions
+# and dotfiles. `glob:` was tried here but its filesystem-side semantics
+# (no dotfiles by default, gitignored excluded, deletions invisible
+# because the file isn't on disk) silently weakens this release gate;
+# the glob: dogfood belongs in a use case that genuinely wants
+# filesystem expansion, not in a git-pathspec slot.
+bump-trigger-paths := "src/"
+
 # show the recipe list (default)
 default:
     @just --list --unsorted
@@ -51,9 +61,9 @@ ci: lint test build
 ensure-clean:
     bump-semver vcs is clean
 
-# fail if src/ changed since origin/main but VERSION was not bumped
+# fail if bump-trigger-paths changed since origin/main but VERSION was not bumped
 check-version-bumped:
-    if ! bump-semver vcs diff -q main@origin -- src/; then bump-semver compare gt VERSION vcs:main@origin; fi
+    if ! bump-semver vcs diff -q main@origin -- {{bump-trigger-paths}}; then bump-semver compare gt VERSION vcs:main@origin; fi
 
 # fail if VERSION is not greater than the latest release (origin/main の VERSION)
 check-against-latest-release:

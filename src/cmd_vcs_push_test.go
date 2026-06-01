@@ -579,6 +579,119 @@ func TestRun_VcsPush_AutoAdvance_JjDirty(t *testing.T) {
 	}
 }
 
+// TestRun_VcsPush_AutoAdvance_JjCleanTargetNoDescription: clean working
+// copy whose @- (the clean-branch advance target) has no description →
+// auto-advance must fail fast with exit 3 and a hint pointing at
+// `jj describe -r @-` (DR-0025). Pins the contract that the description
+// check applies symmetrically to both clean (target=@-) and dirty
+// (target=@) paths — the same push-reject trap exists on either side.
+func TestRun_VcsPush_AutoAdvance_JjCleanTargetNoDescription(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	// Build an undescribed @-: jj new on top of the current @ (which is
+	// itself an undescribed auto-created change) so the new @- inherits
+	// the no-description state, and @ stays clean+empty above it.
+	runIn(t, work, "jj", "new")
+	withCwd(t, work, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error for clean @ with undescribed @- (advance target)")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Fatalf("expected exitCodeVCSExec (3), got: %v", err)
+		}
+		msg := ee.msg + stderr.String()
+		if !strings.Contains(msg, "jj describe") {
+			t.Errorf("error message should hint at `jj describe`, got: %q", msg)
+		}
+		if !strings.Contains(msg, "@-") {
+			t.Errorf("error message should name @- as the missing-description target, got: %q", msg)
+		}
+	})
+}
+
+// TestRun_VcsPush_AutoAdvance_JjDirtyNoDescription: dirty working copy
+// whose @ has no description → auto-advance must fail fast with exit 3
+// and a hint pointing at `jj describe` (DR-0025). Without this guard
+// the dirty branch (target=@) advances the bookmark onto an undescribed
+// commit, jj refuses the push ("Won't push commit XXX since it has no
+// description"), and the user hits a retry loop because nothing in the
+// flow describes the @ for them.
+func TestRun_VcsPush_AutoAdvance_JjDirtyNoDescription(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally NOT calling `jj describe` — the auto-created @
+	// stays in the "no description" state. auto-advance should detect
+	// this before moving the bookmark and surface the hint instead of
+	// letting jj's push-reject percolate up unactionable.
+	withCwd(t, work, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error for dirty @ with no description")
+		}
+		var ee *exitErr
+		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
+			t.Fatalf("expected exitCodeVCSExec (3), got: %v", err)
+		}
+		msg := ee.msg + stderr.String()
+		if !strings.Contains(msg, "jj describe") {
+			t.Errorf("error message should hint at `jj describe`, got: %q", msg)
+		}
+		if !strings.Contains(msg, "description") {
+			t.Errorf("error message should name the missing description, got: %q", msg)
+		}
+	})
+}
+
+// TestRun_VcsPush_AutoAdvance_JjDirtyWhitespaceDescription: jj accepts
+// whitespace-only descriptions on push (verified 2026-06-01) — auto-
+// advance must accept them too (DR-0025). This pins the contract that
+// the description check delegates to jj's `if(description, ...)` truth
+// rather than a Go-side TrimSpace == "" check; the latter would over-
+// reject relative to jj's actual push gate.
+func TestRun_VcsPush_AutoAdvance_JjDirtyWhitespaceDescription(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Whitespace-only description: jj treats this as "has description"
+	// (the template engine's `if(description, ...)` is truthy for any
+	// non-empty string), and the push proceeds without rejection.
+	runIn(t, work, "jj", "describe", "-m", "   ")
+	withCwd(t, work, func() {
+		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("auto-advance with whitespace-only description should succeed (jj accepts it), got: %v", err)
+		}
+	})
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(bareSHA)) == "" {
+		t.Errorf("bare should have main after whitespace-description auto-advance push")
+	}
+}
+
 // TestRun_VcsPush_AutoAdvance_ParserAcceptsFlag: the parser must accept
 // `--jj-bookmark-auto-advance` as a verb-local boolean flag (no false
 // "unknown flag" rejection at the parser layer). Specifying it without

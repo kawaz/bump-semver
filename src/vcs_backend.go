@@ -1327,6 +1327,28 @@ func (j *jjBackend) autoAdvanceBookmark(name string) error {
 	if !clean {
 		target = "@"
 	}
+	// 3b. DR-0025: target must have a description. jj refuses to push
+	// undescribed commits ("Won't push commit XXX since it has no
+	// description"); if we let auto-advance move the bookmark onto an
+	// undescribed commit, the user hits a retry loop because nothing in
+	// the push flow describes the target for them. Apply on BOTH the
+	// dirty (target=@) and clean (target=@-) paths — same trap exists on
+	// either side (e.g. `jj new` then `jj new` again leaves @- as an
+	// undescribed empty change). Fail fast with a hint pointing at
+	// `jj describe -r <target>` so the user can resolve it in one step
+	// instead of debugging an opaque jj reject inside push. See
+	// DR-0025 for the rationale on querying jj's template engine for
+	// the empty-check (whitespace-only descriptions are jj-accepted).
+	descOut, err := runBackendCmd("jj", "log", "-r", target, "--no-graph", "-T", `if(description, "T", "F")`)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if strings.TrimSpace(string(descOut)) != "T" {
+		return &exitErr{
+			code: exitCodeVCSExec,
+			msg:  fmt.Sprintf("vcs push --jj-bookmark-auto-advance: advance target %s for bookmark %q has no description; jj would refuse to push it. Run `jj describe -r %s` to set a description, then retry (or move bookmark %q manually if %s should not be the target)", target, name, target, name, target),
+		}
+	}
 	// 4. no-op when already at target.
 	atTargetOut, err := runBackendCmd("jj", "log", "-r", name+" & "+target, "--no-graph", "-T", `change_id ++ "\n"`)
 	if err != nil {

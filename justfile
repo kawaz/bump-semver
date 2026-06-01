@@ -71,11 +71,8 @@ bump-version level="patch": ensure-clean
     bump-semver vcs commit -m "Release v$(bump-semver get VERSION)" VERSION
 
 # push to origin/main with gates: ci + check-translations + check-version-bumped
-#
-# NOTE: --jj-bookmark-auto-advance is currently rejected on git (exit 2).
-# After PR-5.2.1 (backend-prefix general rule: silent no-op on the other
-# backend) lands, this recipe can collapse to a single line.
 push: ci check-translations check-version-bumped
+    # branch on jj/git until PR-5.2.1 makes --jj-bookmark-auto-advance silent no-op on git
     if bump-semver vcs is jj; then bump-semver vcs push --branch main --jj-bookmark-auto-advance; else bump-semver vcs push --branch main; fi
 
 # ---------- utility ----------

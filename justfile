@@ -42,9 +42,9 @@ lint-pkl:
 # lint-go + lint-pkl
 lint: lint-go lint-pkl
 
-# go test
-test: lint
-    go test ./...
+# go test (ARGS default to ./..., override e.g. `just test ./src/handler_cargo`)
+test *ARGS='./...': lint
+    go test {{ARGS}}
 
 # build host target -> bin/bump-semver
 build: lint

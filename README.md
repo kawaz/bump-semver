@@ -32,6 +32,7 @@ bump-semver vcs fetch [REMOTE]
 bump-semver vcs push --branch NAME [--remote REMOTE]
 bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]
+bump-semver vcs tag latest [--source <tag|release>] [--include-prerelease] [--repository REPO] [--raw|--json]
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
@@ -98,9 +99,10 @@ bump-semver vcs fetch [REMOTE]
 bump-semver vcs push --branch NAME [--remote REMOTE]   # jj users: --bookmark also accepted
 bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]      # idempotent (rm -f semantic)
+bump-semver vcs tag latest [--source <tag|release>] [--include-prerelease] [--repository REPO] [--raw|--json]
 ```
 
-A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5); PR-6 adds `vcs tag push` / `vcs tag delete` (atomic create+push / idempotent delete, with `--allow-move` as the precise opt-in for tag relocation and exit 4 surfacing different-rev integrity violations). The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5); PR-6 adds `vcs tag push` / `vcs tag delete` (atomic create+push / idempotent delete, with `--allow-move` as the precise opt-in for tag relocation and exit 4 surfacing different-rev integrity violations); **PR-Tag-Latest (v0.29.0)** adds `vcs tag latest` (SemVer-largest tag printer with `--source tag|release` / `--repository` / `--raw` / `--json` / `--include-prerelease`), replacing the removed `vcs:latest-tag([REPO])` input. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
 
 **`vcs get <key>`** — emit a value on stdout:
 
@@ -240,6 +242,35 @@ bump-semver vcs tag delete v0.9.0               # remove from local + origin (id
 
 Exit codes for `vcs tag push`: `0` success (incl. idempotent same-rev re-push); `2` usage (NAME / `--rev` missing, NAME with bad shape, `--force` passed, extra positional); `3` VCS subprocess error (bad REV, unknown remote, network); `4` integrity violation (existing tag at different REV without `--allow-move`). For `vcs tag delete`: `0` success or already-absent; `2` usage; `3` VCS error.
 
+**`vcs tag latest [--source <tag|release>] [--include-prerelease] [--repository REPO] [--raw | --json]`** (v0.29.0+, DR-0020 PR-Tag-Latest) — print the SemVer-largest tag. Replaces the removed `vcs:latest-tag([REPO])` input. Lists tags / GitHub Releases, drops anything that doesn't parse as SemVer 2.0.0, and returns the largest.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--source tag` (default) | tag | git/jj tag list. No gh dependency. With `--repository` falls back to `git ls-remote --tags <url>` (also gh-free) |
+| `--source release` | — | GitHub Release objects via `gh release list` — drafts skipped, prereleases skipped unless `--include-prerelease`. **Requires the `gh` CLI** (missing gh → exit 3 with install hint) |
+| `--repository REPO` | cwd VCS | External target: `owner/repo` (GitHub short, expanded to `https://github.com/...`) or full HTTPS/SSH URL. Orthogonal to `--source` |
+| `--include-prerelease` | excluded | Include pre-release tags (`v1.2.3-rc.1` etc.). The previous `vcs:latest-tag()` always included prereleases — `--include-prerelease` is the byte-identical migration target |
+| `--raw` | bare SemVer | Emit the original tag string with prefix intact (`v1.2.3` / `release-1.2.3` / `pkf-tasks@0.0.13`). Mutually exclusive with `--json` |
+| `--json` | bare SemVer | `{"tag": "v1.2.3", "version": "1.2.3", "commit": "...", "date": "..."}`. `commit` / `date` are best-effort — populated when the source provides them (release path fills `date`), empty otherwise (no extra subprocesses just to fill) |
+
+```bash
+bump-semver vcs tag latest                          # cwd: 1.2.3 (bare SemVer)
+bump-semver vcs tag latest --raw                    # cwd: v1.2.3 (prefix kept)
+bump-semver vcs tag latest --include-prerelease     # include v1.2.3-rc.1
+bump-semver vcs tag latest --repository kawaz/pkf-tasks
+                                                    # remote (git ls-remote --tags)
+bump-semver vcs tag latest --source release         # cwd GitHub Releases (needs gh)
+bump-semver vcs tag latest --source release --repository kawaz/bump-semver --json
+                                                    # external GitHub Release, structured output
+
+# Migrate from `vcs:latest-tag()` (v0.28.x and earlier):
+#   bump-semver compare gt VERSION 'vcs:latest-tag()'      # OLD
+#   LATEST=$(bump-semver vcs tag latest --include-prerelease)
+#   bump-semver compare gt VERSION "$LATEST"               # NEW (byte-identical filter)
+```
+
+Exit codes: `0` success; `2` usage (bad `--source` value, `--raw` + `--json`, positional args); `3` VCS / gh subprocess error OR `gh` missing for `--source release`.
+
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.
 
 ### Flags
@@ -281,8 +312,9 @@ Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the bu
 | VER  | A raw semver string (e.g. `1.2.3`, `v1.2.3`, `1.2.3-rc.1+build.42`) |
 | `-`  | Read VER from stdin, one line (used at most once) |
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from jj or git (auto-detected, see [vcs: input](#vcs-input)) |
-| `vcs:latest-tag([REPO])` | Read the largest semver-compatible tag. `REPO` = `owner/repo` short form or full URL queries a remote (`git ls-remote --tags`); omit for cwd VCS |
 | `cmd:<shell-command>` | Run `<shell-command>` via `bash -c`, take the first non-empty stdout line as VER (read-only, see [cmd: input](#cmd-input)) |
+
+> **Latest-tag lookups** (removed `vcs:latest-tag([REPO])` input in v0.29.0): use the [`bump-semver vcs tag latest`](#vcs-subcommands) subcommand instead. Capture the value first, then feed it into compare/get: `LATEST=$(bump-semver vcs tag latest); bump-semver compare gt VERSION "$LATEST"`. See DR-0020 PR-Tag-Latest for the rationale (more discoverable, supports `--source release` / `--raw` / `--json` / `--repository`).
 
 If a local file is literally named `1.2.3` and you mean the file, write `./1.2.3` (Unix convention).
 
@@ -439,7 +471,7 @@ bump-semver compare lt 1.2.3-rc.1 1.2.3           # exit 0 (rc < release)
 bump-semver compare eq .claude-plugin/plugin.json .claude-plugin/marketplace.json package.json   # 3-file consistency check
 bump-semver get   Cargo.toml --json               # structured output for jq
 bump-semver patch Cargo.toml --json               # bumped version, fully decomposed
-bump-semver compare gt Cargo.toml 'vcs:latest-tag()'   # ready to release? (CI: bumped past last tag)
+LATEST=$(bump-semver vcs tag latest); bump-semver compare gt Cargo.toml "$LATEST"  # ready to release? (CI: bumped past last tag)
 bump-semver compare lt Cargo.toml vcs:origin/main      # stale vs remote main? (pull needed)
 ```
 
@@ -474,7 +506,8 @@ Any positional INPUT that starts with `vcs:` is resolved through the version-con
 
 ```bash
 # Has the working-tree version been bumped past the last release tag?
-bump-semver compare gt Cargo.toml 'vcs:latest-tag()'
+LATEST=$(bump-semver vcs tag latest)
+bump-semver compare gt Cargo.toml "$LATEST"
 
 # Are we stale vs remote main? (pull needed before push)
 bump-semver compare lt Cargo.toml vcs:origin/main
@@ -483,17 +516,16 @@ bump-semver compare lt Cargo.toml vcs:origin/main
 bump-semver compare eq Cargo.toml vcs:HEAD~1            # FILE borrowed from the sibling
 bump-semver compare eq Cargo.toml vcs:HEAD~1:Cargo.toml # explicit form
 
-# v0.15.0+ — Query a different repo's latest release tag
-bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'        # owner/repo short form
-bump-semver get 'vcs:latest-tag(https://github.com/x/y)' # full URL
-bump-semver compare ge 0.0.13 'vcs:latest-tag(kawaz/pkf-tasks)'  # current pin up-to-date?
+# Query a different repo's latest release tag
+LATEST=$(bump-semver vcs tag latest --repository kawaz/pkf-tasks)   # owner/repo short form
+bump-semver compare ge 0.0.13 "$LATEST"                              # current pin up-to-date?
 ```
 
 | Form | Meaning |
 |---|---|
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from the VCS. The first `:` is consumed by the `vcs:` prefix; the second `:` (if present) splits REV from FILE. Omitted FILE is borrowed from the first sibling input (FILE-origin or another `vcs:REV:FILE`) in argv order |
-| `vcs:latest-tag()` | All tags from the cwd VCS; semver-incompatible tags are silently dropped; the largest by SemVer 2.0.0 ordering wins. Errors with `no semver-compatible tags found` if the candidate set is empty |
-| `vcs:latest-tag(<arg>)` | v0.15.0+. `<arg>` = `owner/repo` (GitHub short, expanded to `https://github.com/...`) or full HTTPS/SSH URL. Queries the remote via `git ls-remote --tags`; jj/git auto-detection is irrelevant for remote queries. Monorepo-style tags like `pkf-tasks@0.0.13` are recognised (`@` peel fallback) so the same call works against multi-package repos. The argument is a **raw string** — no inner quotes needed (think markdown link `[]()`). **Trust boundary**: the validity of the URL is the caller's responsibility; pointing at an untrusted repo lets attackers publish `malicious@99.99.99` and have it returned as the largest tag (DR-0019) |
+
+> Latest-tag lookups moved out of the `vcs:` input schema in v0.29.0 (DR-0020 PR-Tag-Latest). The replacement is the [`bump-semver vcs tag latest`](#vcs-subcommands) subcommand — `--source tag` (default, no gh) / `--source release` (GitHub Releases, requires gh CLI), with `--repository owner/repo` / `--raw` / `--json` / `--include-prerelease` toggles. See DR-0019's "Superseded" note for the historical context.
 
 **VCS detection** (in priority order):
 
@@ -510,7 +542,7 @@ When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-w
 
 **`bump-semver` does not run `git fetch` / `jj git fetch` automatically.** If `vcs:origin/main` is stale, the underlying VCS error is surfaced verbatim. CI users should fetch explicitly before invoking `bump-semver`.
 
-For CI scripts that need to be VCS-agnostic, prefer revisions that work in both flavours: `origin/main` (auto-translated to `main@origin` for jj), commit hashes, and `latest-tag()`.
+For CI scripts that need to be VCS-agnostic, prefer revisions that work in both flavours: `origin/main` (auto-translated to `main@origin` for jj) and commit hashes. For "latest release tag" use the [`vcs tag latest`](#vcs-subcommands) subcommand (it auto-picks jj or git just like the input schema).
 
 ### cmd: input
 
@@ -520,11 +552,12 @@ For CI scripts that need to be VCS-agnostic, prefer revisions that work in both 
 # Does the built binary's --version match the VERSION file?
 bump-semver compare eq VERSION 'cmd:./bin/mytool --version'
 
-# Read a version that lives outside vcs:latest-tag's reach
+# Read a version that lives outside the VCS tag list
 bump-semver get 'cmd:brew info --json mytool | jq -r .[0].installed[0].version'
 
 # Compare against another bump-semver invocation
-bump-semver compare gt 'cmd:bump-semver get Cargo.toml' 'vcs:latest-tag()'
+LATEST=$(bump-semver vcs tag latest)
+bump-semver compare gt 'cmd:bump-semver get Cargo.toml' "$LATEST"
 ```
 
 | Form | Interpretation |

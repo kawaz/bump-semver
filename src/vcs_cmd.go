@@ -534,9 +534,11 @@ func runVcsCmdTag(args cliArgs, stdout, stderr io.Writer) error {
 		return runVcsCmdTagPush(args, stdout, stderr)
 	case "delete":
 		return runVcsCmdTagDelete(args, stdout, stderr)
+	case "latest":
+		return runVcsCmdTagLatest(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs tag sub-verb: %q (expected: push / delete)", args.vcsTag.SubVerb))
+			fmt.Errorf("unknown vcs tag sub-verb: %q (expected: push / delete / latest)", args.vcsTag.SubVerb))
 	}
 }
 

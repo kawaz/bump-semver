@@ -54,17 +54,7 @@ When a filename collides with a valid semver string (e.g. a local file literally
 
 `vcs:REV[:FILE]` reads `<FILE>` at `<REV>` from jj or git. The VCS is detected in this priority order: `--vcs jj|git` flag (`auto` and the unset case fall through), `.jj` directory probe, `.git` directory probe. When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), jj wins. See DR-0016 for the rationale behind removing the `BUMP_SEMVER_VCS` env var that used to sit between the flag and the probes.
 
-`vcs:latest-tag([<arg>])` lists every tag, drops the ones that don't parse as semver, and returns the largest by SemVer 2.0.0 ordering. v0.15.0 (DR-0019) extended it to take a remote-repo argument:
-
-- `vcs:latest-tag()` — no argument: query the cwd VCS (original behaviour)
-- `vcs:latest-tag(kawaz/pkf-tasks)` — `owner/repo` short form: expanded to `https://github.com/<owner>/<repo>` and queried with `git ls-remote --tags`
-- `vcs:latest-tag(https://...)` / `vcs:latest-tag(git@...)` — full HTTPS / SSH URLs pass through
-
-In addition, a **`@` peel fallback** is applied during the semver parse of each candidate tag: monorepo-style names like `pkf-tasks@0.0.12` (Pkl package, npm scoped, Go module subpath conventions) fail the regular semver parser, but the substring after the last `@` is retried so they are recognised. The fallback only fires inside the tag-list path so jj revsets like `main@origin` (which are never tag-list output) are unaffected.
-
-**Argument syntax design** (DR-0019): the `<arg>` portion is treated as a raw string — no inner double quotes required (think markdown link `[text](url)`). This keeps Pkl `Task.cmd` array forms readable (`["bump-semver", "get", "vcs:latest-tag(kawaz/pkf-tasks)"]`) without JSON escape hell. Shells need an outer single-quote wrapper to keep `()` from being interpreted as a subshell (`'vcs:latest-tag(kawaz/pkf-tasks)'`).
-
-**Trust boundary** (DR-0019): the validity of the remote URL is the **caller's responsibility**. Pointing at a repo where a third party can push tags allows an attacker to publish `malicious@99.99.99` and have it returned as the largest tag. This is outside the scope of what `bump-semver` itself can defend; consumers are expected to hard-code the repo argument and not let user input flow into it (e.g. `kawaz/pkf-tasks`'s `migrate:check-pkf-tasks-current` defaults `remoteRepoSpec` to a fixed repo).
+> **Latest-tag lookups moved out of `vcs:` input in v0.29.0** (DR-0020 PR-Tag-Latest). The previous `vcs:latest-tag([REPO])` function input was removed without a deprecation period (v0 policy: breaking changes allowed). The replacement is the `vcs tag latest` subcommand — see DR-0020 PR-Tag-Latest for the rationale (more discoverable, supports `--source release` for GitHub Releases, structured `--json` output, explicit `--raw` for prefix retention, and `--include-prerelease` for the byte-identical migration from the old default behaviour). The `@`-peel fallback for monorepo-style tags (`pkf-tasks@0.0.12`) and the trust-boundary caveat for third-party-writable remotes (DR-0019) both moved with the implementation; see the relevant DRs for historical context.
 
 When the FILE component is omitted, it is borrowed from the first FILE-providing sibling argument in **position order** (a real FILE-origin input, or another `vcs:REV:FILE`). Errors out when no sibling can supply a FILE.
 
@@ -113,7 +103,7 @@ Go sources live under `src/`, leaving only metadata (README / docs / Taskfile.pk
     ├── jsonpath.go          map[string]any-based simple JSONPath
     ├── semver.go            SemVer 2.0.0 parser + Bump + Compare
     ├── json.go              --json output schema (DR-0007)
-    ├── vcs.go               vcs: input (jj/git auto-detect + `latest-tag()`) (DR-0008)
+    ├── vcs.go               vcs: input (jj/git auto-detect, DR-0008)
     ├── cmd_source.go        cmd: input (run a shell command, parse stdout as VER, v0.16.0)
     └── *_test.go            unit + integration + spec_table_test.go (DR-0006 spec-driven)
 ```

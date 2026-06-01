@@ -1,5 +1,40 @@
 # Upgrading guide
 
+## → `vcs tag latest` subcommand replaces `vcs:latest-tag()` input (DR-0020 PR-Tag-Latest, v0.29.0)
+
+**BREAKING**: the `vcs:latest-tag([REPO])` function-shaped input was removed without a deprecation period (v0 policy: breaking changes allowed in 0.x). The same capability is now exposed as a first-class subcommand:
+
+```bash
+# OLD (v0.28.x and earlier):
+bump-semver compare gt VERSION 'vcs:latest-tag()'
+bump-semver get 'vcs:latest-tag(kawaz/pkf-tasks)'
+
+# NEW (v0.29.0+):
+LATEST=$(bump-semver vcs tag latest --include-prerelease)         # cwd; byte-identical filter
+bump-semver compare gt VERSION "$LATEST"
+
+LATEST=$(bump-semver vcs tag latest --repository kawaz/pkf-tasks --include-prerelease)
+# or omit --include-prerelease if you want the new default (= exclude prereleases)
+```
+
+| Aspect | Old `vcs:latest-tag()` | New `vcs tag latest` |
+|---|---|---|
+| Form | Function-shaped input (`vcs:latest-tag([REPO])`) | First-class subcommand |
+| Default prerelease handling | Included | Excluded — pass `--include-prerelease` for byte-identical migration |
+| GitHub Releases | n/a (always tags) | `--source release` (requires the `gh` CLI) |
+| External repo | `vcs:latest-tag(owner/repo)` | `--repository owner/repo` |
+| Raw tag string | n/a (always SemVer form) | `--raw` (keeps `v` prefix etc.) |
+| Structured output | n/a | `--json` ({tag, version, commit, date}) |
+
+Trying to use the old form now produces a clear error pointing at the replacement:
+
+```
+$ bump-semver compare gt 1.2.3 'vcs:latest-tag()'
+bump-semver: vcs:latest-tag(): unknown vcs function: latest-tag() (vcs:latest-tag was removed in v0.29.0; use `bump-semver vcs tag latest` instead)
+```
+
+See [DR-0020 PR-Tag-Latest](./docs/decisions/DR-0020-vcs-subcommands.md#pr-tag-latest-vcs-tag-latest-2026-06-01-確定) for the full rationale (responsibility re-definition, source matrix, gh boundary, v0 break policy). Historical context: [DR-0019](./docs/decisions/DR-0019-vcs-latest-tag-remote-arg.md) (Superseded).
+
 ## → Cargo workspace `[workspace.package].version` support (DR-0021)
 
 Pure additive change. No breaking changes, no migration needed. See

@@ -685,14 +685,63 @@ release.yml を初めて流す**構造になる。よって次の release 完走
 | PR-2.2 | PR-2.1 完全 revert (`empty` 単体に戻す、evil merge は dirty) | v0.25.3 |
 | PR-5.2 | `vcs push --jj-bookmark-auto-advance` (jj-only opt-in、clean→`@-` / dirty→`@`、divergent → exit 3) | v0.26.0 |
 | PR-5.2.1 | backend-prefix general rule (`--jj-*` / `--git-*` flag は他 backend で silent no-op、PR-5.2 の exit 2 reject を訂正) + justfile push 1 行化 | v0.28.0 |
+| PR-Tag-Latest | `vcs tag latest [--source <tag\|release>] [--include-prerelease] [--repository REPO] [--raw\|--json]` (`vcs:latest-tag([REPO])` 入力を即削除して置換、v0 破壊的変更ポリシー) + release.yml 自己ドッグフード移行 | v0.29.0 |
 
 DR-0020 はこれで設計 → 実装 → ドッグフードの 3 段を完了。以降の vcs 関連
 変更は本 DR の延長 (= verb 追加 / 既存 verb 改修) として bug fix / 改善 PR で
 回す。
 
+### PR-Tag-Latest (`vcs tag latest`, 2026-06-01 確定)
+
+**追加 verb**: `vcs tag latest [--source <tag|release>] [--include-prerelease] [--repository REPO] [--raw | --json]`
+
+**責務再定義**: bump-semver が tag を扱う**唯一の意味 = SemVer-like tag**。全 tag list は jj / git 自体で十分 (= 責務外)。`vcs tag latest` は SemVer 2.0.0 parseable な tag のみ filter して最大を返す。
+
+**source matrix**:
+
+| source | repository | 経路 | gh 依存 |
+|---|---|---|---|
+| `tag` (default) | (なし) | `backend.LatestTag()` (= jj/git tag list) | なし |
+| `tag` | `owner/repo` or URL | `git ls-remote --tags <url>` | なし |
+| `release` | (なし) | `gh release list` (cwd repo) | **必要** |
+| `release` | `owner/repo` or URL | `gh release list -R <repo>` | **必要** |
+
+`--source tag --repository <X>` を gh 不要にした判断: gh は GitHub Release オブジェクト固有の機能 (draft 除外 / publishedAt) を扱うときだけ必要で、純粋な tag list 取得は `git ls-remote` で十分。spec のシンプル不変条件「source が tag なら gh 不要」と既存 helper の再利用を両立させる。
+
+**出力モード** (相互排他):
+
+- default: bare SemVer (Prefix を落とす、例: `1.2.3`)
+- `--raw`: 元 tag 文字列のまま (`v1.2.3` / `release-1.2.3` / `pkf-tasks@0.0.13`)
+- `--json`: `{"tag":"v1.2.3","version":"1.2.3","commit":"...","date":"..."}` (commit/date は best-effort、source が提供する場合のみ埋まる)
+
+**`--include-prerelease`**: 旧 `vcs:latest-tag()` は常に prerelease を含めていた。新コマンドの default は除外 (= リリース判定で「rc が選ばれて release より大きくなる」事故を防ぐ)。byte-identical 移行は `vcs tag latest --include-prerelease`。
+
+**`vcs:latest-tag()` 削除戦略 (v0 破壊的変更ポリシー)**:
+
+bump-semver は **v0.x = 不安定版** (kawaz 個人 OSS の運用規約) のため、deprecation 期間を設けず即削除する。実装上:
+
+- `resolveVcsFunc` の `case "latest-tag":` を削除 — `vcs:latest-tag()` 入力は **unknown vcs function** エラーになる
+- エラーメッセージに「vcs:latest-tag was removed in v0.29.0; use \`bump-semver vcs tag latest\` instead」を含めて移行先を明示
+- `latestTagFromRemote` / `parseLsRemoteTags` / `expandRepoArg` / `pickLatestSemverTag` / `backend.LatestTag()` は新コマンドの実装に流用 (= dead code にしない)
+
+**v0 段階での破壊的変更ポリシー** (本 DR で明文化):
+
+- v0.x = 不安定版規約 (kawaz 個人 OSS): 破壊的変更を minor bump で許容、deprecation 期間は設けない
+- 「deprecated 警告を出して数 release 維持」は v1.0.0 以降の正式版に乗ってから採用
+- v0 段階の即削除は CHANGELOG 等で告知する (= 利用者は移行手順を見られる)
+
+**release.yml dogfood 移行**: 本 PR で `vcs:latest-tag()` を使っていた `release.yml` の version-check ブロックを `vcs tag latest` capture-then-compare に書き換え (= bump-semver 自身が新 subcommand を実機で利用)。初回 release (tag 0 件) で `vcs tag latest` が exit 3 を返す bootstrap ケースも維持。`--include-prerelease` を明示することで旧 `vcs:latest-tag()` の byte-identical 移行 (= prerelease を含む filter) と整合 (README / UPGRADING の移行例と同じ形)。
+
+**v0.28.0 ← v0.29.0 移行 transient (1 回限り)**: `check-version` job は「直前リリース版バイナリ」(`gh release list` の最新) を install して dogfood する設計 (PR-7 と同じ self-dogfooding 構図)。本 PR の release では install されるのが v0.28.0 で、これは `vcs tag latest` を知らないので unknown sub-verb で exit 2 を返す。release.yml は exit code != 0 を bootstrap (初回 release) と同じ分岐に流すため動作はする (= 「VERSION > 既存 tag」検証はこの 1 回スキップされ、二重 release は後段の `gh release view` が防ぐ)。次の release 以降は v0.29.0+ が install されるため通常分岐に乗る。これは PR-7 land 時の同種の transient (DR-0020 line 656 付近) と同じ family。
+
+**既知の下流影響 (v0 break)**: DR-0019 言及のとおり `kawaz/pkf-tasks` の `migrate:check-pkf-tasks-current` が `vcs:latest-tag(kawaz/pkf-tasks)` を直接使う想定。v0.29.0 upgrade で `vcs tag latest --repository kawaz/pkf-tasks` への書き換えが必要 (= 単純な capture-then-compare 移行)。v0 policy では deprecation 期間を設けずに即変更する。
+
+**land 日**: 2026-06-01。
+
 - **PR-7 land 日**: 2026-05-30
 - **PR-2.1 land 日**: 2026-05-31 (誤読、PR-2.2 で revert)
 - **PR-2.2 land 日**: 2026-05-31
+- **PR-Tag-Latest land 日**: 2026-06-01
 
 ## 関連
 

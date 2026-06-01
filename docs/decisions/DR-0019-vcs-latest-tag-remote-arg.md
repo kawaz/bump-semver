@@ -1,6 +1,6 @@
 # DR-0019: `vcs:latest-tag(<arg>)` で他リポの最新 tag を取れるよう拡張する
 
-- Status: Active
+- Status: **Superseded by DR-0020 PR-Tag-Latest (2026-06-01)** — `vcs:latest-tag([REPO])` 関数入力は v0.29.0 で削除済。代替は `vcs tag latest` サブコマンド (`--source release` で GitHub Release も対象、`--raw` / `--json` / `--include-prerelease` 拡張)。`@`-peel fallback / 信頼境界 (本 DR の内容) は新コマンドに引き継がれている。
 - Date: 2026-05-12
 
 ## Context

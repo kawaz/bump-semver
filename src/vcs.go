@@ -195,34 +195,23 @@ func resolveVcsInput(spec string, otherFile string, backend vcsBackend) (resolve
 }
 
 // resolveVcsFunc handles function-shaped specs (`vcs:<name>(<args>)`).
-// MVP supports `latest-tag()` only.
-func resolveVcsFunc(spec, name, args string, backend vcsBackend) (resolvedInput, error) {
-	switch name {
-	case "latest-tag":
-		// args is the inside of `latest-tag(...)`. Empty (or whitespace
-		// only) means "use the local backend"; non-empty is a remote
-		// repo spec resolved by expandRepoArg and queried via git
-		// ls-remote (always git regardless of the local backend).
-		remoteURL := expandRepoArg(args)
-		var v Version
-		var err error
-		if remoteURL != "" {
-			v, err = latestTagFromRemote(remoteURL)
-		} else {
-			v, err = backend.LatestTag()
-		}
-		if err != nil {
-			return resolvedInput{}, fmt.Errorf("%s: %w", spec, err)
-		}
-		// Function-derived inputs contribute a single value with no
-		// in-file path component, mirroring VER-origin behaviour.
-		return resolvedInput{
-			originFile: spec,
-			fields:     []locatedField{{File: spec, Value: v.String()}},
-		}, nil
-	default:
-		return resolvedInput{}, fmt.Errorf("%s: unknown vcs function: %s()", spec, name)
-	}
+//
+// DR-0020 PR-Tag-Latest (v0 breaking change, 2026-06-01): the previous
+// `vcs:latest-tag([REPO])` function input was removed. The same
+// capability is now exposed via the `vcs tag latest` subcommand, which
+// is both more discoverable and more flexible (--source / --raw /
+// --json / --repository / --include-prerelease). v0 allows immediate
+// replacement without a deprecation period; users migrate from
+// `bump-semver compare gt VERSION 'vcs:latest-tag()'` to a
+// capture-then-compare shape (`LATEST=$(bump-semver vcs tag latest);
+// bump-semver compare gt VERSION "$LATEST"`).
+//
+// `_ = backend` keeps the signature stable in case future verbs
+// reintroduce backend-dependent functions; current dispatch only emits
+// the unknown-function error.
+func resolveVcsFunc(spec, name, _ string, backend vcsBackend) (resolvedInput, error) {
+	_ = backend
+	return resolvedInput{}, fmt.Errorf("%s: unknown vcs function: %s() (vcs:latest-tag was removed in v0.29.0; use `bump-semver vcs tag latest` instead)", spec, name)
 }
 
 // altJjRev maps a git-style remote ref (`<remote>/<bookmark>`) to jj's
@@ -246,13 +235,17 @@ func altJjRev(rev string) (string, bool) {
 // remote URL via `git ls-remote --tags <url>`. The cwd VCS is
 // irrelevant — remote queries always go through git because both
 // the protocol and the ls-remote output format are git's.
-func latestTagFromRemote(url string) (Version, error) {
+//
+// When includePrerelease is false, pre-release tags are filtered
+// out (default for `vcs tag latest`). Returns the raw tag string,
+// the parsed Version, and any error.
+func latestTagFromRemote(url string, includePrerelease bool) (string, Version, error) {
 	out, err := runBackendCmd("git", "ls-remote", "--tags", url)
 	if err != nil {
-		return Version{}, err
+		return "", Version{}, err
 	}
 	tags := parseLsRemoteTags(string(out))
-	return pickLatestSemverTag(tags)
+	return pickLatestSemverTag(tags, includePrerelease)
 }
 
 // parseLsRemoteTags extracts the tag name list from `git ls-remote
@@ -332,7 +325,8 @@ func expandRepoArg(arg string) string {
 	return s
 }
 
-// pickLatestSemverTag returns the SemVer-largest entry from `tags`.
+// pickLatestSemverTag returns the SemVer-largest entry from `tags`,
+// along with the original raw tag string.
 //
 // Tags that don't parse as semver (e.g. `my-build-2025-01-01`) are
 // silently ignored — this lets repos mix release tags with
@@ -343,7 +337,14 @@ func expandRepoArg(arg string) string {
 // SemVer order is determined by Version.Compare (DR-0006), so
 // pre-release tags rank below their corresponding release as
 // expected (`v1.0.0-rc.1` < `v1.0.0`).
-func pickLatestSemverTag(tags []string) (Version, error) {
+//
+// When includePrerelease is false, pre-release tags (`v1.2.3-rc.1`
+// etc.) are filtered out before ranking — this matches the default
+// for the `vcs tag latest` subcommand. The raw return value is the
+// original tag string (with the source repo's prefix style intact);
+// callers that want the bare SemVer form (no `v` / no `release-`
+// prefix) should call `.String()` on the returned Version.
+func pickLatestSemverTag(tags []string, includePrerelease bool) (string, Version, error) {
 	type parsed struct {
 		raw string
 		v   Version
@@ -364,14 +365,17 @@ func pickLatestSemverTag(tags []string) (Version, error) {
 				continue
 			}
 		}
+		if !includePrerelease && len(v.Pre) > 0 {
+			continue
+		}
 		candidates = append(candidates, parsed{raw: t, v: v})
 	}
 	if len(candidates) == 0 {
-		return Version{}, fmt.Errorf("no semver-compatible tags found")
+		return "", Version{}, fmt.Errorf("no semver-compatible tags found")
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		// Descending order so candidates[0] is the largest.
 		return candidates[i].v.Compare(candidates[j].v) > 0
 	})
-	return candidates[0].v, nil
+	return candidates[0].raw, candidates[0].v, nil
 }

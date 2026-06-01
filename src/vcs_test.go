@@ -299,7 +299,7 @@ func TestVcsListTags_Git(t *testing.T) {
 }
 
 // TestVcsLatestTag_Git: parse-failed tags are silently ignored, the
-// largest semver-parseable tag wins.
+// largest semver-parseable tag wins. Default excludes prereleases.
 func TestVcsLatestTag_Git(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -307,13 +307,16 @@ func TestVcsLatestTag_Git(t *testing.T) {
 	dir := setupGitRepo(t, []string{"v1.0.0", "v1.2.3", "v1.1.0", "build-2025"}, "1.2.3")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		v, err := b.LatestTag()
+		raw, v, err := b.LatestTag(false)
 		if err != nil {
 			t.Fatalf("LatestTag: %v", err)
 		}
 		// Prefix preserved (DR-0006), so the tag came back with `v`.
 		if got := v.String(); got != "v1.2.3" {
-			t.Errorf("LatestTag = %q, want v1.2.3", got)
+			t.Errorf("LatestTag version = %q, want v1.2.3", got)
+		}
+		if raw != "v1.2.3" {
+			t.Errorf("LatestTag raw = %q, want v1.2.3", raw)
 		}
 	})
 }
@@ -326,12 +329,40 @@ func TestVcsLatestTag_Git_NoSemver(t *testing.T) {
 	dir := setupGitRepo(t, []string{"build-2025", "rolling"}, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		_, err := b.LatestTag()
+		_, _, err := b.LatestTag(false)
 		if err == nil {
 			t.Fatal("expected error for no-semver-tags repo")
 		}
 		if !strings.Contains(err.Error(), "no semver-compatible tags") {
 			t.Errorf("error should mention 'no semver-compatible tags', got: %v", err)
+		}
+	})
+}
+
+// TestVcsLatestTag_Git_Prerelease: default filters out prereleases;
+// --include-prerelease (= true) brings them back into the candidate set.
+func TestVcsLatestTag_Git_Prerelease(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"v1.0.0", "v1.2.3-rc.1", "v1.1.0"}, "1.2.3")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		// Default: prereleases excluded → v1.1.0 wins (v1.2.3-rc.1 dropped).
+		_, v, err := b.LatestTag(false)
+		if err != nil {
+			t.Fatalf("LatestTag(false): %v", err)
+		}
+		if got := v.String(); got != "v1.1.0" {
+			t.Errorf("LatestTag(false) = %q, want v1.1.0 (prerelease filtered)", got)
+		}
+		// includePrerelease=true → v1.2.3-rc.1 wins (largest by SemVer order).
+		_, v2, err := b.LatestTag(true)
+		if err != nil {
+			t.Fatalf("LatestTag(true): %v", err)
+		}
+		if got := v2.String(); got != "v1.2.3-rc.1" {
+			t.Errorf("LatestTag(true) = %q, want v1.2.3-rc.1", got)
 		}
 	})
 }

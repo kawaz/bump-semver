@@ -41,36 +41,27 @@ func TestRun_VcsInput_FileBorrow(t *testing.T) {
 	})
 }
 
-// `vcs:latest-tag()` resolves through the function path; v1.0.0 < 1.2.3.
-func TestRun_VcsInput_LatestTag(t *testing.T) {
+// `vcs:latest-tag()` was removed in v0.29.0 (DR-0020 PR-Tag-Latest).
+// The input now produces an "unknown vcs function" error pointing at
+// the replacement subcommand `vcs tag latest`. v0 policy allows
+// immediate replacement without a deprecation period.
+func TestRun_VcsInput_LatestTag_Removed(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
 	dir := setupGitRepo(t, []string{"v1.0.0"}, "1.2.3")
 	withCwd(t, dir, func() {
-		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
-			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
-		if err != nil {
-			t.Errorf("expected current > latest tag, got: %v", err)
-		}
-	})
-}
-
-// `vcs:latest-tag()` errors when no tag parses — actionable error.
-func TestRun_VcsInput_LatestTag_NoSemver(t *testing.T) {
-	if !gitAvailable() {
-		t.Skip("git not installed")
-	}
-	dir := setupGitRepo(t, []string{"build-stamp"}, "1.0.0")
-	withCwd(t, dir, func() {
 		var stderr bytes.Buffer
-		err := run([]string{"compare", "eq", "VERSION", "vcs:latest-tag()"},
+		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
 			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
 		if err == nil {
-			t.Fatal("expected error when no semver tags")
+			t.Fatal("expected error: vcs:latest-tag() was removed")
 		}
-		if !strings.Contains(stderr.String(), "no semver-compatible tags") {
-			t.Errorf("stderr should mention 'no semver-compatible tags', got: %q", stderr.String())
+		if !strings.Contains(stderr.String(), "unknown vcs function") {
+			t.Errorf("stderr should mention 'unknown vcs function', got: %q", stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "vcs tag latest") {
+			t.Errorf("stderr should point at the replacement `vcs tag latest`, got: %q", stderr.String())
 		}
 	})
 }

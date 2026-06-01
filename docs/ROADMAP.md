@@ -36,7 +36,7 @@ DR-0008 で導入した env による VCS 検出 override (`BUMP_SEMVER_VCS=jj|g
 
 ### `vcs:` 入力モード (v0.7.0 / DR-0008)
 
-`vcs:REV[:FILE]` / `vcs:latest-tag()` で jj/git の他リビジョン・最新 tag を入力として受け付ける。VCS は `--vcs jj|git|auto` フラグ → `.jj` → `.git` の優先順で自動判定 (`.jj` と `.git` 並存時は jj 優先)。fetch は自動実行しない (副作用回避)。`--write` と排他 (vcs: は read-only)。FILE 省略時は位置順で最初の sibling から借用。`BUMP_SEMVER_VCS` 環境変数は v0.13 で廃止 (DR-0016)。
+`vcs:REV[:FILE]` で jj/git の他リビジョンの内容を入力として受け付ける。VCS は `--vcs jj|git|auto` フラグ → `.jj` → `.git` の優先順で自動判定 (`.jj` と `.git` 並存時は jj 優先)。fetch は自動実行しない (副作用回避)。`--write` と排他 (vcs: は read-only)。FILE 省略時は位置順で最初の sibling から借用。`BUMP_SEMVER_VCS` 環境変数は v0.13 で廃止 (DR-0016)。最新 tag 取得は v0.29.0 で `vcs:latest-tag([REPO])` 入力から `vcs tag latest` サブコマンドへ移行 (DR-0020 PR-Tag-Latest)。
 
 ### `--json` 出力オプション (v0.6.0 / DR-0007)
 

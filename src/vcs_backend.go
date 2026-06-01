@@ -50,7 +50,12 @@ type vcsBackend interface {
 
 	// LatestTag returns the SemVer-largest tag known to the local VCS.
 	// Non-semver tag names are silently skipped (mirrors DR-0008).
-	LatestTag() (Version, error)
+	// When includePrerelease is false, pre-release tags are filtered
+	// out (default for `vcs tag latest`); pass true to include them.
+	// Returns the raw tag string (preserving the source's prefix
+	// style, e.g. `v1.2.3` / `release-1.2.3`), the parsed Version,
+	// and any error.
+	LatestTag(includePrerelease bool) (string, Version, error)
 
 	// IsClean reports whether the worktree has no uncommitted changes
 	// requiring action (DR-0020 PR-2). Definitions per backend:
@@ -498,12 +503,12 @@ func (g *gitBackend) ListTags() ([]string, error) {
 }
 
 // LatestTag picks the SemVer-largest tag from ListTags.
-func (g *gitBackend) LatestTag() (Version, error) {
+func (g *gitBackend) LatestTag(includePrerelease bool) (string, Version, error) {
 	tags, err := g.ListTags()
 	if err != nil {
-		return Version{}, err
+		return "", Version{}, err
 	}
-	return pickLatestSemverTag(tags)
+	return pickLatestSemverTag(tags, includePrerelease)
 }
 
 // IsClean returns true when both `git diff --quiet` (unstaged) and
@@ -575,12 +580,12 @@ func (j *jjBackend) ListTags() ([]string, error) {
 }
 
 // LatestTag picks the SemVer-largest tag from ListTags.
-func (j *jjBackend) LatestTag() (Version, error) {
+func (j *jjBackend) LatestTag(includePrerelease bool) (string, Version, error) {
 	tags, err := j.ListTags()
 	if err != nil {
-		return Version{}, err
+		return "", Version{}, err
 	}
-	return pickLatestSemverTag(tags)
+	return pickLatestSemverTag(tags, includePrerelease)
 }
 
 // Diff returns the patch from `rev` to the current working tree (= the

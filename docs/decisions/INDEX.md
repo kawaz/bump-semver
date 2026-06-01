@@ -29,6 +29,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0024](./DR-0024-glob-prefix.md) — `glob:<pattern>` 入力モード (タスクランナー多段引数渡しでの shell glob ブレ吸収。`*` / `**` / `[]` / `{}` / `~` + `--glob-*` 三種フラグ + no-match silent-skip)
 - [DR-0025](./DR-0025-auto-advance-description-check.md) — `--jj-bookmark-auto-advance` の description 必須 check (dirty branch で undescribed @ を target にする push reject ループを早期 fail + `jj describe` hint で抑止、判定は jj template engine 経由)
 - [DR-0026](./DR-0026-auto-advance-delegate-to-jj.md) — `autoAdvanceBookmark` を jj 公式 `jj bookmark advance` (jj 0.39+) に委譲。existence/ancestor/at-target chain ~50 行を削除、clean 時の at-@ short-circuit と DR-0025 description check のみ外側に残す
+- [DR-0027](./DR-0027-derived-sync-mini-dsl-and-regex-reject.md) — 派生 sync check の mapping DSL 採用 (`vcs outdated`) / `regex:` 不採用。`glob:` 拡張で 可変パーツが順に backref 登録 + `{}` 必須 / `*`/`**`/`[]` 任意 + `--` ペア区切り + 自動除外 + `--explain` 必須。MS-DOS COMMAND.COM / Unix mmv 系譜の現代的整理
 
 ## Archived
 

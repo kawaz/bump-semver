@@ -467,6 +467,20 @@ func TestJjBackend_Push_ExportRetryGenericFallback(t *testing.T) {
 	})
 }
 
+// setupJjForAutoAdvance builds the common jj fixture shared by every
+// AutoAdvance jj test: a colocated jj repo with origin/main wired up via
+// setupJjRepoWithRemote, and the local `main` bookmark planted at @--
+// so auto-advance has somewhere forward to move. Per-test specifics
+// (dirty working copy, undescribed parent, describe message, etc.) stay
+// inline in the test since they're what each variant is actually
+// pinning.
+func setupJjForAutoAdvance(t *testing.T) (work, bare string) {
+	t.Helper()
+	work, bare = setupJjRepoWithRemote(t, nil, "1.0.0")
+	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	return work, bare
+}
+
 // --- DR-0020 PR-5.2 / PR-5.2.1: --jj-bookmark-auto-advance dispatcher tests
 //
 // PR-5.2 adds `vcs push --jj-bookmark-auto-advance`. PR-5.2.1 reframes the
@@ -526,9 +540,7 @@ func TestRun_VcsPush_AutoAdvance_JjForward(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
-	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
-	// Place main bookmark before @- so auto-advance has work to do.
-	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	work, bare := setupJjForAutoAdvance(t)
 	withCwd(t, work, func() {
 		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
 			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
@@ -553,8 +565,7 @@ func TestRun_VcsPush_AutoAdvance_JjDirty(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
-	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
-	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	work, bare := setupJjForAutoAdvance(t)
 	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -589,8 +600,7 @@ func TestRun_VcsPush_AutoAdvance_JjCleanTargetNoDescription(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
-	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
-	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	work, _ := setupJjForAutoAdvance(t)
 	// Build an undescribed @-: jj new on top of the current @ (which is
 	// itself an undescribed auto-created change) so the new @- inherits
 	// the no-description state, and @ stays clean+empty above it.
@@ -627,8 +637,7 @@ func TestRun_VcsPush_AutoAdvance_JjDirtyNoDescription(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
-	work, _ := setupJjRepoWithRemote(t, nil, "1.0.0")
-	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	work, _ := setupJjForAutoAdvance(t)
 	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -667,8 +676,7 @@ func TestRun_VcsPush_AutoAdvance_JjDirtyWhitespaceDescription(t *testing.T) {
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
-	work, bare := setupJjRepoWithRemote(t, nil, "1.0.0")
-	runIn(t, work, "jj", "bookmark", "set", "main", "-r", "@--", "--allow-backwards")
+	work, bare := setupJjForAutoAdvance(t)
 	if err := writeFile(filepath.Join(work, "VERSION"), "9.9.9\n"); err != nil {
 		t.Fatal(err)
 	}

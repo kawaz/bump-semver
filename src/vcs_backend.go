@@ -1090,20 +1090,14 @@ func (g *gitBackend) Fetch(remote string) error {
 // Mirrors CurrentBranch's "unknown failure defaults to a safe code"
 // approach.
 func (g *gitBackend) Push(opts pushOpts) error {
-	// Defensive (DR-0020 PR-5.2): the dispatcher rejects
-	// --jj-bookmark-auto-advance on git repos at exit 2 BEFORE reaching
-	// here, so this branch is unreachable through the CLI. We keep it as
-	// belt-and-suspenders against future dispatcher refactors and to
-	// make the "git ignores the flag" semantics structurally impossible
-	// (silent ignore would betray the `--jj-` prefix invariant — the
-	// prefix promises "jj only", a silent no-op on git would let a
-	// future-CLI-typo land an unintended push without complaint).
-	if opts.jjBookmarkAutoAdvance {
-		return &exitErr{
-			code: exitCodeVCSExec,
-			msg:  "git: --jj-bookmark-auto-advance is jj-specific and should be rejected at the dispatcher (this is a defensive backend guard; please file a bug)",
-		}
-	}
+	// DR-0020 PR-5.2.1 (backend-prefix general rule): opts.jjBookmarkAutoAdvance
+	// is a jj-only flag (`--jj-` prefix). On the git backend it is a
+	// **silent no-op** — the prefix already tells the user it's a jj-side
+	// hook, so git just ignores it and runs a normal push. (PR-5.2
+	// originally rejected here at exit 3 as a "should never happen"
+	// belt-and-suspenders; PR-5.2.1 drops it since the dispatcher reject
+	// is also gone — the new contract is "git ignores --jj-* flags",
+	// period.)
 	stdout, stderr, code, err := runBackendCapture("git", "push", opts.remote, opts.name+":"+opts.name)
 	if err != nil {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}

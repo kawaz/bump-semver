@@ -2680,24 +2680,28 @@ func TestJjBackend_Push_AutoAdvance_Dirty(t *testing.T) {
 	}
 }
 
-// TestGitBackend_Push_AutoAdvance_Reject: --jj-bookmark-auto-advance reaching
-// the git backend is a "should never happen" condition (the dispatcher
-// rejects it at exit 2 before calling Push). Defensive: if it slips through,
-// gitBackend.Push must refuse rather than silently no-op.
-func TestGitBackend_Push_AutoAdvance_Reject(t *testing.T) {
+// TestGitBackend_Push_AutoAdvance_SilentNoOp: PR-5.2.1 (backend-prefix
+// general rule) — when --jj-bookmark-auto-advance reaches the git backend
+// it is a **silent no-op** (the `--jj-` prefix structurally tells the
+// user it's jj-only, so git simply ignores it and runs a normal push).
+// PR-5.2 previously rejected here at exit 3 as a defensive guard; the new
+// contract is "git ignores jj-prefixed flags", verified by this test.
+func TestGitBackend_Push_AutoAdvance_SilentNoOp(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
-	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
 	withCwd(t, work, func() {
 		b := &gitBackend{}
-		err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true})
-		if err == nil {
-			t.Fatal("gitBackend.Push must refuse jjBookmarkAutoAdvance")
-		}
-		var ee *exitErr
-		if !errors.As(err, &ee) {
-			t.Errorf("expected *exitErr, got: %v", err)
+		if err := b.Push(pushOpts{name: "main", remote: "origin", jjBookmarkAutoAdvance: true}); err != nil {
+			t.Fatalf("gitBackend.Push with jjBookmarkAutoAdvance must silently no-op + push, got: %v", err)
 		}
 	})
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(bareSHA)) == "" {
+		t.Errorf("bare should have main after silent no-op push")
+	}
 }

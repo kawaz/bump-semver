@@ -467,51 +467,56 @@ func TestJjBackend_Push_ExportRetryGenericFallback(t *testing.T) {
 	})
 }
 
-// --- DR-0020 PR-5.2: --jj-bookmark-auto-advance dispatcher tests ---------
+// --- DR-0020 PR-5.2 / PR-5.2.1: --jj-bookmark-auto-advance dispatcher tests
 //
-// PR-5.2 adds `vcs push --jj-bookmark-auto-advance`. The flag is opt-in,
-// jj-only (git backend rejects with exit 2 + a `jj-specific` hint), and
-// threads through to the backend Push which performs the
-// clean → ancestor → forward-move precondition chain (covered at the
-// backend layer in vcs_backend_test.go). The dispatcher tests below pin:
+// PR-5.2 adds `vcs push --jj-bookmark-auto-advance`. PR-5.2.1 reframes the
+// flag under the **backend-prefix general rule** (kawaz 2026-06-01 確定):
+// `--jj-*` / `--git-*` flags route by name to their backend; the other
+// backend silently ignores them. The dispatcher tests below pin:
 //
 //   - parser accepts the flag (no false-positive "unknown flag" rejection)
-//   - on a git repo, the flag is rejected with exit 2 + a hint mentioning
-//     "jj-specific" and the flag name (so the user knows what to drop)
+//   - on a git repo, the flag is a silent no-op — the push proceeds
+//     normally, no "jj-specific" diagnostic in stderr
 //   - on a jj repo, the flag reaches the backend (= forward-move case
 //     succeeds, mirroring TestRun_VcsPush_Branch but with the flag set)
 //
 // Quiet rules and stdout/stderr passthrough are unchanged from PR-5/5.1;
 // re-asserting them here would be redundant.
 
-// TestRun_VcsPush_AutoAdvance_GitReject: passing the jj-only flag to a git
-// repo is a usage error (exit 2). The hint must name the flag and the
-// "jj-specific" reason so the user can see what went wrong without
-// re-reading the help.
-func TestRun_VcsPush_AutoAdvance_GitReject(t *testing.T) {
+// TestRun_VcsPush_AutoAdvance_GitSilentNoOp: passing the jj-prefixed flag
+// to a git repo is a **silent no-op** (PR-5.2.1, backend-prefix general
+// rule). The push completes normally, exit 0, and no auto-advance /
+// jj-specific text leaks into stderr. The same script can therefore run
+// against both jj and git backends without conditional branching.
+func TestRun_VcsPush_AutoAdvance_GitSilentNoOp(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
-	work, _ := setupGitRepoWithRemote(t, nil, "1.0.0")
+	work, bare := setupGitRepoWithRemote(t, nil, "1.0.0")
 	withCwd(t, work, func() {
 		var stderr bytes.Buffer
 		err := run([]string{"vcs", "push", "--branch", "main", "--jj-bookmark-auto-advance"},
 			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
-		if err == nil {
-			t.Fatal("--jj-bookmark-auto-advance on a git repo should fail")
+		if err != nil {
+			t.Fatalf("--jj-bookmark-auto-advance on git should be silent no-op + normal push, got: %v (stderr=%q)", err, stderr.String())
 		}
-		var ee *exitErr
-		if !errors.As(err, &ee) || ee.code != exitCodeUsage {
-			t.Errorf("expected exit %d, got: %v", exitCodeUsage, err)
-		}
-		s := stderr.String() + ee.msg
-		if !strings.Contains(s, "--jj-bookmark-auto-advance") {
-			t.Errorf("error should name the flag, got: %q", s)
-		}
-		if !strings.Contains(s, "jj-specific") && !strings.Contains(s, "jj-only") {
-			t.Errorf("error should explain the flag is jj-specific, got: %q", s)
+		s := stderr.String()
+		// No backend-prefix diagnostic — the flag is structurally a
+		// jj-side hook; git just ignores it. (The normal git push
+		// success diagnostic is fine; we only forbid auto-advance
+		// or "jj-specific" wording, which would indicate the old
+		// reject path is still active.)
+		if strings.Contains(s, "jj-specific") || strings.Contains(s, "auto-advance") {
+			t.Errorf("git push should not surface --jj-bookmark-auto-advance in stderr (silent no-op), got: %q", s)
 		}
 	})
+	bareSHA, err := runBackendCmdIn(bare, "git", "rev-parse", "main")
+	if err != nil {
+		t.Fatalf("bare rev-parse main: %v", err)
+	}
+	if strings.TrimSpace(string(bareSHA)) == "" {
+		t.Errorf("bare should have main after silent no-op push")
+	}
 }
 
 // TestRun_VcsPush_AutoAdvance_JjForward: the happy path — clean jj working

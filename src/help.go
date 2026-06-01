@@ -740,7 +740,7 @@ Arguments:
                    auto-detection. --bookmark accepted as a synonym.
   --remote REMOTE  Target remote name. Defaults to "origin" when omitted.
 
-jj-specific options (rejected with exit 2 in a git repo):
+jj-specific options (silent no-op on git — backend-prefix general rule):
   --jj-bookmark-auto-advance   Move the bookmark to the publishable
                                commit before pushing. Target depends on
                                the working copy:
@@ -798,8 +798,7 @@ Global Options:
 Exit codes:
   0   success (push completed, or idempotent up-to-date)
   2   usage error (--branch/--bookmark missing or specified twice,
-                   --force passed, positional args supplied, unknown flag,
-                   --jj-bookmark-auto-advance on a git repo)
+                   --force passed, positional args supplied, unknown flag)
   3   VCS subprocess error (unknown remote, network failure, not a repo,
                             jj git export failure persisted across retry,
                             --jj-bookmark-auto-advance refused: bookmark

@@ -472,17 +472,17 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
-	// PR-5.2: --jj-bookmark-auto-advance is jj-only. Reject at the
-	// dispatcher (exit 2 + hint naming the flag and the jj-specific
-	// reason) so the message tells the user exactly what to drop. The
-	// gitBackend.Push also has a defensive reject for the unreachable
-	// case, but the user-facing diagnostic must come from here — the
-	// backend's "please file a bug" wording is meant for the
-	// unreachable branch.
-	if args.vcsPush.JjBookmarkAutoAdvance && b.Kind() == "git" {
-		return emitVcsUsage(stderr, args,
-			fmt.Errorf("vcs push: --jj-bookmark-auto-advance is jj-specific; this repo uses git (drop the flag, or run from a jj workspace)"))
-	}
+	// DR-0020 PR-5.2.1 (backend-prefix general rule, kawaz 2026-06-01 確定):
+	// --jj-* / --git-* flags are backend-specific by *name*. The structural
+	// prefix already tells the user "this is for backend X only", so when
+	// the active backend is the other one, the flag is **silent no-op**
+	// (not an error). Rationale: a user-or-script-driven `vcs push
+	// --jj-bookmark-auto-advance` should "just work" on both jj and git
+	// repos — on jj it auto-advances, on git it does nothing, push proceeds
+	// either way. Subcommand split for jj-specific operations is the wrong
+	// granularity (kawaz: 「jj 固有の操作である bookmark-auto-advance を
+	// サブコマンドにするのも違う」). PR-5.2 originally exited 2 on git;
+	// PR-5.2.1 removes that reject (here and in gitBackend.Push).
 	// PR-5.1: forward the underlying tool's success-path diagnostic
 	// ("Everything up-to-date" / "Nothing changed" / bookmark moves) by
 	// handing the backend the dispatcher's own stdout/stderr. Quiet

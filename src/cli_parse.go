@@ -475,13 +475,13 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("--remote specified twice")
 			}
 			out.vcsPush.Remote = ptr(strings.TrimPrefix(a, "--remote="))
-		// DR-0020 PR-5.2: --jj-bookmark-auto-advance (vcs push only,
-		// jj backend only). Boolean opt-in. Parsed here so the
-		// parser doesn't emit "unknown flag for 'vcs push'"; the
-		// jj-vs-git semantic check happens in runVcsCmdPush after
-		// backend detection (= exit 2 with a hint naming the flag
-		// and the jj-specific reason, instead of the generic
-		// unknown-flag message).
+		// DR-0020 PR-5.2 / PR-5.2.1: --jj-bookmark-auto-advance is
+		// the canonical example of the backend-prefix general rule
+		// (--jj-* / --git-* flags are routed by name to their
+		// backend, ignored silently on the other backend). Parsed
+		// here as a verb-local boolean on `vcs push`; the actual
+		// auto-advance step runs in jjBackend.Push, gitBackend.Push
+		// just ignores it.
 		case a == "--jj-bookmark-auto-advance" && out.vcsVerb == "push":
 			out.vcsPush.JjBookmarkAutoAdvance = true
 		// --- DR-0020 PR-6: vcs tag push flags ----------------------

@@ -102,11 +102,20 @@ trade-off:
 (= no auto-advance) は dirty を bookmark に乗せない (= 既に bookmark がある場所を push)
 ので、description は元々ユーザ責任。
 
+## 関連 follow-up を merge (= 本 refactor で一気に消化)
+
+- **jj log 5 calls 統合 (5→1 複合 template)**: code-review (reuse) で指摘された
+  efficiency cleanup。`present(NAME)` / `NAME & ::@` / `NAME & @` / target description /
+  `NAME & target` を 1 jj log + 複合 template で取る案。**本 refactor で `autoAdvanceBookmark`
+  ごと消える**ので単独 land せず、ここで一括処理する (= 委譲後は call 数自体が 1-2 個
+  まで激減、複合 template 案は moot)
+
 ## 次のアクション
 
 1. DR 起票 (新 DR-0026 等): `jj bookmark advance` 委譲 refactor
 2. jj 最低 version を README / docs に明記
-3. `autoAdvanceBookmark` を委譲版に書き換え
+3. `autoAdvanceBookmark` を委譲版に書き換え (= 自前 chain を `jj bookmark advance --to`
+   1 コマンドに圧縮、上記「5→1 統合」案は自動的に解消)
 4. test 更新 (= エラーメッセージ assert を jj 仕様に合わせる)
 5. journal 記録
 

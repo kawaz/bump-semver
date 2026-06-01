@@ -34,8 +34,6 @@ kawaz の今回スコープ確定 (session 6a0a262f, 0c769a9b 2026-05-31):
 | 副次 check | links: ja ↔ en 相互リンクの存在 (`> [English](./X.md) | 日本語` / `> English | [日本語](./X-ja.md)`) を head 5 行から検出 |
 | 未追跡 file 扱い | timestamp 取得失敗時は 0 に正規化 (exit 2 にならないように) |
 
-**重要な内的矛盾**: 現行実装は ja → en の 1 対 1 (誤マッチ回避意図) なのに対し、kawaz の口頭アイデア (ee1ebc05) では ja → **多言語** (`-他lng.md` も探す) + **新規パス群**を含む。マッピング軸でこの差分のどちらを採るかは kawaz 判断事項として明示しておく。
-
 ## 1. マッピング方法の要件軸
 
 「ja (= A) から派生 (= A') をどう導出するか」のバリエーション。
@@ -45,7 +43,7 @@ kawaz の今回スコープ確定 (session 6a0a262f, 0c769a9b 2026-05-31):
 - 入力 glob で正本集合を確定 (`**/*-ja.md`)
 - 各正本から suffix (`-ja`) を strip → 派生候補 (`${prefix}.md`) を導出
 - 派生候補が **実在すれば対象**、不在は無視 (= 現行 1 対 1 挙動)
-- 拡張案: 同じ prefix の `${prefix}-??.md` / `${prefix}-???.md` (2-3 文字 lang code) も合わせて派生に含める (= kawaz ee1ebc05 案)
+- kawaz ee1ebc05 案: 同じ prefix の `${prefix}-??.md` / `${prefix}-???.md` (2-3 文字 lang code) も派生に含める (多言語拡張)
 - 長所: シンプル、命名規約に乗れば設定 0、kawaz 元アイデアに最も近い
 - 短所: **誤マッチ問題**: `data-layout-ja.md` の場合 prefix=`data-layout`、`data-layout-history.md` を拾いうる (現行は en 1 対 1 でこれを回避)。多言語拡張するなら誤マッチを別ルールで弾く必要 (例: lang code を ISO 639-1/2 ホワイトリストに限定)
 - 短所: 正本側 suffix が 1 種類 (`-ja`) しか想定できない (en 正本 = `*.md` 起点だと拡張子だけになり区別不能)
@@ -268,9 +266,9 @@ kawaz の今回スコープ確定 (session 6a0a262f, 0c769a9b 2026-05-31):
 bump-semver pair check --glob '**/*-ja.md' --strip '-ja'
 ```
 
-- glob で正本集合、`--strip` で派生 path 導出 (`-ja` → en 1 対 1)
-- pros: シンプル、kawaz ee1ebc05 の核心案
-- cons: 多言語非対応、1 対 N に拡張する場合は別案要
+- glob で正本集合、`--strip` で派生 path 導出 (`-ja` → 単一派生 1 対 1)
+- pros: シンプル、現行実装と等価
+- cons: 多言語非対応、kawaz ee1ebc05 の多言語 + 新規パス群とは別方向
 
 ### 案 B: glob + suffix-strip + 多言語拡張
 
@@ -369,7 +367,7 @@ bump-semver pair init ...      # 派生不在ファイルの stub 生成 (副作
 ## 9. 議論起点・次のアクション
 
 - **kawaz レビュー観点**:
-  - 1 章: マッピング軸 — 現行 1 対 1 (誤マッチ回避) vs kawaz ee1ebc05 多言語の方針確定
+  - 1 章: マッピング軸 — どの案を採るか (1.1〜1.7、kawaz ee1ebc05 多言語が起点)
   - 2 章: 派生不在の扱い — 「実在のみ」「stub 生成」「仮想ペア fail」のどれを採るか
   - 3 章: 鮮度比較機構 — committer timestamp (現行) vs commit-id 同一性 vs ancestry 判定
   - 6 章: 実装場所 — bump-semver verb 集約 vs 別 CLI 切り出し

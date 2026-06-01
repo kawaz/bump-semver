@@ -72,8 +72,7 @@ bump-version level="patch": ensure-clean
 
 # push to origin/main with gates: ci + check-translations + check-version-bumped
 push: ci check-translations check-version-bumped
-    # branch on jj/git until PR-5.2.1 makes --jj-bookmark-auto-advance silent no-op on git
-    if bump-semver vcs is jj; then bump-semver vcs push --branch main --jj-bookmark-auto-advance; else bump-semver vcs push --branch main; fi
+    bump-semver vcs push --branch main --jj-bookmark-auto-advance
 
 # ---------- utility ----------
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // vcsBackend is the unified interface used by the `vcs` subcommand
@@ -233,6 +234,49 @@ type vcsBackend interface {
 	// trade rare clean retries for the common "remote is offline, I just
 	// want to clean up my local tags" use case.
 	TagDelete(opts tagDeleteOpts) error
+
+	// FileTimestamp returns the unix-epoch committer timestamp of the
+	// most recent commit that touched `path`, or 0 when the path is not
+	// tracked (= no committer history). Used by `vcs outdated` (DR-0027)
+	// to compare freshness of a derived file against its source(s).
+	//
+	// The 0-for-untracked normalization mirrors the legacy translation
+	// check (pkf-tasks/tasks/docs/translations.pkl): untracked files
+	// behave as "infinitely stale", so a derived path that hasn't been
+	// committed yet is treated as older than any committed source —
+	// which is the right answer when the source moved on but the
+	// generator hasn't run yet.
+	//
+	// Errors from the underlying VCS (subprocess failures, not a repo)
+	// surface as *exitErr{exitCodeVCSExec}; "path exists in cwd but is
+	// untracked" is NOT an error (= the 0 case above).
+	//
+	//   - git: `git log -1 --format=%ct -- <path>`
+	//   - jj:  `jj log --no-graph -T 'committer.timestamp().format("%s")'
+	//          -r 'latest(::@ & files("<path>"))'`
+	FileTimestamp(path string) (int64, error)
+
+	// CountCommitsSince returns the number of commits in the source's
+	// history that committer-touch `path` AND are strictly newer than
+	// `sinceTS` (unix epoch). Used by `vcs outdated --explain` to
+	// surface a "N commits behind" diagnostic.
+	//
+	// The "behind" count is a coarse-but-cheap summary: it answers the
+	// question "how many source-touching commits has the derived path
+	// fallen behind?" without walking the derived file's own history.
+	// This is intentionally informational; the stale/fresh decision is
+	// the ts comparison itself (= `tgt_ts < src_ts`), not the count.
+	//
+	// `sinceTS == 0` (= derived untracked) returns the total count of
+	// commits that ever touched `path` — a useful "you've never run
+	// the generator" signal.
+	//
+	//   - git: `git rev-list --count --since=<ts+1> -- <path>` (with the
+	//          +1 to exclude the boundary commit, matching strict-newer
+	//          semantics)
+	//   - jj:  count of `description(...) ~ none() & files("<path>") &
+	//          committer_date(after:"@<ts+1>")` revset
+	CountCommitsSince(path string, sinceTS int64) (int, error)
 }
 
 // tagPushOpts collects the arguments for TagPush. Kept as a struct (vs.
@@ -1891,4 +1935,135 @@ func jjGitExportOrWrap() error {
 		code: exitCodeVCSExec,
 		msg:  jjGitExportRecoveryMessage(finalStderr),
 	}
+}
+
+// --- FileTimestamp / CountCommitsSince (DR-0027) -------------------------
+
+// FileTimestamp (git): `git log -1 --format=%ct -- <path>` returns the
+// committer timestamp (unix epoch) of the most recent commit touching
+// path. Empty output (path untracked / never committed) → 0 (DR-0027
+// untracked-as-zero rule, matches the legacy translation-lag pkl
+// behaviour).
+func (g *gitBackend) FileTimestamp(path string) (int64, error) {
+	out, err := runBackendCmd("git", "log", "-1", "--format=%ct", "--", path)
+	if err != nil {
+		return 0, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return 0, nil
+	}
+	return parseEpochOrZero(s), nil
+}
+
+// FileTimestamp (jj): the revset `latest(::@ & files("<path>"))` picks
+// the most recent ancestor of @ that touches path; the committer-
+// timestamp template gives us the unix epoch. Empty output = path
+// untracked → 0.
+func (j *jjBackend) FileTimestamp(path string) (int64, error) {
+	revset := "latest(::@ & files(" + jjStringLiteral(path) + "))"
+	out, err := runBackendCmd("jj", "log", "--no-graph",
+		"-r", revset,
+		"-T", `committer.timestamp().format("%s")`)
+	if err != nil {
+		return 0, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return 0, nil
+	}
+	return parseEpochOrZero(s), nil
+}
+
+// CountCommitsSince (git): `git rev-list --count HEAD --since=@<ts+1> --
+// <path>`. We pass `--since` with a strict +1 second so the boundary
+// commit (= the one that established sinceTS) is excluded; only
+// strictly-newer source-touching commits contribute.
+//
+// `@<unix-epoch>` is git's documented epoch literal (parsed by
+// approxidate identically to a bare integer in current versions, but
+// the `@`-prefixed form is the explicit, version-stable spelling).
+//
+// `sinceTS == 0` means the derived path is untracked, so we want the
+// total count of commits that touched the source — drop `--since`.
+func (g *gitBackend) CountCommitsSince(path string, sinceTS int64) (int, error) {
+	args := []string{"rev-list", "--count"}
+	if sinceTS > 0 {
+		args = append(args, fmt.Sprintf("--since=@%d", sinceTS+1))
+	}
+	args = append(args, "HEAD", "--", path)
+	out, err := runBackendCmd("git", args...)
+	if err != nil {
+		return 0, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return 0, nil
+	}
+	return int(parseEpochOrZero(s)), nil
+}
+
+// CountCommitsSince (jj): revset for source-touching commits in ::@
+// with committer_date strictly newer than sinceTS. jj's CLI doesn't
+// expose a revset length primitive, so we count the lines emitted by
+// a one-line-per-revision template.
+//
+// jj's `committer_date(after:"<ISO>")` accepts an ISO-8601 timestamp
+// (not a unix-epoch literal); we format sinceTS+1 in UTC to match
+// the strict-newer semantics the git branch uses with `--since=ts+1`.
+//
+// `sinceTS == 0` drops the date filter so we get the total source-
+// touch count (matches the git untracked-derived branch).
+func (j *jjBackend) CountCommitsSince(path string, sinceTS int64) (int, error) {
+	revset := "::@ & files(" + jjStringLiteral(path) + ")"
+	if sinceTS > 0 {
+		iso := time.Unix(sinceTS+1, 0).UTC().Format("2006-01-02T15:04:05Z")
+		revset = revset + fmt.Sprintf(" & committer_date(after:\"%s\")", iso)
+	}
+	out, err := runBackendCmd("jj", "log", "--no-graph",
+		"-r", revset,
+		"-T", `"X\n"`)
+	if err != nil {
+		return 0, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == "X" {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// jjStringLiteral wraps s in jj-revset double-quote form. Internal `"`
+// and `\` are backslash-escaped. Suitable for `files("…")` literals in
+// the revset language; not a general-purpose shell quoter.
+func jjStringLiteral(s string) string {
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c == '\\' {
+			sb.WriteByte('\\')
+		}
+		sb.WriteByte(c)
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
+
+// parseEpochOrZero parses s as a unix-epoch integer. Returns 0 on parse
+// failure — defensive against the rare case where a backend changes its
+// output format without us noticing (better to surface as "stale"
+// signal than crash the verb).
+func parseEpochOrZero(s string) int64 {
+	var n int64
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int64(c-'0')
+	}
+	return n
 }

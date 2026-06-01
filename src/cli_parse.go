@@ -148,6 +148,20 @@ type vcsPushOpts struct {
 	JjBookmarkAutoAdvance bool
 }
 
+// vcsOutdatedOpts groups verb-local flags for `vcs outdated` (DR-0027 /
+// DR-0028). See `docs/specs/glob-backref-v0.1.0.md` for the matching spec.
+//
+// Explain: `--explain` — list every expanded (source → derived) row with
+// status. Exit code stays 0 (diagnostic mode).
+//
+// Strict: `--strict` — treat a literal FROM that matches no file (= likely
+// typo) as exit 1. Default warns to stderr and exits 0 for compatibility
+// with the original DR-0027 silent-skip semantics (= blocker #3 mitigation).
+type vcsOutdatedOpts struct {
+	Explain bool
+	Strict  bool
+}
+
 // vcsTagOpts groups verb-local flags for `vcs tag` (DR-0020 PR-6).
 // `vcs tag` is the first two-tier verb in the family — argv[1] is the
 // parent "tag", argv[2] is the sub-verb ("push" | "delete"), argv[3..]
@@ -192,14 +206,15 @@ type cliArgs struct {
 	// Verb-grouped opts. Each sub-struct is read only when its owning
 	// verb is dispatched (bump for `bump`, vcsCommit for `vcs commit`,
 	// etc). vcsBase / output are common to multiple verbs.
-	bump      bumpOpts
-	output    outputOpts
-	vcsBase   vcsBaseOpts
-	vcsDiff   vcsDiffOpts
-	vcsCommit vcsCommitOpts
-	vcsPush   vcsPushOpts
-	vcsTag    vcsTagOpts
-	glob      globOpts
+	bump        bumpOpts
+	output      outputOpts
+	vcsBase     vcsBaseOpts
+	vcsDiff     vcsDiffOpts
+	vcsCommit   vcsCommitOpts
+	vcsPush     vcsPushOpts
+	vcsTag      vcsTagOpts
+	vcsOutdated vcsOutdatedOpts
+	glob        globOpts
 }
 
 var bumpActions = map[string]bool{
@@ -371,7 +386,7 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 	// Per-verb help only for known verbs — unknown verbs must
 	// surface as an exit-2 error, not as a silent help fallthrough.
 	// We route them to runVcsCmd which emits the proper usage error.
-	isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag"
+	isKnownVerb := out.vcsVerb == "get" || out.vcsVerb == "is" || out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "fetch" || out.vcsVerb == "push" || out.vcsVerb == "tag" || out.vcsVerb == "outdated"
 	// PR-6: `vcs tag` is the first two-tier verb. Sub-verb capture
 	// lives here so flag scanning can gate `--rev` / `--allow-move`
 	// on it the same way the single-tier verbs gate their flags.
@@ -646,10 +661,12 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			out.output.JSON = true
 		case a == "--no-hint":
 			out.output.Verbosity.raise(outputNoHint)
-		case strings.HasPrefix(a, "--glob-") && (out.vcsVerb == "diff" || out.vcsVerb == "commit"):
+		case strings.HasPrefix(a, "--glob-") && (out.vcsVerb == "diff" || out.vcsVerb == "commit" || out.vcsVerb == "outdated"):
 			// DR-0024: --glob-* family is verb-local to diff/commit (the
-			// two vcs verbs that accept glob: selectors). Routed
-			// verb-aware so unrelated verbs (get/is/fetch/push/tag) reject
+			// two vcs verbs that accept glob: selectors). DR-0027 adds
+			// `outdated` (which expands glob: + capture backrefs from
+			// FROM, then optional glob: discovery in TO). Routed verb-
+			// aware so unrelated verbs (get/is/fetch/push/tag) reject
 			// the flag rather than silently accepting it.
 			matched, ferr := parseGlobFlag(a, &out)
 			if ferr != nil {
@@ -659,6 +676,26 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 				verbLabel := out.vcsVerb
 				return cliArgs{}, fmt.Errorf("unknown flag for 'vcs %s': %s", verbLabel, a)
 			}
+		case a == "--explain" && out.vcsVerb == "outdated":
+			// DR-0027: --explain prints the full FROM→TO expansion + per-
+			// derived freshness status instead of running the stale
+			// predicate. Verb-local; other verbs reject it via the
+			// unknown-flag catch-all below.
+			out.vcsOutdated.Explain = true
+		case a == "--strict" && out.vcsVerb == "outdated":
+			// DR-0028: --strict promotes literal-FROM-not-found from
+			// warn+exit0 (= default) to exit1, plugging the silent-green
+			// CI hole when a literal FROM is typo'd.
+			out.vcsOutdated.Strict = true
+		case a == "--" && out.vcsVerb == "outdated":
+			// DR-0027: `vcs outdated` uses `--` as a **pair separator**
+			// (`vcs outdated -- F1 T1 -- F2 T2 -- ...`), so we MUST keep
+			// it as a literal token in vcsArgs rather than slurping the
+			// rest in one go (the latter is the other vcs verbs'
+			// convention for "treat the tail as positionals"). The verb's
+			// dispatcher splits pair groups by scanning for `"--"` in
+			// vcsArgs.
+			out.vcsArgs = append(out.vcsArgs, a)
 		case a == "--":
 			out.vcsArgs = append(out.vcsArgs, rest[i+1:]...)
 			i = len(rest)

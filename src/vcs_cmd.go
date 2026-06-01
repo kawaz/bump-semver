@@ -26,9 +26,11 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdPush(args, stdout, stderr)
 	case "tag":
 		return runVcsCmdTag(args, stdout, stderr)
+	case "outdated":
+		return runVcsCmdOutdated(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag / outdated)", args.vcsVerb))
 	}
 }
 

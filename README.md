@@ -100,6 +100,10 @@ bump-semver vcs push --branch NAME [--remote REMOTE]   # jj users: --bookmark al
 bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]      # idempotent (rm -f semantic)
 bump-semver vcs tag latest [--source <tag|release>] [--include-prerelease] [--repository REPO] [--raw|--json]
+bump-semver vcs outdated FROM TO[..]                   # derived-sync check (single pair)
+bump-semver vcs outdated -- FROM TO[..] -- FROM TO[..] [-- ...]   # multiple pairs
+bump-semver vcs outdated [--explain] FROM TO[..]       # diagnostic table (always exits 0)
+bump-semver vcs outdated [--strict] FROM TO[..]        # literal-FROM-not-found → exit 1
 ```
 
 A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5); PR-6 adds `vcs tag push` / `vcs tag delete` (atomic create+push / idempotent delete, with `--allow-move` as the precise opt-in for tag relocation and exit 4 surfacing different-rev integrity violations); **PR-Tag-Latest (v0.29.0)** adds `vcs tag latest` (SemVer-largest tag printer with `--source tag|release` / `--repository` / `--raw` / `--json` / `--include-prerelease`), replacing the removed `vcs:latest-tag([REPO])` input. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
@@ -272,6 +276,49 @@ bump-semver vcs tag latest --source release --repository kawaz/bump-semver --jso
 Exit codes: `0` success; `2` usage (bad `--source` value, `--raw` + `--json`, positional args); `3` VCS / gh subprocess error OR `gh` missing for `--source release`.
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.
+
+**`vcs outdated FROM TO[..]`** ([DR-0027](./docs/decisions/DR-0027-derived-sync-mini-dsl-and-regex-reject.md) / [DR-0028](./docs/decisions/DR-0028-glob-backref-spec-v0.1.0-adoption.md), spec [glob-backref v0.1.0](./docs/specs/glob-backref-v0.1.0.md)) — predicate: every derived `TO` file must be at least as fresh as the `FROM` file that produced it, using committer-timestamp comparison (same lag-check the legacy translation gate uses, but verb-shaped). Stale → exit 1. The mini-DSL builds on the `glob:` prefix from DR-0024: variable parts in FROM (`*` / `**` / `{a,b,c}` / `[abc]`) capture in appearance order; `$N` / `${N}` substitute those captures into TO. In TO, `{a,b,c}` is a **mandatory** full expansion (every option must exist or the pair fails); `*` / `**` / `[]` are **optional** filesystem discovery (silent skip on no match). `?` is out of MVP scope (spec §2.1, future-reserved for v0.3+) and rejected with a pattern syntax error. Use `--explain` to print every expanded `(source → derived)` row with a freshness status; the diagnostic mode always exits 0. Use `--strict` to promote a literal-FROM-not-found from warn (default, exits 0) to exit 1.
+
+| Aspect | Behaviour |
+|---|---|
+| FROM shape | Literal path (`README.md`) OR `glob:<pattern>` (multi-source). Captures are per-source. |
+| TO shape | One or more patterns per pair. Each may use `$N`, `{}`, `glob:`, or be a literal. Source path is auto-excluded from its own derived set (per-source) |
+| Pair separator | `--` between pairs. Single pair: `--` optional. N≥2 pairs: each preceded by `--` |
+| Backref numbering | Every `*` / `**` / `{}` / `[]` consumes one `$N` slot in appearance order. `$0` / `${0}` = full matched path. `${N}` for N≥10. `$10` is rejected (= ambiguous with `${1}0`). Out-of-range N → empty string |
+| Freshness | `derived_ts < source_ts` → stale (matches the existing translation lag check). Untracked → ts=0 (= treated as infinitely stale) |
+| `**` zero-segment | `**` may match zero segments; `$N` then yields `.` (combined with `path.Clean` this avoids leading-slash bugs like `${1}/foo` → `/foo`) |
+| TO `glob:` escape | When TO begins with `glob:`, captured values are char-class-wrapped (`a*b` → `a[*]b`) so glob meta in captures stays literal at the 2nd-stage walk; the template's own `*` / `**` / `{}` / `[]` is preserved |
+| `--explain` | Prints `source → derived [status]` rows. Status: `fresh` / `stale: N commit(s) behind` / `missing, will fail` / `untracked: derived has no commit ts` |
+| `--strict` | Literal FROM with no match → exit 1 (= release-gate typo catch). Default warns to stderr but exits 0 (= back-compat) |
+| Shell escape | `$N` / `{}` / `--` collide with shell. **Always single-quote** FROM/TO patterns (bump-semver does no escape interpretation, DR-0024 §10.7) |
+
+```bash
+# T1 bundle (TypeScript src/ → compiled lib/).  $1 = ** segment, $2 = *.
+bump-semver vcs outdated 'glob:src/**/*.ts' 'lib/$1/$2.js'
+
+# T2 translation (single source, multiple mandatory derived)
+bump-semver vcs outdated README.md 'README-{ja,en}.md'
+
+# T3 codegen (proto/ → generated/, deep paths preserved)
+bump-semver vcs outdated 'glob:proto/**/*.proto' 'generated/$1/$2.pb.go'
+
+# Aggregate all three pairs in one invocation
+bump-semver vcs outdated \
+  -- 'glob:src/**/*.ts'       'lib/$1/$2.js' \
+  -- README.md                 'README-{ja,en}.md' \
+  -- 'glob:proto/**/*.proto'   'generated/$1/$2.pb.go'
+
+# Diagnose: print expansion + per-derived status
+bump-semver vcs outdated --explain 'glob:src/**/*.ts' 'lib/$1/$2.js'
+# →
+# src/foo.ts      →  lib/foo.js      [fresh: derived ts >= source ts]
+# src/sub/bar.ts  →  lib/sub/bar.js  [missing, will fail]
+
+# Release-gate: literal-FROM typo (= README-ja.MD with wrong case) → exit 1
+bump-semver vcs outdated --strict README.md 'README-{ja,en}.md'
+```
+
+Exit codes for `vcs outdated`: `0` every derived is fresh (or `--explain` mode regardless of status; bare `vcs outdated` with no args prints help and exits 0); `1` at least one derived is stale / missing / untracked, or (with `--strict`) a literal FROM matched no file; `2` usage error (malformed pair, `$10` ambiguous, bad backref shape); `3` VCS subprocess error (not a repo, etc.). MVP scope-out (= spec v0.1.0, separate DR if needed): `regex:` prefix (explicitly rejected — see DR-0027), `{}` nesting, `[^...]` complement char class, named capture `${name:pattern}`, `cmd:` GENERATOR scheme, cross-source auto-exclusion, pathological filenames (= glob meta in path).
 
 ### Flags
 

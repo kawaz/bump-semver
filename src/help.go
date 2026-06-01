@@ -410,6 +410,11 @@ Verbs:
                               Same-rev re-push is idempotent; different-rev needs --allow-move.
   tag delete NAME [--remote REMOTE]
                               Delete tag NAME locally and on REMOTE (idempotent — absent is OK).
+  outdated FROM TO[..]        Derived-sync predicate: fail if any derived TO
+                              is older than its FROM. Backrefs ($N) carry
+                              FROM's variable parts into TO; {a,b} in TO is a
+                              MANDATORY expansion; *, **, [] in TO are
+                              OPTIONAL discovery. (DR-0027)
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -1036,6 +1041,112 @@ Examples:
                                                      # external GitHub Releases
 `
 
+// helpVcsOutdated — see DR-0027 / DR-0028 + `docs/specs/glob-backref-v0.1.0.md`.
+const helpVcsOutdated = `bump-semver vcs outdated — derived-sync check via FROM→TO mapping [DR-0027 / DR-0028]
+
+Usage:
+  bump-semver vcs outdated FROM TO[..]
+  bump-semver vcs outdated -- FROM TO[..] -- FROM TO[..] -- ...
+  bump-semver vcs outdated [--explain] [--strict] ...
+
+The verb compares committer timestamps: each TO file must be at least
+as new as the FROM file that produced it. Stale (= TO older than FROM)
+yields exit 1; missing-mandatory derived paths also fail. The check is
+git/jj-agnostic — same backend probe as the rest of the vcs family.
+
+Argument shape:
+  FROM            One source pattern. Literal (README.md) or glob:<pat>.
+  TO              One or more derived patterns. Each may use:
+                    $N / ${N}    Substitute the N-th capture from FROM
+                                 (1..9 inline; ${10}+ requires braces).
+                                 $0 / ${0} = full matched path.
+                                 Out-of-range N → empty string.
+                    {a,b,c}      MANDATORY full expansion — every option
+                                 must exist on disk or the pair fails.
+                                 Empty alternative ({,foo}) is allowed.
+                    *, **, []    OPTIONAL filesystem discovery — matches
+                                 are checked, non-matches silently skip.
+                    glob:<pat>   2-stage TO discovery: captured values are
+                                 char-class-wrap escaped so glob meta in
+                                 captures stays literal in the 2nd-stage
+                                 walk (= spec §3.4.2).
+
+  --              Pair separator. With a single pair the '--' is OPTIONAL;
+                  with N>=2 pairs every group must be preceded by '--'.
+                  '$N' indexes scope to each FROM independently.
+
+Capture rules (FROM):
+  *           Captures the segment-bounded match (no '/').
+  **          Captures the multi-segment match (may include '/'). 0-segment
+              match yields '.' (combined with path.Clean this prevents the
+              '/foo' leading-slash bug for root-level matches).
+  {a,b,c}     Captures the selected alternative's source text literally.
+              Each {...} consumes ONE $N slot; the alternatives' contents
+              (incl. *, ** inside) do NOT get separate slots.
+              Unselected branches' nested * / ** / [] yield empty $N.
+  [abc]       Captures the matched single character.
+
+Automatic exclusion (per-source):
+  When a FROM source path happens to also fall under its own TO derived
+  set, the source is excluded from its own derived set.
+
+Options:
+  --explain   Print every expanded (source → derived) row with a status
+              diagnostic. Exit code stays 0 (diagnostic mode).
+  --strict    Treat a literal FROM that matches no file as exit 1.
+              Default behaviour warns to stderr and exits 0 for back-
+              compat with the original DR-0027 silent-skip semantics
+              (= use --strict in CI / release gates to catch typos).
+  --glob-dotfile=true|false       (default false)  Include dotfile paths in FROM expansion.
+  --glob-gitignored=true|false    (default true)   Respect .gitignore in FROM expansion.
+  --glob-ignorecase[=true|false]  (default false)  Case-insensitive match.
+
+Shell escape (READ THIS):
+  '$N' and '{a,b,c}' are shell special. Always SINGLE-QUOTE the FROM/TO
+  patterns:
+    bump-semver vcs outdated 'glob:src/**/*.ts' 'lib/$1/$2.js'      # good
+    bump-semver vcs outdated  glob:src/**/*.ts   lib/$1/$2.js        # bash will eat $1
+  bump-semver itself does NO escape interpretation — the literal token
+  it sees is what it operates on. (DR-0024 §10.7)
+
+Exit codes:
+  0   every derived is fresh (or --explain mode regardless of status);
+      with no args, prints this help and exits 0.
+  1   at least one derived is stale / missing, or (with --strict) a
+      literal FROM matched no file.
+  2   usage error (malformed pair, bad backref shape, '$10' ambiguous).
+  3   VCS subprocess error (not a repo, etc.).
+
+Examples:
+  # T1: bundle (TypeScript src/ → compiled lib/). $1 = ** segment, $2 = *.
+  bump-semver vcs outdated 'glob:src/**/*.ts' 'lib/$1/$2.js'
+
+  # T2: translation (single source, multiple mandatory derived)
+  bump-semver vcs outdated README.md 'README-{ja,en}.md'
+
+  # T3: codegen (proto/ → generated/, deep paths preserved)
+  bump-semver vcs outdated 'glob:proto/**/*.proto' 'generated/$1/$2.pb.go'
+
+  # Aggregate (three pairs in one invocation)
+  bump-semver vcs outdated \
+    -- 'glob:src/**/*.ts'       'lib/$1/$2.js' \
+    -- README.md                 'README-{ja,en}.md' \
+    -- 'glob:proto/**/*.proto'   'generated/$1/$2.pb.go'
+
+  # Diagnose: print expansion + per-derived status
+  bump-semver vcs outdated --explain 'glob:src/**/*.ts' 'lib/$1/$2.js'
+
+  # Release-gate: turn literal-FROM typos into exit 1
+  bump-semver vcs outdated --strict README.md 'README-{ja,en}.md'
+
+Out of MVP scope (= spec v0.1.0 / DR-0028 §2.1):
+  - regex: prefix (DR-0027 explicitly rejected)
+  - ? single-char wildcard (future-reserved for v0.3+)
+  - {} nesting        - [^abc] complement char class
+  - named capture (\${name:pattern})    - 病的 filename (=  glob meta in path)
+  - cross-source auto-exclusion       - cmd: GENERATOR scheme
+`
+
 // actionHelpTexts dispatches per-action help. Keys are CLI action
 // names. major/minor/patch share helpBump because the action name
 // itself disambiguates which component is bumped.
@@ -1061,4 +1172,5 @@ var actionHelpTexts = map[string]string{
 	"vcs tag latest": helpVcsTagLatest,
 	"vcs tag push":   helpVcsTagPush,
 	"vcs tag delete": helpVcsTagDelete,
+	"vcs outdated":   helpVcsOutdated,
 }

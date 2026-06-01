@@ -117,12 +117,12 @@ func TestExpandGlob_Patterns(t *testing.T) {
 			pat  string
 			want []string
 		}{
-			{"src/*.ts", []string{"src/a.ts"}},                                    // single-segment *
-			{"src/**/*.ts", []string{"src/a.ts", "src/sub/d.ts"}},                 // ** recursive
+			{"src/*.ts", []string{"src/a.ts"}},                    // single-segment *
+			{"src/**/*.ts", []string{"src/a.ts", "src/sub/d.ts"}}, // ** recursive
 			{"src/**/*.{ts,tsx}", []string{"src/a.ts", "src/b.tsx", "src/sub/d.ts", "src/sub/e.tsx"}},
-			{"src/[ab].*", []string{"src/a.ts", "src/b.tsx"}},  // [] char class
-			{"missing/**/*.ts", []string{}},                    // no-match → empty (silent)
-			{"VERSION-nope", []string{}},                        // literal no-match
+			{"src/[ab].*", []string{"src/a.ts", "src/b.tsx"}}, // [] char class
+			{"missing/**/*.ts", []string{}},                   // no-match → empty (silent)
+			{"VERSION-nope", []string{}},                      // literal no-match
 		}
 		for _, c := range cases {
 			got, err := expandGlob(c.pat, globOpts{}, defaultHomeFn)

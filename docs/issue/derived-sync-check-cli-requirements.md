@@ -452,9 +452,107 @@ bump-semver sync init ...      # 派生不在ファイルの stub 生成 (副作
 - **spec 確定後**: 別 PR で DR 起票 (DR-0024 or 次番号) → 実装着手 → DR-0022 follow-up クローズ
 - **本ドキュメントの破棄タイミング**: DR 起票後、本 issue メモは `docs/issue/` から delete、議論経緯は journal / DR 本文へ昇格 (kawaz の docs-knowledge-flow ルール準拠)
 
+## 10. kawaz 追加 DSL 案 (2026-06-01)
+
+`glob:` prefix 入力モード (= v0.30.0 で land、DR-0024) を **基盤** にした派生 sync check の **mini-DSL** 案。kawaz の自己評価「必須展開とマッチがうまく噛み合ってシンプルルールながらも矛盾なさそう」。
+
+### 10.1 後方参照 `$N`
+
+glob の wildcard マッチ展開**パーツ**毎に `$1` 〜 `$9` の後方参照を生成:
+
+- `*` = 1 group
+- `**` = 1 group
+- `[]` = 1 group (= 文字クラス 1 個)
+- `{}` = 1 group (= 分岐の選択値)
+
+例:
+
+```
+vcs sync-check 'glob:**/*-ja.md' '$1/$2.md'
+# -ja が正本、$1 = ** マッチ (= ディレクトリパス)、$2 = * マッチ (= basename 前半)
+```
+
+### 10.2 必須展開とマッチの使い分け
+
+- **`{a,b,c}` 分岐展開** = **全展開後の path が必須** (= 全部存在チェック)
+- **`*` / `**` / `[]` wildcard** = **マッチ集合 (= 任意、不在 OK)**
+
+これが kawaz の「必須展開とマッチがうまく噛み合う」の核心。
+
+例:
+
+```
+vcs sync-check 'glob:**/*-ja.md' '$1/$2.md' 'glob:$1/$2-*.md'
+# 第 1 派生 = $1/$2.md (= en、必須 literal path)
+# 第 2 派生 = glob:$1/$2-*.md (= 任意マッチ、$1/$2-fr.md 等あれば対象、なければ無視)
+
+vcs sync-check 'glob:**/*-ja.md' '$1/$2.md' 'glob:$1/$2-{cn,fr}.md'
+# 第 1 派生 = en (必須)、第 2 派生 = cn と fr (全展開必須)
+```
+
+### 10.3 ペア区切り `--` (N ペア対応)
+
+複数 (source, derived) ペアを 1 コマンドで:
+
+```
+vcs sync-check FROM TO[..]                              # 1 ペア (-- 省略可)
+vcs sync-check -- FROM1 TO1[..] -- FROM2 TO2[..]        # 複数ペア (-- 必須、ambiguity 排除)
+```
+
+タスクランナー内で「翻訳ペア + bundle ペア + proto ペア」を 1 コマンドで集約 = プロセス起動コスト削減 + VCS lookup 集約。
+
+### 10.4 FROM 側の `{...}` 分岐
+
+```
+vcs sync-check 'glob:**/*-{en,ja}.md' 'glob:$1/$2-[a-z][a-z].md'
+# en/ja どちらの更新でも基準扱い、$1 = **、$2 = * 部分
+# 各 FROM 起点について TO[..] 共有
+```
+
+または:
+
+```
+vcs sync-check 'glob:{FROM1,FROM2}' TO[..]
+# 複数 FROM を 1 ペアで集約、TO[..] 共有 (= TO 重複記述回避)
+```
+
+### 10.5 A が A' 集合に含まれる場合の自動除外
+
+`-ja.md` 正本に対して TO 側 glob `glob:$1/$2-*.md` がマッチした場合、正本自身 (`$1/$2-ja.md`) も pattern マッチしうるが、**A は A' から自動除外** (= 起点を派生集合に含めない)。
+
+### 10.6 後方参照の埋め込み構文
+
+- `$1` 〜 `$9` は 1 桁前提
+- `${1}00` で曖昧回避 (= `$100` だと「$1 + リテラル `00`」か「$100 (= 100 桁) 参照」か曖昧)
+- `${10}` 等の 2 桁参照も技術的にサポート可能、ただし実用上 1-9 で十分
+
+### 10.7 制限事項 (kawaz 確定 2026-06-01)
+
+`,` / `[` / `]` / `{` / `}` / `*` / `~` などを含むファイル名は glob 経由で扱えない:
+- 異常な命名は対象外と割り切る
+- 回避手段: 通常の path 指定で個別渡し (`bump-semver vcs diff -- path/to/odd[file].ts`)
+- **クオート / エスケープ仕様は導入しない** (= bug 温床回避、仕様簡素化)
+
+### 10.8 subcommand path の議論
+
+- `vcs sync-check` (= VCS subverb、kawaz 例で使われた)
+- `bump-semver pair check` (= pair 配下)
+- `bump-semver derived check` (= derived 配下)
+
+VCS と直交 (= ファイル鮮度 check は VCS 機能じゃない) なので `vcs` 配下が適切かは spec 確定時に判断。
+
+### 10.9 Phase 分離
+
+- **Phase 1**: `glob:` prefix 単体 (= v0.30.0 land 済、DR-0024)
+- **Phase 2**: `$N` 後方参照 + ペア区切り + 自動除外 = `vcs sync-check` (or 別 subcommand) の本体実装
+- 本 issue は Phase 2 の要件発散材料、kawaz spec 確定後に DR 起票 → 実装
+
+---
+
 ## 付録: 出典 session
 
 - `e4f74abe-376b-4551-94e1-96d6e5890b1a` (2026-05-30) — 5c0735cc: kawaz の元アイデア「A → A' リスト、コミット鮮度比較」
 - `6a0a262f-e376-42e6-a1ee-7bfe0e777bc9` (2026-05-30) — ee1ebc05: 「`**/*[._-]ja.md` 起点、別 suffix 探索、または無ければ新規パス群」(= 翻訳例で語られたが本質は派生群拡張の話)
 - `6a0a262f-e376-42e6-a1ee-7bfe0e777bc9` (2026-05-31) — 0c769a9b: 本 follow-up #32 スコープ確定 (要件発散、叩き台引数案 OK)
+- `e7c503b3-f269-42c5-a83d-b73ffc78346f` (2026-06-01): mini-DSL 案 (= `$N` 後方参照、N ペア、`glob:{...}` source 分岐、制限事項) + `glob:` prefix v0.30.0 land
 - (2026-06-01) — 本質汎化訂正: 「翻訳ペアは 1 ケースで、本質は source → derived 鮮度同期の汎用 check。bundle / generated 等同構造ケース多数。lang code 正典化議論はズレてる」

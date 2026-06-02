@@ -319,6 +319,69 @@ func driftPanic(c *concreteAST, candidate string) {
 	}
 }
 
+// T9b case-insensitive capture regex (= fix for OQ-25): when `IgnoreCase=true`,
+// the capture regex must compile with `(?i)` so the fs walk (case-insensitive
+// via doublestar's WithCaseInsensitive) and the regex agree. Pre-fix, a
+// case-different on-disk path (`README.MD` vs pattern `*.md`) would trigger
+// the §3.3 grammar-drift panic. This test pins the fixed behavior at the
+// library boundary so the cmd-level K21 isn't the only guard.
+func TestGlobBackref_T9b_CaseInsensitiveCaptureRegex(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "DOCS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "DOCS", "README.MD"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		got, err := MatchCollect("**/*.md", ".", globOpts{IgnoreCase: true}, defaultHomeFn)
+		if err != nil {
+			t.Fatalf("MatchCollect: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("expected 1 match, got %d: %v", len(got), pathSet(got))
+		}
+		want := filepath.Join("DOCS", "README.MD")
+		if got[0].Path != want {
+			t.Errorf("path = %q, want %q", got[0].Path, want)
+		}
+		// $1 = `**` capture, $2 = `*` capture. Both should preserve the
+		// original on-disk case (regex matches via `(?i)`, capture text is
+		// the substring as-found).
+		if len(got[0].Captures) != 3 {
+			t.Fatalf("captures len = %d, want 3 ($0,$1,$2): %v", len(got[0].Captures), got[0].Captures)
+		}
+		if got[0].Captures[1] != "DOCS" {
+			t.Errorf("$1 = %q, want DOCS", got[0].Captures[1])
+		}
+		if got[0].Captures[2] != "README" {
+			t.Errorf("$2 = %q, want README", got[0].Captures[2])
+		}
+	})
+}
+
+// T9c case-sensitive default unchanged: without `IgnoreCase`, a case-different
+// path is NOT walked (= doublestar default), so 0 matches with no panic.
+// Guards against accidental flip of the default to case-insensitive.
+func TestGlobBackref_T9c_CaseSensitiveDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "DOCS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "DOCS", "README.MD"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		got, err := MatchCollect("**/*.md", ".", gbOpts(), defaultHomeFn)
+		if err != nil {
+			t.Fatalf("MatchCollect: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("expected 0 matches with default case-sensitive, got: %v", pathSet(got))
+		}
+	})
+}
+
 // T10 `$10` ambiguous (= spec §4.3): rejected.
 func TestGlobBackref_T10_DollarTenAmbiguous(t *testing.T) {
 	caps := []string{"path", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
@@ -371,7 +434,7 @@ func TestGlobBackref_T13_BraceInvariant(t *testing.T) {
 			t.Errorf("parse %q: %v", pat, err)
 			continue
 		}
-		concretes, err := expandConcrete(ast)
+		concretes, err := expandConcrete(ast, false)
 		if err != nil {
 			t.Errorf("expand %q: %v", pat, err)
 			continue

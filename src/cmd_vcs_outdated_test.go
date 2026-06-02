@@ -1250,12 +1250,15 @@ func TestRun_VcsOutdated_GlobDotfileFlag(t *testing.T) {
 	})
 }
 
-// K21 (openConcern: v0.31.0 BUG): `--glob-ignorecase` causes grammar-drift panic
-// when the matched path's case differs from the pattern's. doublestar walks
-// case-insensitively but the capture regex in buildRawAndRegex is compiled
-// case-sensitively, so any case-different match triggers the §3.3 panic.
-// Characterization: pins the panic so a future fix flips this test green
-// once the capture regex inherits the IgnoreCase flag.
+// K21 (was openConcern OQ-25, fixed v0.31.1): `--glob-ignorecase` must walk
+// AND capture in the same case-folding mode. Before the fix, fs walk
+// (doublestar) went case-insensitive but the capture regex compiled
+// case-sensitively, so a case-different match (= pattern `**/*.md` vs
+// on-disk `DOCS/README.MD`) produced doublestar-match × regex-no-match,
+// raising the §3.3 grammar-drift panic. Fix threads IgnoreCase through
+// MatchCollect → expandConcrete → buildRawAndRegex, prepending `(?i)` to
+// the capture regex. This test pins the fixed behavior: case-different
+// path is matched and surfaces in `--explain` output.
 func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
 	if !gitAvailable() {
 		t.Skip()
@@ -1278,21 +1281,16 @@ func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
 	runIn(t, dir, "git", "add", ".")
 	runIn(t, dir, "git", "commit", "-qm", "init")
 	withCwd(t, dir, func() {
-		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("v0.31.0: --glob-ignorecase + case-different path expected to panic " +
-					"(capture regex doesn't inherit IgnoreCase). If this test starts failing, " +
-					"verify the fix and flip the assertion to check stdout for `DOCS/README.MD`.")
-			}
-			s, ok := r.(string)
-			if !ok || !strings.Contains(s, "grammar drift") {
-				t.Errorf("expected grammar-drift panic, got: %v", r)
-			}
-		}()
 		var so, se bytes.Buffer
-		_ = run([]string{"vcs", "outdated", "--explain", "--glob-ignorecase",
+		err := run([]string{"vcs", "outdated", "--explain", "--glob-ignorecase",
 			"glob:**/*.md", "out.txt"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Fatalf("expected no error (fix landed v0.31.1), got: %v / stderr=%s", err, se.String())
+		}
+		// Source path appears in --explain output (no panic, no error).
+		if !strings.Contains(so.String(), "DOCS/README.MD") {
+			t.Errorf("expected stdout to contain case-different source path `DOCS/README.MD`, got: %q", so.String())
+		}
 	})
 }
 

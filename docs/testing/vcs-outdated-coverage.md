@@ -66,7 +66,7 @@ meaningful — see §3 for the cells we *intentionally* skip.
 | `--strict --explain` | on | yes (explain wins; characterization) |
 | `--glob-dotfile=true/false` | both | dotfile branch covered |
 | `--glob-gitignored=true/false` | both | covered |
-| `--glob-ignorecase` | on/off | only off covered (= default) |
+| `--glob-ignorecase` | on/off | both covered (K21 pins on-case-different match after v0.31.1 fix) |
 | `--vcs git` / `--vcs jj` / auto | three | git + jj covered; auto inherits |
 
 ### Pair-shape axis
@@ -214,7 +214,7 @@ Cmd-level (= `cmd_vcs_outdated_test.go`):
 | K18 | glob FROM 0-match (= NOT literal) → exit 0 even with `--strict` | `TestRun_VcsOutdated_StrictGlobZeroMatchExit0` |
 | K19 | `$0` in TO yields source path (= guaranteed self-exclude) | `TestRun_VcsOutdated_Dollar0InToExcluded` |
 | K20 | `--glob-dotfile=true` reaches sources under dotdir | `TestRun_VcsOutdated_GlobDotfileFlag` |
-| K21 | `--glob-ignorecase` + case-different path → **grammar-drift panic** (v0.31.0 bug, OQ-25) | `TestRun_VcsOutdated_GlobIgnorecaseFlag` |
+| K21 | `--glob-ignorecase` + case-different path → matches normally (v0.31.1 fix; was OQ-25 panic) | `TestRun_VcsOutdated_GlobIgnorecaseFlag` |
 | K22 | `--explain` empty result (no FROM matches) → exit 0 with empty stdout | `TestRun_VcsOutdated_ExplainNoMatches` |
 | K23 | `$N` out-of-range in TO → empty literal (= reaches `path.Clean`) | `TestRun_VcsOutdated_OutOfRangeBackrefCleaned` |
 | K24 | `$10` in TO (ambiguous) → exit 2 | `TestRun_VcsOutdated_AmbiguousDollar10InTo` |
@@ -256,7 +256,7 @@ The following landed in the spec doc (§14 / §16) as numbered open questions. T
 - **OQ-22** Empty TO string (`""`) silently becomes `.` via `path.Clean`, then matches against cwd dir. Same class of silent-green hole as DR-0028 blocker #3 (= literal FROM typo). Should empty TO be a usage error? *(openConcern: correctness gap, not just style)*
 - **OQ-23** Pair-N syntax error short-circuits earlier pairs — even though pair 1 might be the user's main concern. Cross-pair errors silently lose pair 1's stale rows. Should pairs accumulate errors and report all?
 - **OQ-24** Cross-source auto-exclude is not implemented (§6 explicit "undefined"). The current behavior keeps the cross row (= source A's derived path == source B itself is reported as fresh against B's ts). Pinned for v0.2 spec-finalization comparison.
-- **OQ-25 (bug, openConcern)** `--glob-ignorecase` causes a grammar-drift panic whenever a matched path's case differs from the FROM pattern's. `expandGlob` passes `WithCaseInsensitive()` to doublestar (fs walk goes case-insensitive), but `buildRawAndRegex` in `glob_backref.go` compiles the capture regex case-sensitively. Any case-different match → doublestar match × capture-regex no-match → §3.3 panic. K21 pins the panic as characterization; the fix is to thread the IgnoreCase flag into the capture-regex compile (`(?i)` prefix or per-group). Not blocking v0.31.0 since `--glob-ignorecase` was never advertised for `vcs outdated`, but a v0.32.0 follow-up. Reproduced on darwin/APFS: pattern `**/*.md` with `DOCS/README.MD` on disk + `--glob-ignorecase`.
+- **OQ-25 (resolved in v0.31.1)** Previously `--glob-ignorecase` caused a grammar-drift panic whenever a matched path's case differed from the FROM pattern's, because `expandGlob` passed `WithCaseInsensitive()` to doublestar (fs walk went case-insensitive) but `buildRawAndRegex` in `glob_backref.go` compiled the capture regex case-sensitively. Fix (v0.31.1): the `IgnoreCase` flag is threaded through `MatchCollect → expandConcrete → buildRawAndRegex`, prepending `(?i)` to the capture regex so walk and regex share the same case-folding mode. K21 now pins the fixed behavior (case-different path is matched and surfaces in `--explain` output). Library-level pins: `TestGlobBackref_T9b_CaseInsensitiveCaptureRegex` (fix path), `TestGlobBackref_T9c_CaseSensitiveDefault` (default unchanged guard).
 
 ## 6. References
 

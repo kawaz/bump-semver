@@ -270,7 +270,16 @@ type slotBinding struct {
 }
 
 // expandConcrete fans out the AST into all `{}` combinations.
-func expandConcrete(ast *patternAST) ([]*concreteAST, error) {
+//
+// `caseInsensitive` controls capture-regex case-folding (= spec §3.2 / fix
+// for OQ-25): when the fs walk layer (= doublestar via expandGlob) runs
+// case-insensitively, the capture regex MUST do the same; otherwise a
+// case-different match (= e.g. pattern `*.md`, on-disk `README.MD`) causes
+// the doublestar match × regex no-match split that §3.3 reports as a
+// grammar-drift panic. The flag is threaded only here (= the single
+// `MatchCollect → expandConcrete → buildRawAndRegex` chain that compiles
+// the regex); `ExpandPairs` / `Substitute` do not touch capture regex.
+func expandConcrete(ast *patternAST, caseInsensitive bool) ([]*concreteAST, error) {
 	total := ast.captureCount()
 	type frame struct {
 		resolved []node
@@ -324,7 +333,7 @@ func expandConcrete(ast *patternAST) ([]*concreteAST, error) {
 
 	out := make([]*concreteAST, 0, len(frames))
 	for _, fr := range frames {
-		raw, regex, groupOrder, groupKinds, err := buildRawAndRegex(fr.resolved)
+		raw, regex, groupOrder, groupKinds, err := buildRawAndRegex(fr.resolved, caseInsensitive)
 		if err != nil {
 			return nil, err
 		}
@@ -411,12 +420,23 @@ func altLiteral(alt []node) string {
 //   - groupKinds  — per-regex-group wildcard kind (1-indexed; index 0 = wkNone).
 //     Used by MatchCollect's empty-match branches to know whether to
 //     panic (strict `*`/`[]`) or substitute "." (`**`) without a re-walk.
-func buildRawAndRegex(nodes []node) (string, *regexp.Regexp, []int, []wildKind, error) {
+//
+// `caseInsensitive` (= fix for OQ-25): when true, the regex is compiled with
+// the `(?i)` flag so it matches paths in the same case-folding mode as the
+// fs walk (= doublestar's WithCaseInsensitive). Without this, case-different
+// matches (= pattern `*.md` vs on-disk `README.MD`) trigger a spurious
+// §3.3 grammar-drift panic. `(?i)` is placed right after `^` so the
+// subsequent `**` rewrites (which inspect/trim only the regex tail) are
+// unaffected.
+func buildRawAndRegex(nodes []node, caseInsensitive bool) (string, *regexp.Regexp, []int, []wildKind, error) {
 	var raw strings.Builder
 	appendNodeSource(&raw, nodes)
 
 	var rx strings.Builder
 	rx.WriteByte('^')
+	if caseInsensitive {
+		rx.WriteString("(?i)")
+	}
 	var groupOrder []int
 	groupKinds := []wildKind{wkNone} // index 0 reserved.
 	group := 0
@@ -504,7 +524,7 @@ func MatchCollect(pattern, root string, opts globOpts, homeFn func() (string, er
 	if err != nil {
 		return nil, err
 	}
-	concretes, err := expandConcrete(ast)
+	concretes, err := expandConcrete(ast, opts.IgnoreCase)
 	if err != nil {
 		return nil, err
 	}

@@ -14,8 +14,11 @@ set script-interpreter := ["bash", "-euo", "pipefail"]
 
 set positional-arguments
 
-# show the recipe list (default)
-default:
+# default behaviour: alias for `list`
+default: list
+
+# show the recipe list
+list:
     @just --list --unsorted
 
 # ---------- atomic (lint / test / build) ----------
@@ -43,6 +46,11 @@ build: lint
     go build -buildvcs=false -trimpath \
       -ldflags "-s -w -X main.version=v$(cat VERSION)" \
       -o bin/bump-semver ./src
+
+# build then run the local binary, forwarding all args (e.g. `just run vcs outdated --help`)
+[script]
+run *ARGS: build
+    ./bin/bump-semver "$@"
 
 # lint + test + build (CI entry point)
 ci: lint test build

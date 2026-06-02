@@ -17,6 +17,8 @@
 │   ├── decisions/                設計判断記録 (DR)
 │   │   ├── INDEX.md
 │   │   └── DR-NNNN-*.md
+│   ├── specs/                    言語非依存仕様 (= 将来 OSS 化候補) と open question 集
+│   ├── testing/                  テスト網羅性 matrix doc (= 各 verb の decision-table 化)
 │   └── journal/                  日々の生記録 (ハマり所→解決策のペア)
 ├── src/                          Go ソース全部 (main + handlers + tests)
 │   ├── main.go                   entrypoint, argv パース, 排他ルール, multi-input 整合性

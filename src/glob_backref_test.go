@@ -580,3 +580,368 @@ func mustCompile(t *testing.T, expr string) *regexp.Regexp {
 	t.Helper()
 	return regexp.MustCompile(expr)
 }
+
+// ---------------------------------------------------------------------------
+// Coverage-matrix cells L1..L25. Each one-line comment maps to the cell in
+// docs/testing/vcs-outdated-coverage.md §2.2. Rationale lives in the doc;
+// the tests themselves stay minimal to avoid DR-0025-style comment bloat.
+// ---------------------------------------------------------------------------
+
+// L1: `$0` substitutes to the full matched path.
+func TestSubstitute_Dollar0FullPath(t *testing.T) {
+	out, err := Substitute("x/$0", []string{"sub/foo.ts", "sub", "foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "x/sub/foo.ts" {
+		t.Errorf("got %q, want x/sub/foo.ts", out)
+	}
+}
+
+// L2: `${0}` equivalent to `$0`.
+func TestSubstitute_BracedZeroEqualsBare(t *testing.T) {
+	caps := []string{"a/b/c.ts"}
+	a, err := Substitute("x/$0", caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Substitute("x/${0}", caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Errorf("$0=%q != ${0}=%q", a, b)
+	}
+}
+
+// L3: `$1` followed by a non-digit letter is parsed as `$1`+literal.
+func TestSubstitute_DigitFollowedByLetter(t *testing.T) {
+	out, err := Substitute("$1a", []string{"_", "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Xa" {
+		t.Errorf("got %q, want Xa", out)
+	}
+}
+
+// L4: `${1}0` is `${1}` + literal `0` (= explicit-form disambiguation).
+func TestSubstitute_BracedFollowedByDigit(t *testing.T) {
+	out, err := Substitute("a${1}0b", []string{"_", "X"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "aX0b" {
+		t.Errorf("got %q, want aX0b", out)
+	}
+}
+
+// L5: `${}` empty body rejected.
+func TestSubstitute_EmptyBracedRejected(t *testing.T) {
+	_, err := Substitute("a${}b", []string{"_"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("err = %v, want 'empty' message", err)
+	}
+}
+
+// L6: trailing `$` rejected.
+func TestSubstitute_TrailingDollarRejected(t *testing.T) {
+	_, err := Substitute("foo$", []string{"_"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "trailing") {
+		t.Errorf("err = %v, want 'trailing' message", err)
+	}
+}
+
+// L7: `$<letter>` (bare non-digit) rejected.
+func TestSubstitute_NonNumericBareRejected(t *testing.T) {
+	_, err := Substitute("foo$a", []string{"_"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("err = %v, want 'invalid' message", err)
+	}
+}
+
+// L8: `${name}` (alphabetic body) rejected — spec §4.4 v0.2 scope-out.
+func TestSubstitute_NamedRejected(t *testing.T) {
+	_, err := Substitute("foo${abc}", []string{"_"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-numeric") {
+		t.Errorf("err = %v, want 'non-numeric' message", err)
+	}
+}
+
+// L9: `${999}` accepted; out-of-range → empty (= spec §4.3).
+func TestSubstitute_LargeBracedOutOfRange(t *testing.T) {
+	out, err := Substitute("a${999}b", []string{"full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ab" {
+		t.Errorf("got %q, want ab", out)
+	}
+}
+
+// L10: path.Clean applied on non-glob TO: `./x` → `x`, `//` collapse, `..` collapse.
+func TestSubstitute_PathCleanApplied(t *testing.T) {
+	cases := []struct {
+		tmpl string
+		want string
+	}{
+		{"./$1/x", "sub/x"},
+		{"$1//x", "sub/x"},
+		{"$1/../x", "x"},
+		{"$1/./x", "sub/x"},
+	}
+	for _, c := range cases {
+		out, err := Substitute(c.tmpl, []string{"_", "sub"})
+		if err != nil {
+			t.Fatalf("%s: err=%v", c.tmpl, err)
+		}
+		if out != c.want {
+			t.Errorf("%s → %q, want %q", c.tmpl, out, c.want)
+		}
+	}
+}
+
+// L11: absolute path on non-glob TO is preserved (= path.Clean keeps leading `/`).
+func TestSubstitute_AbsolutePathPreserved(t *testing.T) {
+	out, err := Substitute("/$1/x", []string{"_", "sub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "/sub/x" {
+		t.Errorf("got %q, want /sub/x", out)
+	}
+}
+
+// L12: full escape table under `glob:` TO escape (= spec §3.4.2). Every
+// glob meta char in the captured value gets char-class-wrapped.
+func TestSubstitute_GlobEscapeAllMeta(t *testing.T) {
+	out, err := Substitute("glob:$1/x", []string{"_", `a*?{}[],b`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "glob:a[*][?][{][}][[][]][,]b/x"
+	if out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+// L13: unterminated `{` rejected.
+func TestParsePattern_UnterminatedBraceRejected(t *testing.T) {
+	_, err := parsePattern("foo{a,b")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var pse *PatternSyntaxError
+	if !errors.As(err, &pse) {
+		t.Fatalf("wrong type: %T", err)
+	}
+}
+
+// L14: orphan `}` rejected.
+func TestParsePattern_OrphanCloseBraceRejected(t *testing.T) {
+	_, err := parsePattern("foo}")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// L15: unterminated `[` rejected.
+func TestParsePattern_UnterminatedCharClassRejected(t *testing.T) {
+	_, err := parsePattern("foo[abc")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// L16: orphan `]` rejected.
+func TestParsePattern_OrphanCloseBracketRejected(t *testing.T) {
+	_, err := parsePattern("foo]")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// L17: empty `[]` rejected.
+func TestParsePattern_EmptyCharClassRejected(t *testing.T) {
+	_, err := parsePattern("foo[]")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// L18: `[!abc]` BSD-style complement also rejected (spec §2.1 covers both `^` and `!`).
+func TestParsePattern_BangComplementRejected(t *testing.T) {
+	_, err := parsePattern("[!abc].txt")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "complement") {
+		t.Errorf("err = %v, want 'complement' message", err)
+	}
+}
+
+// L19: 0-match returns empty slice + nil error (no `missing` error class).
+func TestMatchCollect_ZeroMatchNoError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		got, err := MatchCollect("**/*.nonexistent", ".", gbOpts(), defaultHomeFn)
+		if err != nil {
+			t.Fatalf("got err=%v, want nil", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %d matches, want 0", len(got))
+		}
+	})
+}
+
+// L20: hidden (dotfile) sources excluded by default.
+func TestMatchCollect_DotfileExcludedByDefault(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".hidden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".hidden", "x.txt"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		got, err := MatchCollect("**/*.txt", ".", gbOpts(), defaultHomeFn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range got {
+			if strings.HasPrefix(m.Path, ".") {
+				t.Errorf("default Dotfile=false leaked hidden: %s", m.Path)
+			}
+		}
+	})
+}
+
+// L21: `Dotfile=true` includes hidden.
+func TestMatchCollect_DotfileIncludeFlag(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".h"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".h", "x.txt"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		got, err := MatchCollect("**/*.txt", ".", globOpts{Dotfile: true}, defaultHomeFn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, m := range got {
+			if strings.Contains(m.Path, ".h") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Dotfile=true should expose .h/x.txt, got %v", pathSet(got))
+		}
+	})
+}
+
+// L22: `?` on TO is rejected by ExpandPairs.
+func TestExpandPairs_ToQuestionMarkRejected(t *testing.T) {
+	_, err := ExpandPairs("foo.md", "out?.md")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "TO:") {
+		t.Errorf("err = %v, want 'TO:' prefix", err)
+	}
+}
+
+// L23: empty alt branch on TO expands to a literal-prefix-only branch.
+func TestExpandPairs_EmptyBranchOnTo(t *testing.T) {
+	pairs, err := ExpandPairs("foo.md", "out{,-ja}.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 2 {
+		t.Fatalf("expected 2 pairs, got %d", len(pairs))
+	}
+	var sawEmpty, sawJa bool
+	for _, p := range pairs {
+		if p.To == "out.md" {
+			sawEmpty = true
+		}
+		if p.To == "out-ja.md" {
+			sawJa = true
+		}
+	}
+	if !sawEmpty || !sawJa {
+		t.Errorf("missing branch, got %+v", pairs)
+	}
+}
+
+// L24: `$0` under `glob:` escape is also char-class-wrapped (value-side rule).
+func TestSubstitute_Dollar0UnderGlobEscape(t *testing.T) {
+	out, err := Substitute("glob:$0/derived.txt", []string{"src/a*b.ts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// `*` in the source path must be wrapped.
+	if !strings.Contains(out, "[*]") {
+		t.Errorf("expected `*` in $0 to be escaped, got %q", out)
+	}
+	if !strings.HasPrefix(out, "glob:") {
+		t.Errorf("lost glob: prefix in %q", out)
+	}
+}
+
+// L25: §4.2 unselected brace branch contributes "" to its slot.
+func TestMatchCollect_UnselectedBranchBackrefEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alpha.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beta.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		// `{alpha,beta}.txt` selects ONE branch per match. The unselected
+		// branch's `$N` slot per spec §4.2 is "" — but the brace itself is
+		// ONE slot (literal binding), not two. Verify the brace literal is
+		// captured.
+		got, err := MatchCollect("{alpha,beta}.txt", ".", gbOpts(), defaultHomeFn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("got %d matches, want 2", len(got))
+		}
+		for _, m := range got {
+			switch m.Path {
+			case "alpha.txt":
+				if m.Captures[1] != "alpha" {
+					t.Errorf("alpha: $1 = %q, want alpha", m.Captures[1])
+				}
+			case "beta.txt":
+				if m.Captures[1] != "beta" {
+					t.Errorf("beta: $1 = %q, want beta", m.Captures[1])
+				}
+			}
+		}
+	})
+}

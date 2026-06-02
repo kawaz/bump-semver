@@ -763,6 +763,657 @@ func TestRun_VcsOutdated_NoArgsHelp(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Coverage-matrix cells K1..K26. One-line per-test comments map to cells in
+// docs/testing/vcs-outdated-coverage.md §2.2. Open questions and rationale
+// live in the matrix doc — these tests pin observed v0.31.0 behavior.
+// ---------------------------------------------------------------------------
+
+// K1 (OQ-19): `--strict --explain` → exit 0 even with stale rows.
+func TestRun_VcsOutdated_StrictPlusExplain_ExitZero(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--strict", "--explain",
+			"README.md", "README-{ja,en}.md"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("expected exit 0, got %v (stderr=%s)", err, se.String())
+		}
+		if !strings.Contains(so.String(), "stale") {
+			t.Errorf("expected stale rows printed on stdout, got: %s", so.String())
+		}
+	})
+}
+
+// K2 (OQ-19): `--strict --explain` + literal-FROM miss → exit 0.
+func TestRun_VcsOutdated_StrictPlusExplain_LitMissExitZero(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--strict", "--explain",
+			"MISSING.md", "out.md"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("expected exit 0 (explain wins over strict), got %v", err)
+		}
+	})
+}
+
+// K3 (OQ-20): `--explain` + mandatory missing → exit 0 but stdout says "will fail".
+func TestRun_VcsOutdated_ExplainPlusMissing_TextContradictsExit(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("en"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain",
+			"README.md", "README-ja.md"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("expected exit 0, got %v", err)
+		}
+		if !strings.Contains(so.String(), "missing, will fail") {
+			t.Errorf("expected `missing, will fail` text on stdout, got: %s", so.String())
+		}
+	})
+}
+
+// K4 (OQ-21): `--strict` + lit-miss in any pair silences other pairs' stale rows.
+func TestRun_VcsOutdated_StrictShortCircuitsStaleRow(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--strict", "--",
+			"README.md", "README-ja.md", "--",
+			"missing.md", "out.md"}, bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Fatalf("expected exitCodeFalse, got %v", err)
+		}
+		// Characterization: pair 1's stale row is silenced by short-circuit.
+		if strings.Contains(se.String(), "stale") {
+			t.Errorf("unexpected: stale row reached stderr despite --strict short-circuit: %s", se.String())
+		}
+		if !strings.Contains(se.String(), "matched no file") {
+			t.Errorf("expected lit-miss warning, got: %s", se.String())
+		}
+	})
+}
+
+// K5: FROM `glob:` empty body → exit 2.
+func TestRun_VcsOutdated_GlobEmptyBodyRejected(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "glob:", "out.md"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeUsage {
+			t.Errorf("expected exitCodeUsage, got %v", err)
+		}
+	})
+}
+
+// K6: TO `glob:` empty body → exit 2.
+func TestRun_VcsOutdated_ToGlobEmptyBodyRejected(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "README.md", "glob:"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeUsage {
+			t.Errorf("expected exitCodeUsage, got %v", err)
+		}
+	})
+}
+
+// K7 (OQ-22, openConcern): empty TO `""` quietly succeeds as "fresh" against cwd dir.
+// Characterization: pins the silent-green gap. NOT a contract — see OQ-22.
+func TestRun_VcsOutdated_EmptyToCharacterization(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain", "README.md", ""},
+			bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("characterization: expected exit 0, got %v", err)
+		}
+		// path.Clean("") = "." → derived path is `.` (cwd). Output should
+		// mention `.` as derived.
+		if !strings.Contains(so.String(), "→  .") {
+			t.Errorf("expected derived `.` in --explain output, got: %s", so.String())
+		}
+	})
+}
+
+// K8: trailing `--` (= empty group ignored).
+func TestRun_VcsOutdated_TrailingPairSeparator(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "README.md", "README-ja.md", "--"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Errorf("expected exitCodeFalse (stale), got %v", err)
+		}
+	})
+}
+
+// K9: leading `--` (= same as no leading sep).
+func TestRun_VcsOutdated_LeadingPairSeparator(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--", "README.md", "README-ja.md"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Errorf("expected exitCodeFalse, got %v", err)
+		}
+	})
+}
+
+// K10: only `--` → usage exit 2.
+func TestRun_VcsOutdated_OnlyPairSeparator(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeUsage {
+			t.Errorf("expected exitCodeUsage, got %v", err)
+		}
+	})
+}
+
+// K11: multi-pair, same FROM, two TOs — both pairs' rows are emitted independently.
+func TestRun_VcsOutdated_MultiPairSameFrom(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--",
+			"README.md", "README-ja.md", "--",
+			"README.md", "README-en.md"}, bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Errorf("expected exitCodeFalse, got %v", err)
+		}
+		stderrS := se.String()
+		if !strings.Contains(stderrS, "README-ja.md") {
+			t.Errorf("pair 1 row missing: %s", stderrS)
+		}
+		if !strings.Contains(stderrS, "README-en.md") {
+			t.Errorf("pair 2 row missing: %s", stderrS)
+		}
+	})
+}
+
+// K12 (OQ-23): pair 2 syntax error short-circuits and discards pair 1's results.
+func TestRun_VcsOutdated_Pair2ErrorShortCircuits(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--",
+			"README.md", "README-ja.md", "--",
+			"glob:a?b.md", "out.md"}, bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeUsage {
+			t.Fatalf("expected exitCodeUsage (pair 2 syntax err wins), got %v", err)
+		}
+		// Characterization: pair 1's stale row is NOT emitted.
+		if strings.Contains(se.String(), "stale") {
+			t.Errorf("pair 1 stale row leaked despite short-circuit: %s", se.String())
+		}
+		if !strings.Contains(se.String(), "MVP scope") {
+			t.Errorf("expected MVP scope explanation, got: %s", se.String())
+		}
+	})
+}
+
+// K13: untracked derived (= on disk, not in VCS) → exit 1 non-explain.
+func TestRun_VcsOutdated_UntrackedDerivedExit1(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	// Create derived on disk WITHOUT committing.
+	if err := os.WriteFile(filepath.Join(dir, "README-untracked.md"), []byte("u"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "README.md", "README-untracked.md"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Fatalf("expected exitCodeFalse, got %v", err)
+		}
+		if !strings.Contains(se.String(), "untracked") {
+			t.Errorf("expected `untracked` in stderr, got: %s", se.String())
+		}
+	})
+}
+
+// K14: untracked derived under `--explain` → exit 0 with `[untracked: ...]` text.
+func TestRun_VcsOutdated_UntrackedDerivedExplain(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "README-untracked.md"), []byte("u"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain",
+			"README.md", "README-untracked.md"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("expected exit 0, got %v", err)
+		}
+		if !strings.Contains(so.String(), "untracked") {
+			t.Errorf("expected untracked text on stdout, got: %s", so.String())
+		}
+	})
+}
+
+// K15 (OQ-24): cross-source case — source A's derived path equals source B's path.
+// Characterization: NOT excluded; A→B row is emitted (fresh if B's ts >= A's).
+func TestRun_VcsOutdated_CrossSourceNotExcluded(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("en"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README-ja.md"), []byte("ja"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	sleepOneSecond(t)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("en2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "bump")
+	withCwd(t, dir, func() {
+		// FROM matches README.md + README-ja.md. TO = README{,-ja}.md.
+		// Per-source auto-exclude removes README.md→README.md and
+		// README-ja.md→README-ja.md. The CROSS rows (README-ja.md→README.md
+		// and README.md→README-ja.md) are kept.
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain",
+			"glob:README{,-ja}.md", "README{,-ja}.md"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Fatalf("--explain err: %v", err)
+		}
+		out := so.String()
+		// Both cross rows should appear (= not auto-excluded across sources).
+		if !strings.Contains(out, "README-ja.md  →  README.md") {
+			t.Errorf("cross row README-ja.md→README.md missing: %s", out)
+		}
+		if !strings.Contains(out, "README.md     →  README-ja.md") {
+			t.Errorf("cross row README.md→README-ja.md missing: %s", out)
+		}
+	})
+}
+
+// K16: jj backend happy-path — stale derived → exit 1.
+func TestRun_VcsOutdated_JjBackendStale(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj required")
+	}
+	dir := setupOutdatedGitRepo(t)
+	// Colocate jj on top.
+	runIn(t, dir, "jj", "git", "init", "--git-repo", ".git")
+	if err := writeFile(filepath.Join(dir, ".jj/repo/config.toml"),
+		"[signing]\nbehavior = \"drop\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--vcs", "jj",
+			"README.md", "README-ja.md"}, bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Fatalf("expected exitCodeFalse from jj backend, got %v (stderr=%s)", err, se.String())
+		}
+		if !strings.Contains(se.String(), "stale") {
+			t.Errorf("expected stale row from jj backend, got: %s", se.String())
+		}
+	})
+}
+
+// K17: `--vcs jj` in non-jj dir → exit 3.
+func TestRun_VcsOutdated_WrongVcsJjExit3(t *testing.T) {
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README-ja.md"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--vcs", "jj",
+			"README.md", "README-ja.md"}, bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok {
+			t.Fatalf("expected *exitErr, got %T: %v", err, err)
+		}
+		if ee.code != exitCodeVCSExec {
+			t.Errorf("expected exitCodeVCSExec (3), got %d", ee.code)
+		}
+	})
+}
+
+// K18: glob FROM 0-match (NOT literal) → exit 0 even with `--strict`.
+func TestRun_VcsOutdated_StrictGlobZeroMatchExit0(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--strict",
+			"glob:nothing-*.zzz", "lib/$1.out"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("glob 0-match must not fail --strict, got %v", err)
+		}
+	})
+}
+
+// K19: `$0` in TO yields source's own path → per-source auto-exclude triggers,
+// so no rows are emitted (and exit is 0 since there's nothing to fail on).
+func TestRun_VcsOutdated_Dollar0InToExcluded(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain",
+			"glob:src/**/*.ts", "$0"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Fatalf("--explain err: %v", err)
+		}
+		// All derived rows would equal source → all auto-excluded → empty stdout.
+		if strings.TrimSpace(so.String()) != "" {
+			t.Errorf("expected empty stdout (all auto-excluded), got: %q", so.String())
+		}
+	})
+}
+
+// K20: `--glob-dotfile=true` reaches sources under dot directories.
+func TestRun_VcsOutdated_GlobDotfileFlag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	mk := func(rel, content string) {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".hidden/x.ts", "a")
+	mk("lib/x.js", "b")
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	withCwd(t, dir, func() {
+		// Default Dotfile=false → no source matched.
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain",
+			"glob:**/*.ts", "lib/$2.js"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(so.String(), ".hidden") {
+			t.Errorf("default should exclude .hidden, got: %s", so.String())
+		}
+		// With --glob-dotfile=true the hidden source is exposed.
+		var so2, se2 bytes.Buffer
+		err = run([]string{"vcs", "outdated", "--explain",
+			"--glob-dotfile=true",
+			"glob:**/*.ts", "lib/$2.js"}, bytes.NewReader(nil), &so2, &se2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(so2.String(), ".hidden") {
+			t.Errorf("--glob-dotfile=true should include .hidden source, got: %s", so2.String())
+		}
+	})
+}
+
+// K21 (openConcern: v0.31.0 BUG): `--glob-ignorecase` causes grammar-drift panic
+// when the matched path's case differs from the pattern's. doublestar walks
+// case-insensitively but the capture regex in buildRawAndRegex is compiled
+// case-sensitively, so any case-different match triggers the §3.3 panic.
+// Characterization: pins the panic so a future fix flips this test green
+// once the capture regex inherits the IgnoreCase flag.
+func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	mk := func(rel, content string) {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("DOCS/README.MD", "x")
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	withCwd(t, dir, func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("v0.31.0: --glob-ignorecase + case-different path expected to panic " +
+					"(capture regex doesn't inherit IgnoreCase). If this test starts failing, " +
+					"verify the fix and flip the assertion to check stdout for `DOCS/README.MD`.")
+			}
+			s, ok := r.(string)
+			if !ok || !strings.Contains(s, "grammar drift") {
+				t.Errorf("expected grammar-drift panic, got: %v", r)
+			}
+		}()
+		var so, se bytes.Buffer
+		_ = run([]string{"vcs", "outdated", "--explain", "--glob-ignorecase",
+			"glob:**/*.md", "out.txt"}, bytes.NewReader(nil), &so, &se)
+	})
+}
+
+// K22: `--explain` with no FROM matches → exit 0 with empty stdout.
+func TestRun_VcsOutdated_ExplainNoMatches(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "--explain",
+			"glob:nothing-here-*.ts", "lib/$1.js"}, bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Errorf("expected exit 0, got %v", err)
+		}
+		if strings.TrimSpace(so.String()) != "" {
+			t.Errorf("expected empty stdout, got: %q", so.String())
+		}
+	})
+}
+
+// K23: `$N` out-of-range in TO → empty literal contributes to path.Clean.
+func TestRun_VcsOutdated_OutOfRangeBackrefCleaned(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "src.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		// `$5` is out of range (no `$5` slot exists). Should substitute "".
+		err := run([]string{"vcs", "outdated", "--explain", "src.ts", "out/${5}/x.js"},
+			bytes.NewReader(nil), &so, &se)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// path.Clean("out//x.js") → "out/x.js"
+		if !strings.Contains(so.String(), "out/x.js") {
+			t.Errorf("expected derived `out/x.js`, got: %s", so.String())
+		}
+	})
+}
+
+// K24: bare `$10` in TO (ambiguous) → exit 2.
+func TestRun_VcsOutdated_AmbiguousDollar10InTo(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "README.md", "out-$10.md"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeUsage {
+			t.Errorf("expected exitCodeUsage for ambiguous $10, got %v", err)
+		}
+	})
+}
+
+// K25: `${abc}` named in TO → exit 2.
+func TestRun_VcsOutdated_NamedRefInTo(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := setupOutdatedGitRepo(t)
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "README.md", "out-${abc}.md"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeUsage {
+			t.Errorf("expected exitCodeUsage for ${abc}, got %v", err)
+		}
+	})
+}
+
+// K26: mandatory `{,}` brace TO with one alt missing on disk → exit 1.
+// Companion to C24 — same semantic but exercises the EMPTY alt branch
+// explicitly (alts = "" and "-ja"; only "-ja" exists).
+func TestRun_VcsOutdated_EmptyAltBraceTOMissingExit1(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip()
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "user.name", "T")
+	runIn(t, dir, "git", "config", "user.email", "t@e.com")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	// Source committed; `out.md` (= empty alt) is absent — it's mandatory.
+	if err := os.WriteFile(filepath.Join(dir, "source.md"), []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "out-ja.md"), []byte("j"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", ".")
+	runIn(t, dir, "git", "commit", "-qm", "init")
+	withCwd(t, dir, func() {
+		var so, se bytes.Buffer
+		err := run([]string{"vcs", "outdated", "source.md", "out{,-ja}.md"},
+			bytes.NewReader(nil), &so, &se)
+		ee, ok := err.(*exitErr)
+		if !ok || ee.code != exitCodeFalse {
+			t.Errorf("expected exitCodeFalse, got %v", err)
+		}
+		if !strings.Contains(se.String(), "missing") {
+			t.Errorf("expected `missing` for empty-alt absent file, got: %s", se.String())
+		}
+	})
+}
+
 // TestSplitOutdatedPairs_Cases verifies the pair splitter directly.
 func TestSplitOutdatedPairs_Cases(t *testing.T) {
 	cases := []struct {

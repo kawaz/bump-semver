@@ -687,3 +687,17 @@ Options {
 16. Walk time budget (= `walkDeadline?: Duration`) を v0.1.0 必須 / 推奨 / optional のどれにするか
 17. Pattern compile cache を spec で推奨するか実装委ねるか
 18. Glob walk dedup を v0.1.0 で扱うか v0.2 か (= 同一 root の重複 walk 排除)
+
+### Open question (実装観察由来、2026-06-02 追加 = bump-semver v0.31.0 の `vcs outdated` 実装で表面化)
+
+> 以下は実装側 verb (= consumer) の挙動 pin で発覚した曖昧点。spec は consumer 側 verb の semantic
+> を細かく規定していないが、複数言語で同じ verb を実装する時に drift しうるので明示候補。
+> 詳細は `docs/testing/vcs-outdated-coverage.md` §5 を参照。
+
+19. **`--strict` (or 同等 flag) と `--explain` (or 同等 diagnostic mode) の優先順位**: bump-semver v0.31.0 では `--explain` が勝ち、stale / lit-miss いずれの場合も exit 0。`--strict` の意図 (= silent-green CI hole 塞ぎ) と矛盾する印象あり。仕様で「diagnostic mode は exit code を override してよいか」を spec で明示するか consumer 委ねるか
+20. **diagnostic mode (`--explain`) で `[missing, will fail]` 等「失敗するぞ」と表記しつつ exit 0** を返す挙動の整合性。文言修正 (= 「missing (would be reported)」等) or `--explain` でも missing は exit 1 にする等の余地
+21. **複数 pair invocation で 1 pair の literal miss が他 pair の stale row を silence させる**こと (= short-circuit) の妥当性。aggregate 化 vs short-circuit の policy を spec で固定するか
+22. **空 TO 文字列 `""` の扱い**: bump-semver v0.31.0 では `path.Clean("") = "."` 経由で cwd dir を derived として ts 比較し、通常 fresh となる。`glob:` 空 body が usage error と扱われる (= consumer 実装で reject) のと対比して非対称。空 TO は usage error に格上げすべきか
+23. **複数 pair で pair N の pattern syntax error が pair 1..N-1 の結果を捨てる short-circuit** が現実的に user 体験を損なうか。errors を aggregate する semantic を推奨するか
+24. **cross-source 自動除外** (= §6 で v0.1.0 未定義): consumer 実装は per-source のみ。v0.2 で「derived path が他 source とぶつかった時の扱い」を確定する候補軸。bump-semver v0.31.0 はこの cell を「keep, not exclude」で pin 済 (= 比較 baseline)
+25. **(実装 bug、修正候補)** `ignorecase` option を fs walk layer (= glob library) のみ伝播し、§3.2 capture regex には伝播していない実装 (= bump-semver v0.31.0) では、case-different match で §3.3 grammar drift panic が出る。spec は `ignorecase` の semantics (= fs walk と capture regex の両方に伝播すべき) を明示すべきか、実装 detail として委ねるか。bump-semver は v0.32.0 で fix 予定 (= capture regex 側に `(?i)` flag を含める)

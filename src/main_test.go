@@ -523,10 +523,10 @@ func TestRun_HelpDispatch(t *testing.T) {
 		mustContain string // 出力にこの substring が含まれていれば pass
 		mustExclude string // 出力にこの substring が含まれていれば fail (空文字なら無視)
 	}{
-		// short help: コンパクトな overview。Actions 一覧 + --help-full 案内
-		{"short-help-flag", []string{"--help"}, "Action-specific help: bump-semver <action> --help", "Supported file formats"},
-		{"short-help-h", []string{"-h"}, "Full reference:       bump-semver --help-full", ""},
-		{"short-help-empty", []string{}, "Action-specific help: bump-semver <action> --help", ""},
+		// short help: コンパクトな overview。Commands 一覧 + --help-full 案内
+		{"short-help-flag", []string{"--help"}, "See 'bump-semver <command> --help'", "Supported file formats"},
+		{"short-help-h", []string{"-h"}, "'bump-semver --help-full' for the complete reference", ""},
+		{"short-help-empty", []string{}, "See 'bump-semver <command> --help'", ""},
 		// full help: Supported file formats 表 + 全 Examples
 		{"full-help", []string{"--help-full"}, "Supported file formats (auto-detected by basename)", "Action-specific help: bump-semver <action> --help"},
 		// per-action helps: それぞれ固有の見出しを持つ

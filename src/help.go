@@ -13,21 +13,19 @@ package main
 const shortHelpText = `bump-semver — focused semver bump CLI
 
 Usage:
-  bump-semver <action> [args...]
+  bump-semver <command> [args...]
+  bump-semver <command> --help     (= per-command detail)
   bump-semver --version
   bump-semver --help | --help-full
 
-Actions:
-  get        Read the current version
-  major      Bump major (X.0.0)
-  minor      Bump minor (x.Y.0)
-  patch      Bump patch (x.y.Z)
-  pre        Pre-release identifiers (counter advance / set / remove)
-  compare    Compare two SemVer values via <eq|lt|le|gt|ge|...>
-  vcs        VCS helpers (git/jj-agnostic; e.g. vcs get root, vcs is clean)
+Commands:
+  <major|minor|patch|pre>   Bump version (FILE / VER 入力、pre は counter advance / set / remove)
+  get                       Read the current version
+  compare                   Compare SemVer values via <eq|lt|le|gt|ge|...>
+  vcs                       VCS helpers (git/jj-agnostic; sub-tree: vcs --help)
 
-Action-specific help: bump-semver <action> --help
-Full reference:       bump-semver --help-full
+See 'bump-semver <command> --help' for arguments / options / examples,
+or 'bump-semver --help-full' for the complete reference.
 
 Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / cmd:CMD.
 (Latest-tag lookups moved to the 'vcs tag latest' subcommand in v0.29.0.)
@@ -47,7 +45,7 @@ Usage:
   bump-semver --version
   bump-semver --help | --help-full
 
-Actions (bump/read):
+Commands (bump/read):
   major   Bump major (X.0.0); pre-release / build-metadata dropped by default
   minor   Bump minor (x.Y.0); pre-release / build-metadata dropped by default
   patch   Bump patch (x.y.Z); pre-release / build-metadata dropped by default
@@ -389,32 +387,21 @@ Examples:
 const helpVcs = `bump-semver vcs — VCS helpers (git/jj-agnostic) [DR-0020]
 
 Usage:
-  bump-semver vcs <verb> [args...]
-  bump-semver vcs --help
+  bump-semver vcs <command> [args...]
+  bump-semver vcs <command> --help     (= per-command detail)
+  bump-semver vcs --help               (= this list)
 
-Verbs:
-  get <key>           Read a value from the VCS. Keys: root | backend | current-branch.
-  is  <pred>          Test a predicate. Predicates: clean | dirty | git | jj. Exit 0=true, 1=false.
-  diff REV [PATH..]   Print the patch between REV and the working copy (git/jj-agnostic).
-  commit -m MSG PATH..        Commit listed paths' working-tree content (safe default).
-  commit -m MSG --staged      Commit all staged/dirty changes at once.
-  commit --amend [-m MSG] [PATH.. | --staged]
-                              Fold current changes into the previous commit
-                              (symmetric with -m PATH.. / -m --staged above).
-  fetch [REMOTE]              Fetch refs from REMOTE (default: origin).
-  push --branch NAME [--remote REMOTE]
-                              Push NAME to REMOTE (default: origin).
-                              (jj users: "branch" = bookmark; --bookmark also accepted.)
-  tag push --rev REV NAME [--remote REMOTE] [--allow-move]
-                              Create / move tag NAME at REV and push to REMOTE.
-                              Same-rev re-push is idempotent; different-rev needs --allow-move.
-  tag delete NAME [--remote REMOTE]
-                              Delete tag NAME locally and on REMOTE (idempotent — absent is OK).
-  outdated FROM TO[..]        Derived-sync predicate: fail if any derived TO
-                              is older than its FROM. Backrefs ($N) carry
-                              FROM's variable parts into TO; {a,b} in TO is a
-                              MANDATORY expansion; *, **, [] in TO are
-                              OPTIONAL discovery. (DR-0027)
+Commands:
+  get        Read a value from the VCS (root / backend / current-branch)
+  is         Test a predicate (clean / dirty / git / jj)
+  diff       Print the patch between a rev and the working copy
+  commit     Commit working-tree content (paths or --staged), incl. --amend
+  fetch      Fetch refs from a remote
+  push       Push a branch / bookmark to a remote
+  tag        Manage tags atomically (push / delete / latest)
+  outdated   Derived-sync check via FROM→TO mapping (DR-0027 / DR-0028)
+
+See 'bump-semver vcs <command> --help' for arguments, options, and examples.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -558,7 +545,7 @@ Notes:
     explicitly (os.Stat filters it). The full diff (no PATH) still
     shows the deletion.
 
-Verb Options:
+Options:
   -s, --name-status      Emit one '<CODE>\\t<path>' line per changed
                          file (M/A/D) instead of the raw patch.
                          Mirrors 'git diff --name-status'.
@@ -836,18 +823,15 @@ Examples:
 const helpVcsTag = `bump-semver vcs tag — manage tags atomically (create+push / delete) [DR-0020]
 
 Usage:
-  bump-semver vcs tag <sub-verb> [args...]
+  bump-semver vcs tag <command> [args...]
   bump-semver vcs tag --help
 
-Sub-verbs:
-  push --rev REV NAME [--remote REMOTE] [--allow-move]
-                              Create / move tag NAME at REV and push to REMOTE.
-  delete NAME [--remote REMOTE]
-                              Delete tag NAME locally and on REMOTE (idempotent).
-  latest [--source <tag|release>] [--include-prerelease]
-         [--repository REPO] [--raw | --json]
-                              Print the SemVer-largest tag (replaces the
-                              removed vcs:latest-tag() input).
+Commands:
+  push       Create / move tag at a rev and push to a remote
+  delete     Remove tag both locally and on the remote (idempotent)
+  latest     Print the SemVer-largest tag (replaces vcs:latest-tag() input)
+
+See 'bump-semver vcs tag <command> --help' for arguments and options.
 
 Notes:
   - 'tag push' is intentionally NOT separable into "tag locally then push later".
@@ -870,7 +854,7 @@ Global Options:
 
 Exit codes:
   0   success (incl. idempotent same-rev push, absent-tag delete)
-  2   usage error (sub-verb missing / unknown, NAME shape problem)
+  2   usage error (command missing / unknown, NAME shape problem)
   3   VCS subprocess error (unknown remote, bad REV, network failure)
   4   integrity violation: 'tag push' against an existing different-rev tag
       without --allow-move (distinct from 3 so callers can detect
@@ -889,7 +873,7 @@ Arguments:
                    must not contain whitespace, must not start with "refs/"
                    (the "refs/tags/" prefix is added automatically).
 
-Verb Options:
+Options:
   --rev REV        Target revision (any git rev-spec / jj revset). Required.
   --remote REMOTE  Target remote. Defaults to "origin".
   --allow-move     Permit moving an existing tag to a different REV.
@@ -994,7 +978,7 @@ Behaviour:
   and returns the largest. By default pre-release tags (v1.2.3-rc.1, etc.)
   are filtered out — pass --include-prerelease to include them.
 
-Verb Options:
+Options:
   --source SOURCE          Where to read from (default: tag).
                              tag      git/jj tag list (no gh needed)
                              release  GitHub Release objects (requires gh)
@@ -1049,102 +1033,32 @@ Usage:
   bump-semver vcs outdated -- FROM TO[..] -- FROM TO[..] -- ...
   bump-semver vcs outdated [--explain] [--strict] ...
 
-The verb compares committer timestamps: each TO file must be at least
-as new as the FROM file that produced it. Stale (= TO older than FROM)
-yields exit 1; missing-mandatory derived paths also fail. The check is
-git/jj-agnostic — same backend probe as the rest of the vcs family.
+Compare committer timestamps: each TO file must be at least as new as
+the FROM that produced it. Exit 1 = stale or missing-mandatory derived.
 
-Argument shape:
-  FROM            One source pattern. Literal (README.md) or glob:<pat>.
-  TO              One or more derived patterns. Each may use:
-                    $N / ${N}    Substitute the N-th capture from FROM
-                                 (1..9 inline; ${10}+ requires braces).
-                                 $0 / ${0} = full matched path.
-                                 Out-of-range N → empty string.
-                    {a,b,c}      MANDATORY full expansion — every option
-                                 must exist on disk or the pair fails.
-                                 Empty alternative ({,foo}) is allowed.
-                    *, **, []    OPTIONAL filesystem discovery — matches
-                                 are checked, non-matches silently skip.
-                    glob:<pat>   2-stage TO discovery: captured values are
-                                 char-class-wrap escaped so glob meta in
-                                 captures stays literal in the 2nd-stage
-                                 walk (= spec §3.4.2).
-
-  --              Pair separator. With a single pair the '--' is OPTIONAL;
-                  with N>=2 pairs every group must be preceded by '--'.
-                  '$N' indexes scope to each FROM independently.
-
-Capture rules (FROM):
-  *           Captures the segment-bounded match (no '/').
-  **          Captures the multi-segment match (may include '/'). 0-segment
-              match yields '.' (combined with path.Clean this prevents the
-              '/foo' leading-slash bug for root-level matches).
-  {a,b,c}     Captures the selected alternative's source text literally.
-              Each {...} consumes ONE $N slot; the alternatives' contents
-              (incl. *, ** inside) do NOT get separate slots.
-              Unselected branches' nested * / ** / [] yield empty $N.
-  [abc]       Captures the matched single character.
-
-Automatic exclusion (per-source):
-  When a FROM source path happens to also fall under its own TO derived
-  set, the source is excluded from its own derived set.
+  FROM   Literal path or 'glob:<pat>'.
+  TO     Each may use:  $N / ${N}    capture from FROM ($0 = full match)
+                        {a,b,c}      MANDATORY expansion (every option must exist)
+                        *, **, []    OPTIONAL fs discovery (no match = silent skip)
+                        'glob:<pat>' 2-stage TO discovery (escape-aware)
+  --     Pair separator. Single pair: optional. N≥2 pairs: required.
 
 Options:
-  --explain   Print every expanded (source → derived) row with a status
-              diagnostic. Exit code stays 0 (diagnostic mode).
-  --strict    Treat a literal FROM that matches no file as exit 1.
-              Default behaviour warns to stderr and exits 0 for back-
-              compat with the original DR-0027 silent-skip semantics
-              (= use --strict in CI / release gates to catch typos).
+  --explain                       Print (source → derived) rows + status; exit 0.
+  --strict                        Literal FROM no match → exit 1 (CI gate).
   --glob-dotfile=true|false       (default false)  Include dotfile paths in FROM expansion.
   --glob-gitignored=true|false    (default true)   Respect .gitignore in FROM expansion.
   --glob-ignorecase[=true|false]  (default false)  Case-insensitive match.
 
-Shell escape (READ THIS):
-  '$N' and '{a,b,c}' are shell special. Always SINGLE-QUOTE the FROM/TO
-  patterns:
-    bump-semver vcs outdated 'glob:src/**/*.ts' 'lib/$1/$2.js'      # good
-    bump-semver vcs outdated  glob:src/**/*.ts   lib/$1/$2.js        # bash will eat $1
-  bump-semver itself does NO escape interpretation — the literal token
-  it sees is what it operates on. (DR-0024 §10.7)
-
-Exit codes:
-  0   every derived is fresh (or --explain mode regardless of status);
-      with no args, prints this help and exits 0.
-  1   at least one derived is stale / missing, or (with --strict) a
-      literal FROM matched no file.
-  2   usage error (malformed pair, bad backref shape, '$10' ambiguous).
-  3   VCS subprocess error (not a repo, etc.).
-
-Examples:
-  # T1: bundle (TypeScript src/ → compiled lib/). $1 = ** segment, $2 = *.
+Examples (always single-quote; bash eats $1, {a,b}, etc.):
   bump-semver vcs outdated 'glob:src/**/*.ts' 'lib/$1/$2.js'
-
-  # T2: translation (single source, multiple mandatory derived)
   bump-semver vcs outdated README.md 'README-{ja,en}.md'
+  bump-semver vcs outdated --explain 'glob:**/*-ja.md' '$1/$2.md'
 
-  # T3: codegen (proto/ → generated/, deep paths preserved)
-  bump-semver vcs outdated 'glob:proto/**/*.proto' 'generated/$1/$2.pb.go'
+Exit codes:  0 fresh  /  1 stale or missing  /  2 usage  /  3 vcs
 
-  # Aggregate (three pairs in one invocation)
-  bump-semver vcs outdated \
-    -- 'glob:src/**/*.ts'       'lib/$1/$2.js' \
-    -- README.md                 'README-{ja,en}.md' \
-    -- 'glob:proto/**/*.proto'   'generated/$1/$2.pb.go'
-
-  # Diagnose: print expansion + per-derived status
-  bump-semver vcs outdated --explain 'glob:src/**/*.ts' 'lib/$1/$2.js'
-
-  # Release-gate: turn literal-FROM typos into exit 1
-  bump-semver vcs outdated --strict README.md 'README-{ja,en}.md'
-
-Out of MVP scope (= spec v0.1.0 / DR-0028 §2.1):
-  - regex: prefix (DR-0027 explicitly rejected)
-  - ? single-char wildcard (future-reserved for v0.3+)
-  - {} nesting        - [^abc] complement char class
-  - named capture (\${name:pattern})    - 病的 filename (=  glob meta in path)
-  - cross-source auto-exclusion       - cmd: GENERATOR scheme
+Reference (grammar, backref numbering, edge cases, design rationale):
+  https://github.com/kawaz/bump-semver
 `
 
 // actionHelpTexts dispatches per-action help. Keys are CLI action

@@ -38,8 +38,9 @@ lint-just:
 lint: lint-go lint-just
 
 # go test (ARGS default to ./..., override e.g. `just test ./src/handler_cargo`)
+[script]
 test *ARGS='./...': lint
-    go test {{ ARGS }}
+    go test "$@"
 
 # build host target -> bin/bump-semver
 build: lint
@@ -86,8 +87,9 @@ check-outdated-translations: ensure-clean
 # ---------- release flow ----------
 
 # bump VERSION (default: patch) and create a release commit
+[script]
 bump-version level="patch": ensure-clean
-    bump-semver "{{ level }}" VERSION --write --quiet
+    bump-semver "$1" VERSION --write --quiet
     bump-semver vcs commit -m "Release v$(bump-semver get VERSION)" VERSION
 
 # push to origin/main with gates

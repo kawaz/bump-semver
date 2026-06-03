@@ -396,8 +396,22 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 		if opts.Write {
 			return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
 		}
-		if pathHasAnyRule(inputs[0]) {
-			ri, err := resolveFileFromStdin(inputs[0], stdin)
+		// DR-0029: the stdin-pipe shortcut must also see CLI rule blocks
+		// so a user can apply --define-rule to a piped file (otherwise
+		// `cat my.txt | bump-semver get my.txt --define-rule ...` would
+		// silently fall through to builtin even when a matching block
+		// exists). pickHandlerForFile inside resolveFileFromStdinWithRules
+		// chooses cliRuleHandler when a block matches, else falls through
+		// to detectHandler (= identical to the pre-DR-0029 behaviour).
+		//
+		// pathHasAnyRule is intentionally kept as the gate: a path with
+		// no builtin rule AND no matching CLI block should still error
+		// out with the same `unsupported file: <path>` shape. When a CLI
+		// block IS supplied that covers the path, pathHasAnyRule's "no
+		// builtin" verdict would wrongly reject; widen the gate to
+		// "builtin matches OR a CLI block would match".
+		if pathHasAnyRule(inputs[0]) || cliRuleCoversFile(inputs[0], opts.RuleBlocks) {
+			ri, err := resolveFileFromStdinWithRules(inputs[0], stdin, opts.RuleBlocks)
 			if err != nil {
 				return nil, err
 			}

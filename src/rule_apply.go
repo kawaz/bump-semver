@@ -188,3 +188,21 @@ func pickHandlerForFile(path string, ruleBlocks []ruleBlock) (Handler, error) {
 	}
 	return detectHandlerWithCliRule(path, ruleBlocks[match.BlockIdx])
 }
+
+// cliRuleCoversFile reports whether any --define-rule block (named or
+// global-with-flags) would match `path`. Used by resolveInputs's
+// stdin-pipe shortcut to widen the pathHasAnyRule gate when the user
+// supplied CLI rules — without this the path lookup would reject as
+// "unsupported file" even though a CLI rule covers it. Errors from
+// pattern matching are squashed to false (= conservative: let the
+// downstream resolveRuleBlock surface the real diagnostic).
+func cliRuleCoversFile(path string, ruleBlocks []ruleBlock) bool {
+	if len(ruleBlocks) == 0 {
+		return false
+	}
+	match, err := resolveRuleBlock(path, ruleBlocks)
+	if err != nil {
+		return false
+	}
+	return match.BlockIdx >= 0
+}

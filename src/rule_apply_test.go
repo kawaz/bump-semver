@@ -153,6 +153,44 @@ func TestDefineRule_DeadBlockErrors(t *testing.T) {
 	}
 }
 
+func TestDefineRule_StdinPipe_ExtensionWithoutBuiltin(t *testing.T) {
+	t.Parallel()
+	// `.env` has no builtin rule, but the user supplies one via
+	// --define-rule. resolveFileFromStdinWithRules must honour the
+	// CLI block instead of rejecting "unsupported file". Regression
+	// guard for codex review-gate finding: pre-fix the stdin path
+	// called resolveFileFromStdin (= no ruleBlocks plumbed), so
+	// --define-rule was silently dropped on the single-FILE + pipe
+	// shortcut.
+	args, err := parseArgs([]string{
+		"get", "myapp.env",
+		"--define-rule", "myapp.env",
+		"--format", "text",
+		"--version-regex", `VERSION=v(\d+\.\d+\.\d+)`,
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	stdin := strings.NewReader("VERSION=v3.2.1\n")
+	ri, err := resolveFileFromStdinWithRules("myapp.env", stdin, args.ruleBlocks)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(ri.fields) != 1 || ri.fields[0].Value != "3.2.1" {
+		t.Errorf("Versions = %+v, want 3.2.1", ri.fields)
+	}
+	// And cliRuleCoversFile (= gate widener) must say "yes" for the
+	// same path so the stdin-pipe shortcut admits it.
+	if !cliRuleCoversFile("myapp.env", args.ruleBlocks) {
+		t.Errorf("cliRuleCoversFile = false, want true for myapp.env with matching block")
+	}
+	// Negative: a path with no matching block and no builtin rule
+	// stays gate-rejected.
+	if cliRuleCoversFile("unrelated.env", args.ruleBlocks) {
+		t.Errorf("cliRuleCoversFile(unrelated.env) = true, want false (no block matches)")
+	}
+}
+
 // inspectViaCliRule is a tiny helper that wires the same Handler-
 // picking path that resolveFileWithRules uses, for unit-test purposes.
 // We don't go through the full resolveInputs (= no stdin / VCS) so the

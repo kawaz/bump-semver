@@ -417,25 +417,25 @@ Detection is **path-aware and confidence-ranked** (DR-0005). For each input FILE
 | **3** | `project.pbxproj` (Xcode) | pbxproj | every `MARKETING_VERSION = ...;` (synced) | — |
 | **3** | `Info.plist` (Apple plist) | xml | `<key>CFBundleShortVersionString</key>` | — |
 | **3** | `pom.xml` (Maven) [DR-0018] | xml-element | `/project/version` | `/project/artifactId` |
-| **3** | `VERSION` | plain text | (file content) | — |
+| **3** | `VERSION` | text (no regex) | (file content) | — |
 | **2** (basename) | any `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | any `plugin.json` | JSON | `$.version` (try) | `$.name` |
-| **2** | `v.mod` (V) | regex | `version: '...'` | `name: '...'` |
-| **2** | `build.zig.zon` (Zig) | regex | `.version = "..."` | — |
-| **2** | `mix.exs` (Elixir) | regex | `version: "..."` | — |
-| **2** | `build.sbt` (Scala) | regex | `version := "..."` | — |
-| **2** | `build.gradle` (Gradle Groovy) [DR-0018] | regex | `version = '...'` / `version "..."` | — |
-| **2** | `build.gradle.kts` (Gradle Kotlin DSL) [DR-0018] | regex | `version = "..."` | — |
+| **2** | `v.mod` (V) | text + regex | `version: '...'` | `name: '...'` |
+| **2** | `build.zig.zon` (Zig) | text + regex | `.version = "..."` | — |
+| **2** | `mix.exs` (Elixir) | text + regex | `version: "..."` | — |
+| **2** | `build.sbt` (Scala) | text + regex | `version := "..."` | — |
+| **2** | `build.gradle` (Gradle Groovy) [DR-0018] | text + regex | `version = '...'` / `version "..."` | — |
+| **2** | `build.gradle.kts` (Gradle Kotlin DSL) [DR-0018] | text + regex | `version = "..."` | — |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 | **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.toml` | TOML | `version` (top-level) | `name` |
-| **1** (fallback) | `*.xcconfig` (Xcode) | regex | `MARKETING_VERSION = ...` | — |
-| **1** (fallback) | `*.podspec` (CocoaPods) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
-| **1** (fallback) | `*.nimble` (Nim) | regex | `version = "..."` | — |
-| **1** (fallback) | `*.gemspec` (Ruby) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
-| **1** (fallback) | `*.cabal` (Haskell) [DR-0018] | regex | `version: ...` (line-anchored) | `name: ...` |
-| **1** (fallback) | `*.spec` (RPM) [DR-0018] | regex | `Version: ...` (capital V) | `Name: ...` |
+| **1** (fallback) | `*.xcconfig` (Xcode) | text + regex | `MARKETING_VERSION = ...` | — |
+| **1** (fallback) | `*.podspec` (CocoaPods) | text + regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.nimble` (Nim) | text + regex | `version = "..."` | — |
+| **1** (fallback) | `*.gemspec` (Ruby) | text + regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.cabal` (Haskell) [DR-0018] | text + regex | `version: ...` (line-anchored) | `name: ...` |
+| **1** (fallback) | `*.spec` (RPM) [DR-0018] | text + regex | `Version: ...` (capital V) | `Name: ...` |
 | **1** (fallback) | `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) [DR-0018] | xml-element | `/Project/PropertyGroup/Version` | — |
 
 Unsupported files (e.g. `README.md`, `Cargo.lock`) error out explicitly with `unsupported file: <path>`. Adding a new format = adding one row to the rule table plus, if needed, one new format-specific function (no `--pattern` regex flag, by design).
@@ -446,7 +446,7 @@ The `pyproject.toml` rule (DR-0014) tries PEP 621's `[project].version` first an
 
 The `Cargo.toml` rule (DR-0021) uses the same try-fallback shape: a single-crate manifest's `[package].version` is tried first, and a workspace-root manifest (no `[package]`) falls back to `[workspace.package].version` — the value member crates inherit via `version.workspace = true`. When a member crate declares both, its own `[package].version` wins. The matched path (`[package].version` or `[workspace.package].version`) is shown in `get` / `--json` output so you always see which version you are bumping.
 
-The DR-0012 `regex` format covers eight language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim.
+The `text + regex` rules (originally introduced as the DR-0012 `regex` format, unified into `text + VersionRegex` by [DR-0030](./docs/decisions/DR-0030-format-regex-to-text-unification.md)) cover eight+ language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt / build.gradle / build.gradle.kts / cabal / spec). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim.
 
 The DR-0015 rules add the two Xcode-specific files where multiple version strings need synchronised updates: `project.pbxproj` (Xcode iOS / macOS project bundle, OpenStep plist) reads / rewrites **every** `MARKETING_VERSION = ...;` line at once and verifies they agree (a mismatched file surfaces a column-aligned `version mismatch:` block with `<file>:line:N` labels), and `Info.plist` (XML plist) reads / rewrites the `<key>CFBundleShortVersionString</key><string>...</string>` pair while preserving DOCTYPE, indentation, attribute order, and sibling keys byte-for-byte. Files using the Xcode 11+ `<string>$(MARKETING_VERSION)</string>` placeholder produce an `unsupported file:` outcome — the placeholder isn't a parseable version, which is the cue to add `project.pbxproj` to the invocation where the real value lives. `CFBundleVersion` (build number) is intentionally out of scope (build numbers aren't SemVer; CI typically writes them).
 

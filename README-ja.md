@@ -415,25 +415,25 @@ bump 時、`--pre` / `--build-metadata` を明示しない限り、既存の pre
 | **3** | `project.pbxproj` (Xcode) | pbxproj | 全 `MARKETING_VERSION = ...;` (同期更新) | — |
 | **3** | `Info.plist` (Apple plist) | xml | `<key>CFBundleShortVersionString</key>` | — |
 | **3** | `pom.xml` (Maven) [DR-0018] | xml-element | `/project/version` | `/project/artifactId` |
-| **3** | `VERSION` | plain text | (ファイル内容) | — |
+| **3** | `VERSION` | text (regex なし) | (ファイル内容) | — |
 | **2** (basename) | 任意 dir の `marketplace.json` | JSON | `$.metadata.version` (try) | `$.name` |
 | **2** | 任意 dir の `plugin.json` | JSON | `$.version` (try) | `$.name` |
-| **2** | `v.mod` (V) | regex | `version: '...'` | `name: '...'` |
-| **2** | `build.zig.zon` (Zig) | regex | `.version = "..."` | — |
-| **2** | `mix.exs` (Elixir) | regex | `version: "..."` | — |
-| **2** | `build.sbt` (Scala) | regex | `version := "..."` | — |
-| **2** | `build.gradle` (Gradle Groovy) [DR-0018] | regex | `version = '...'` / `version "..."` | — |
-| **2** | `build.gradle.kts` (Gradle Kotlin DSL) [DR-0018] | regex | `version = "..."` | — |
+| **2** | `v.mod` (V) | text + regex | `version: '...'` | `name: '...'` |
+| **2** | `build.zig.zon` (Zig) | text + regex | `.version = "..."` | — |
+| **2** | `mix.exs` (Elixir) | text + regex | `version: "..."` | — |
+| **2** | `build.sbt` (Scala) | text + regex | `version := "..."` | — |
+| **2** | `build.gradle` (Gradle Groovy) [DR-0018] | text + regex | `version = '...'` / `version "..."` | — |
+| **2** | `build.gradle.kts` (Gradle Kotlin DSL) [DR-0018] | text + regex | `version = "..."` | — |
 | **1** (fallback) | `*.json` | JSON | `$.version` | `$.name` |
 | **1** (fallback) | `*.yaml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.yml` | YAML | `.version` (top-level) | `.name` |
 | **1** (fallback) | `*.toml` | TOML | `version` (top-level) | `name` |
-| **1** (fallback) | `*.xcconfig` (Xcode) | regex | `MARKETING_VERSION = ...` | — |
-| **1** (fallback) | `*.podspec` (CocoaPods) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
-| **1** (fallback) | `*.nimble` (Nim) | regex | `version = "..."` | — |
-| **1** (fallback) | `*.gemspec` (Ruby) | regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
-| **1** (fallback) | `*.cabal` (Haskell) [DR-0018] | regex | `version: ...` (line-anchored) | `name: ...` |
-| **1** (fallback) | `*.spec` (RPM) [DR-0018] | regex | `Version: ...` (capital V) | `Name: ...` |
+| **1** (fallback) | `*.xcconfig` (Xcode) | text + regex | `MARKETING_VERSION = ...` | — |
+| **1** (fallback) | `*.podspec` (CocoaPods) | text + regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.nimble` (Nim) | text + regex | `version = "..."` | — |
+| **1** (fallback) | `*.gemspec` (Ruby) | text + regex | `s.version = '...'` / `spec.version = "..."` | `s.name` / `spec.name` |
+| **1** (fallback) | `*.cabal` (Haskell) [DR-0018] | text + regex | `version: ...` (line-anchored) | `name: ...` |
+| **1** (fallback) | `*.spec` (RPM) [DR-0018] | text + regex | `Version: ...` (capital V) | `Name: ...` |
 | **1** (fallback) | `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) [DR-0018] | xml-element | `/Project/PropertyGroup/Version` | — |
 
 未対応ファイル (例: `README.md`, `Cargo.lock`) は `unsupported file: <path>` で明示エラー。新フォーマット追加 = テーブル 1 行追加 (+ 必要なら新 format-specific 関数 1 つ) で済む構造 (`--pattern` regex フラグは設計上持たない)。
@@ -444,7 +444,7 @@ YAML / TOML fallback (DR-0011) は **top-level キーだけ**を見る。section
 
 `Cargo.toml` ルール (DR-0021) も同じ try-fallback 形を使う。シングルクレートの `[package].version` を先に試し、`[package]` を持たない workspace-root では `[workspace.package].version` (メンバー crate が `version.workspace = true` で継承する正本) にフォールバックする。両方を宣言するメンバー crate では crate 自身の `[package].version` が優先。マッチした path (`[package].version` か `[workspace.package].version`) は `get` / `--json` 出力に出るので、何の version を bump しているか常に確認できる。
 
-DR-0012 の `regex` フォーマットは「version が 1 行のソースコード式で書かれる」8 つの言語マニフェスト (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt) をカバーする。**最初のマッチ 1 個** だけが読み書きされ、quote style と version 行末尾のコメントは保持される。
+`text + regex` ルール (= 元々 DR-0012 で `regex` format として導入、[DR-0030](./docs/decisions/DR-0030-format-regex-to-text-unification.md) で `text + VersionRegex` に統合された) は「version が 1 行のソースコード式で書かれる」8+ 言語マニフェスト (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt / build.gradle / build.gradle.kts / cabal / spec) をカバーする。**最初のマッチ 1 個** だけが読み書きされ、quote style と version 行末尾のコメントは保持される。
 
 DR-0015 で追加された 2 ルールは、Xcode iOS / macOS プロジェクト固有の「同一ファイル内で複数 version を同期更新する」ケースを扱う。`project.pbxproj` (Xcode の OpenStep plist 形式) は **全 `MARKETING_VERSION = ...;` 行** を一括で読み書きし、不一致があれば `<file>:line:N` 形式のラベル付き column-aligned `version mismatch:` 出力で報告する。`Info.plist` (XML plist) は `<key>CFBundleShortVersionString</key><string>...</string>` ペアを読み書きし、DOCTYPE / インデント / 属性順序 / 兄弟 key を byte 単位で保持する (encoding/xml の Marshal は経由しない)。Xcode 11+ default の `<string>$(MARKETING_VERSION)</string>` placeholder は SemVer としてパース不能なので `unsupported file:` で落ちる — これは利用者に「`project.pbxproj` を追加で渡せ」というシグナルとして機能する。`CFBundleVersion` (build number) は SemVer ではないのでスコープ外 (CI で別途埋めるのが慣例)。
 

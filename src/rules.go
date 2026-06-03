@@ -31,7 +31,10 @@ type CandidateRule struct {
 	Glob string
 	// Confidence: 3 = path-pinned, 2 = basename-only, 1 = glob fallback.
 	Confidence int
-	// Format selects the parser/serializer pair: "json", "toml", "plain".
+	// Format selects the parser/serializer pair (DR-0030):
+	// "text" / "json" / "yaml" / "toml" / "xml" / "xml-element" / "pbxproj".
+	// The legacy "regex" and "plain" formats are unified under "text" with
+	// VersionRegex-presence as the subtype selector — see format_text.go.
 	Format string
 	// NamePaths lists every place the rule should look for a package
 	// name. Names are optional — a missing name does not cause the rule
@@ -43,16 +46,19 @@ type CandidateRule struct {
 	// VersionPaths lists every place the rule expects a version string;
 	// all of them must extract successfully for the rule to count as a hit.
 	VersionPaths []string
-	// VersionRegex is used by Format == "regex" rules (DR-0012). The
-	// regex must contain exactly one capture group `(...)`; its
-	// matched byte range is the version value, and Replace rewrites
-	// only that range — everything else (quotes, identifier text,
-	// trailing comments) is preserved verbatim. Empty for non-regex
-	// rules.
+	// VersionRegex is used by Format == "text" rules to switch from the
+	// "whole file = version" subtype (empty) to the "first capture
+	// group = version" subtype (set). The regex must contain exactly
+	// one capture group `(...)`; its matched byte range is the version
+	// value, and Replace rewrites only that range — everything else
+	// (quotes, identifier text, trailing comments) is preserved
+	// verbatim. (DR-0012 introduced this regex behaviour as its own
+	// format; DR-0030 unified it under "text".)
 	VersionRegex string
-	// NameRegex is the optional name counterpart to VersionRegex
-	// (DR-0012). Same single-capture-group shape. A failed match here
-	// does not fail the rule (names are advisory across all formats).
+	// NameRegex is the optional name counterpart to VersionRegex.
+	// Same single-capture-group shape. A failed match here does not
+	// fail the rule (names are advisory across all formats). Ignored
+	// when VersionRegex is empty.
 	NameRegex string
 }
 
@@ -161,7 +167,7 @@ var rules = []CandidateRule{
 		Name:       "VERSION (plain text)",
 		Basename:   "VERSION",
 		Confidence: 3,
-		Format:     "plain",
+		Format:     "text",
 	},
 	{
 		// DR-0015: Xcode `<project>.xcodeproj/project.pbxproj`. The
@@ -247,7 +253,7 @@ var rules = []CandidateRule{
 		Name:         "v.mod",
 		Basename:     "v.mod",
 		Confidence:   2,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^\s*version\s*:\s*'([^']+)'`,
 		NameRegex:    `(?m)^\s*name\s*:\s*'([^']+)'`,
 	},
@@ -259,7 +265,7 @@ var rules = []CandidateRule{
 		Name:         "build.zig.zon",
 		Basename:     "build.zig.zon",
 		Confidence:   2,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)\.version\s*=\s*"([^"]+)"`,
 	},
 	{
@@ -269,7 +275,7 @@ var rules = []CandidateRule{
 		Name:         "mix.exs",
 		Basename:     "mix.exs",
 		Confidence:   2,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)version:\s*"([^"]+)"`,
 	},
 	{
@@ -279,7 +285,7 @@ var rules = []CandidateRule{
 		Name:         "build.sbt",
 		Basename:     "build.sbt",
 		Confidence:   2,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^\s*version\s*:?=\s*"([^"]+)"`,
 	},
 	{
@@ -293,7 +299,7 @@ var rules = []CandidateRule{
 		Name:         "build.gradle",
 		Basename:     "build.gradle",
 		Confidence:   2,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^version\s*=?\s*['"]([^'"]+)['"]`,
 	},
 	{
@@ -304,7 +310,7 @@ var rules = []CandidateRule{
 		Name:         "build.gradle.kts",
 		Basename:     "build.gradle.kts",
 		Confidence:   2,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^version\s*=\s*['"]([^'"]+)['"]`,
 	},
 
@@ -322,7 +328,7 @@ var rules = []CandidateRule{
 		Name:         "*.xcconfig (fallback)",
 		Glob:         "*.xcconfig",
 		Confidence:   1,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^\s*MARKETING_VERSION\s*=\s*([^\s;/]+)`,
 	},
 	{
@@ -332,7 +338,7 @@ var rules = []CandidateRule{
 		Name:         "*.podspec (fallback)",
 		Glob:         "*.podspec",
 		Confidence:   1,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^\s*(?:s|spec)\.version\s*=\s*['"]([^'"]+)['"]`,
 		NameRegex:    `(?m)^\s*(?:s|spec)\.name\s*=\s*['"]([^'"]+)['"]`,
 	},
@@ -343,7 +349,7 @@ var rules = []CandidateRule{
 		Name:         "*.nimble (fallback)",
 		Glob:         "*.nimble",
 		Confidence:   1,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^\s*version\s*=\s*"([^"]+)"`,
 	},
 	{
@@ -353,7 +359,7 @@ var rules = []CandidateRule{
 		Name:         "*.gemspec (fallback)",
 		Glob:         "*.gemspec",
 		Confidence:   1,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^\s*(?:s|spec)\.version\s*=\s*['"]([^'"]+)['"]`,
 		NameRegex:    `(?m)^\s*(?:s|spec)\.name\s*=\s*['"]([^'"]+)['"]`,
 	},
@@ -365,7 +371,7 @@ var rules = []CandidateRule{
 		Name:         "*.cabal (fallback)",
 		Glob:         "*.cabal",
 		Confidence:   1,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^version\s*:\s*([^\s]+)`,
 		NameRegex:    `(?m)^name\s*:\s*([^\s]+)`,
 	},
@@ -377,7 +383,7 @@ var rules = []CandidateRule{
 		Name:         "*.spec (fallback)",
 		Glob:         "*.spec",
 		Confidence:   1,
-		Format:       "regex",
+		Format:       "text",
 		VersionRegex: `(?m)^Version\s*:\s*([^\s]+)`,
 		NameRegex:    `(?m)^Name\s*:\s*([^\s]+)`,
 	},
@@ -562,10 +568,8 @@ func tryRule(rule CandidateRule, content []byte) (Inspection, error) {
 		return tomlInspect(rule, content)
 	case "yaml":
 		return yamlInspect(rule, content)
-	case "plain":
-		return plainInspect(rule, content)
-	case "regex":
-		return regexInspect(rule, content)
+	case "text":
+		return textInspect(rule, content)
 	case "pbxproj":
 		return pbxprojInspect(rule, content)
 	case "xml":
@@ -585,10 +589,8 @@ func formatReplace(rule CandidateRule, content []byte, current, newVersion strin
 		return tomlReplace(rule, content, current, newVersion)
 	case "yaml":
 		return yamlReplace(rule, content, current, newVersion)
-	case "plain":
-		return plainReplace(rule, content, current, newVersion)
-	case "regex":
-		return regexReplace(rule, content, current, newVersion)
+	case "text":
+		return textReplace(rule, content, current, newVersion)
 	case "pbxproj":
 		return pbxprojReplace(rule, content, current, newVersion)
 	case "xml":

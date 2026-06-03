@@ -1,5 +1,32 @@
 # Upgrading guide
 
+## → `format=regex` and `format=plain` unified under `format=text` (DR-0030, v0.31.x)
+
+**Internal refactor, no behaviour change.** The legacy `Format: "regex"` (DR-0012) and
+`Format: "plain"` builtin rule kinds were unified into a single `Format: "text"` rule
+kind. The presence/absence of `VersionRegex` selects the subtype:
+
+- `Format: "text"` + `VersionRegex: ""` → whole-file = version (= legacy `"plain"`,
+  used by the `VERSION` file rule)
+- `Format: "text"` + `VersionRegex: "..."` → first capture group = version (= legacy
+  `"regex"`, used by `*.podspec` / `*.nimble` / `v.mod` / `build.zig.zon` / `mix.exs` /
+  `build.sbt` / `*.xcconfig` / `*.gemspec` / `*.cabal` / `*.spec` / `build.gradle` /
+  `build.gradle.kts`)
+
+All existing CLI invocations, file rewrites, and `--json` outputs are unchanged.
+The visible difference is naming only: `--help-full` and README tables now show
+`text + regex` instead of `regex`, and `VERSION` is shown as `text (no regex)`
+instead of `plain text`.
+
+Rationale: `format` is a "file structure classifier" (text / json / yaml / toml /
+xml / xml-element / pbxproj), and `regex` was actually a "version extraction
+strategy" — a different axis. Mixing them in the same enum blocked the
+forthcoming `--define-rule` CLI flag (DR-0029) from publishing a clean `--format`
+enum to users. See [DR-0030](./docs/decisions/DR-0030-format-regex-to-text-unification.md)
+for the full rationale; [DR-0012](./docs/decisions/DR-0012-regex-format.md) is
+partially superseded (the regex extraction behaviour itself is preserved, only
+the format name is retired).
+
 ## → `vcs tag latest` subcommand replaces `vcs:latest-tag()` input (DR-0020 PR-Tag-Latest, v0.29.0)
 
 **BREAKING**: the `vcs:latest-tag([REPO])` function-shaped input was removed without a deprecation period (v0 policy: breaking changes allowed in 0.x). The same capability is now exposed as a first-class subcommand:

@@ -97,12 +97,12 @@ Supported file formats (auto-detected by basename):
   *.json             JSON, $.version (and optional $.name)
   *.yaml / *.yml     YAML, top-level .version (and optional .name) [DR-0011 fallback]
   *.toml             TOML, top-level version  (and optional name)  [DR-0011 fallback]
-  v.mod / build.zig.zon / mix.exs / build.sbt        regex (basename) [DR-0012]
-  build.gradle / build.gradle.kts                    regex (basename) [DR-0018]
-  *.xcconfig / *.podspec / *.nimble / *.gemspec      regex (fallback) [DR-0012]
-  *.cabal / *.spec                                   regex (fallback) [DR-0018]
+  v.mod / build.zig.zon / mix.exs / build.sbt        text + regex (basename) [DR-0012 / DR-0030]
+  build.gradle / build.gradle.kts                    text + regex (basename) [DR-0018 / DR-0030]
+  *.xcconfig / *.podspec / *.nimble / *.gemspec      text + regex (fallback) [DR-0012 / DR-0030]
+  *.cabal / *.spec                                   text + regex (fallback) [DR-0018 / DR-0030]
   *.csproj / *.fsproj / *.vbproj                     XML element, /Project/PropertyGroup/Version [DR-0018]
-  VERSION            plain text
+  VERSION            text (whole file = version, no regex)
 
   Backup-style suffix fallback (DR-0013): Cargo.toml.bak / package.json.20260510 /
   Chart.yaml~ etc. strip one trailing suffix and retry against the table above.

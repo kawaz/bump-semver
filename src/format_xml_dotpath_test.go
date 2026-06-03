@@ -208,6 +208,41 @@ func TestXMLDot_NestedPath(t *testing.T) {
 	}
 }
 
+func TestXMLDot_MultipleElementsSameValue(t *testing.T) {
+	t.Parallel()
+	// Two <dep><version> with the SAME value → accepted, both spans
+	// returned (rewritten on --write).
+	doc := []byte(`<deps><dep><version>1.0.0</version></dep><dep><version>1.0.0</version></dep></deps>`)
+	insp, err := xmlDotInspect(xmlRule("deps.dep.version"), doc)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if insp.Versions[0].Value != "1.0.0" {
+		t.Errorf("Value = %q, want 1.0.0", insp.Versions[0].Value)
+	}
+	out, err := xmlDotReplace(xmlRule("deps.dep.version"), doc, "1.0.0", "2.0.0")
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	want := `<deps><dep><version>2.0.0</version></dep><dep><version>2.0.0</version></dep></deps>`
+	if string(out) != want {
+		t.Errorf("Replace = %q, want %q (both occurrences)", out, want)
+	}
+}
+
+func TestXMLDot_MultipleElementsDifferentValues(t *testing.T) {
+	t.Parallel()
+	// Two matches with DIFFERENT values → ambiguous (no silent first-match).
+	doc := []byte(`<deps><dep><version>1.0.0</version></dep><dep><version>2.0.0</version></dep></deps>`)
+	_, err := xmlDotInspect(xmlRule("deps.dep.version"), doc)
+	if err == nil {
+		t.Fatalf("expected ambiguous error for differing repeated elements")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Errorf("error %q should mention ambiguous", err)
+	}
+}
+
 func TestXMLDot_NotFound(t *testing.T) {
 	t.Parallel()
 	doc := []byte(`<project><name>foo</name></project>`)

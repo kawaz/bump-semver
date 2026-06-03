@@ -107,7 +107,7 @@ func TestDefineRule_TextRequiresVersionRegex(t *testing.T) {
 	}
 }
 
-func TestDefineRule_JsonRequiresPathOrRegex(t *testing.T) {
+func TestDefineRule_JsonRequiresPath(t *testing.T) {
 	t.Parallel()
 	block := ruleBlock{
 		Pattern: "a.json",
@@ -117,10 +117,29 @@ func TestDefineRule_JsonRequiresPathOrRegex(t *testing.T) {
 	}
 	err := validateRuleBlock(block)
 	if err == nil {
-		t.Fatalf("expected error for --format json with no --version-path or --version-regex")
+		t.Fatalf("expected error for --format json with no --version-path")
 	}
-	if !strings.Contains(err.Error(), "--version-path") || !strings.Contains(err.Error(), "--version-regex") {
-		t.Errorf("error %q should mention both --version-path and --version-regex", err)
+	if !strings.Contains(err.Error(), "--version-path") {
+		t.Errorf("error %q should mention --version-path", err)
+	}
+}
+
+func TestDefineRule_StructuredRegexOnlyRejected(t *testing.T) {
+	t.Parallel()
+	// --format json --version-regex (no --version-path) → steer to text.
+	block := ruleBlock{
+		Pattern: "a.json",
+		Opts: ruleOpts{
+			Format:       strPtr("json"),
+			VersionRegex: strPtr(`v(\d+\.\d+\.\d+)`),
+		},
+	}
+	err := validateRuleBlock(block)
+	if err == nil {
+		t.Fatalf("expected error for --format json --version-regex without --version-path")
+	}
+	if !strings.Contains(err.Error(), "--format text") {
+		t.Errorf("error %q should steer to --format text", err)
 	}
 }
 

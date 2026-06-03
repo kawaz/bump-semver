@@ -147,16 +147,24 @@ func parseXMLDotPath(path string) ([]string, error) {
 
 // xmlDotResolve walks the document and resolves `path`, checking both
 // the child-element interpretation and the attribute interpretation of
-// the final segment. Both-present-and-equal is accepted (returns both
-// spans); both-present-and-different is an ambiguous error.
+// the final segment, across ALL matching locations. Every match must
+// agree on the value: all-equal is accepted (every span is returned for
+// rewrite), any divergence is an ambiguous error.
 func xmlDotResolve(content []byte, path string) (xmlDotResult, error) {
 	segs, err := parseXMLDotPath(path)
 	if err != nil {
 		return xmlDotResult{}, err
 	}
 
-	var childHit *xmlDotHit
-	var attrHit *xmlDotHit
+	// Collect ALL matches, not just the first. A dot-path can hit
+	// several elements (repeated elements at the same depth) and/or an
+	// element plus a same-named attribute. Silently rewriting only the
+	// first match risks a wrong/partial update (codex review). Instead
+	// we gather every hit and require them to agree: all-equal is
+	// accepted (every span is rewritten on --write, peer-consistency
+	// spirit), any divergence is an ambiguous error.
+	var childHits []xmlDotHit
+	var attrHits []xmlDotHit
 
 	dec := xml.NewDecoder(bytes.NewReader(content))
 	var stack []string
@@ -177,14 +185,13 @@ func xmlDotResolve(content []byte, path string) (xmlDotResult, error) {
 		case xml.StartElement:
 			stack = append(stack, v.Name.Local)
 			// Child interpretation: stack == segs exactly.
-			if childHit == nil && stackEquals(stack, segs) {
+			if stackEquals(stack, segs) {
 				h, perr := readTrimmedInnerText(dec, &prevOffset)
 				if perr != nil {
 					return xmlDotResult{}, perr
 				}
 				if h.value != "" {
-					hh := h
-					childHit = &hh
+					childHits = append(childHits, h)
 				}
 				// readTrimmedInnerText advanced the decoder past the
 				// CharData; the matching EndElement token will pop the
@@ -193,11 +200,10 @@ func xmlDotResolve(content []byte, path string) (xmlDotResult, error) {
 			}
 			// Attribute interpretation: stack == segs[:-1] and the last
 			// segment names an attribute on this element.
-			if attrHit == nil && len(segs) >= 2 && stackEquals(stack, segs[:len(segs)-1]) {
+			if len(segs) >= 2 && stackEquals(stack, segs[:len(segs)-1]) {
 				attrName := segs[len(segs)-1]
 				if h, ok := xmlAttrSpan(content, startOff, curOff, v, attrName); ok && h.value != "" {
-					hh := h
-					attrHit = &hh
+					attrHits = append(attrHits, h)
 				}
 			}
 		case xml.EndElement:
@@ -207,26 +213,24 @@ func xmlDotResolve(content []byte, path string) (xmlDotResult, error) {
 		}
 	}
 
-	switch {
-	case childHit != nil && attrHit != nil:
-		if childHit.value != attrHit.value {
-			return xmlDotResult{}, fmt.Errorf("path %q is ambiguous: a child element and an attribute both match but hold different values (child=%q, attr=%q); disambiguate the document or path", path, childHit.value, attrHit.value)
-		}
-		// Same value in both spots — accept, rewrite both on write.
-		return xmlDotResult{
-			value: childHit.value,
-			spans: []xmlSpan{
-				{start: childHit.valueStart, end: childHit.valueEnd},
-				{start: attrHit.valueStart, end: attrHit.valueEnd},
-			},
-		}, nil
-	case childHit != nil:
-		return xmlDotResult{value: childHit.value, spans: []xmlSpan{{start: childHit.valueStart, end: childHit.valueEnd}}}, nil
-	case attrHit != nil:
-		return xmlDotResult{value: attrHit.value, spans: []xmlSpan{{start: attrHit.valueStart, end: attrHit.valueEnd}}}, nil
-	default:
+	// Merge child + attribute hits and require unanimous agreement.
+	all := make([]xmlDotHit, 0, len(childHits)+len(attrHits))
+	all = append(all, childHits...)
+	all = append(all, attrHits...)
+	if len(all) == 0 {
 		return xmlDotResult{}, fmt.Errorf("not found (neither child element nor attribute)")
 	}
+	base := all[0].value
+	for _, h := range all[1:] {
+		if h.value != base {
+			return xmlDotResult{}, fmt.Errorf("path %q is ambiguous: it matches %d locations (child elements and/or attributes) holding different values (e.g. %q vs %q); make the path unambiguous", path, len(all), base, h.value)
+		}
+	}
+	spans := make([]xmlSpan, 0, len(all))
+	for _, h := range all {
+		spans = append(spans, xmlSpan{start: h.valueStart, end: h.valueEnd})
+	}
+	return xmlDotResult{value: base, spans: spans}, nil
 }
 
 // stackEquals reports whether the element-name stack equals segs.

@@ -182,6 +182,42 @@ func TestTwoStage_JSONWriteBigShrink(t *testing.T) {
 	}
 }
 
+func TestTwoStage_MultiPathDifferentContainers(t *testing.T) {
+	t.Parallel()
+	// codex regression: two paths with DIFFERENT container strings but
+	// the same extracted version. Each container must be rewritten
+	// independently — path[0]'s container must NOT overwrite path[1].
+	content := []byte(`{"name": "myapp v1.2.3", "label": "release-1.2.3"}`)
+	h := &cliRuleHandler{
+		path: "x.json",
+		rule: CandidateRule{
+			Name:         "multi",
+			Format:       "json",
+			VersionPaths: []string{".name", ".label"},
+			VersionRegex: `(\d+\.\d+\.\d+)`,
+		},
+		block: ruleBlock{Pattern: "x.json"},
+	}
+	// Both extract 1.2.3.
+	insp, err := h.Inspect(content)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	for _, f := range insp.Versions {
+		if f.Value != "1.2.3" {
+			t.Fatalf("Versions = %+v, want all 1.2.3", insp.Versions)
+		}
+	}
+	out, err := h.Replace(content, "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	want := `{"name": "myapp v1.2.4", "label": "release-1.2.4"}`
+	if string(out) != want {
+		t.Errorf("Replace =\n%q\nwant\n%q\n(.label must stay 'release-...', NOT become 'myapp v...')", out, want)
+	}
+}
+
 func TestTwoStage_PathOnlyStillWorks(t *testing.T) {
 	t.Parallel()
 	// No regex → path value used verbatim (regression guard for the

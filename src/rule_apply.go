@@ -51,8 +51,17 @@ func validateRuleBlock(block ruleBlock) error {
 			return fmt.Errorf("--define-rule %q: --format text does not support --name-path", block.Pattern)
 		}
 	case "json", "yaml", "toml", "xml":
-		if opts.VersionPath == nil && opts.VersionRegex == nil {
-			return fmt.Errorf("--define-rule %q: --format %s requires --version-path or --version-regex (or both, see DR-0029)", block.Pattern, f)
+		// Structured formats require a path. A regex MAY accompany it
+		// (2-stage extraction: regex pulls the version out of the
+		// path's container value). A regex WITHOUT a path would mean
+		// "whole-file regex", which is exactly what --format text does;
+		// steering users there keeps each format's role distinct and
+		// avoids paying a parse cost we then ignore.
+		if opts.VersionPath == nil {
+			if opts.VersionRegex != nil {
+				return fmt.Errorf("--define-rule %q: --format %s needs --version-path; for whole-file regex extraction use --format text instead", block.Pattern, f)
+			}
+			return fmt.Errorf("--define-rule %q: --format %s requires --version-path", block.Pattern, f)
 		}
 	default:
 		return fmt.Errorf("--define-rule %q: internal — unhandled --format %q (should have been rejected at parse time)", block.Pattern, f)
@@ -167,7 +176,7 @@ func (h *cliRuleHandler) Replace(content []byte, current, newVersion string) ([]
 		}
 	}
 	// DR-0029 § "Path / Regex 併記時の挙動" (write side): for a
-	// structured format with both path and regex, the path value is a
+	// structured format with both path and regex, each path value is a
 	// container string (e.g. "myapp v1.0.5") whose regex group 1 must
 	// be replaced in place — NOT the whole path value. We achieve this
 	// without per-format byte offsets by computing the new container
@@ -176,26 +185,39 @@ func (h *cliRuleHandler) Replace(content []byte, current, newVersion string) ([]
 	// Replace rewrites only the value's byte range, the surrounding
 	// document (and the container string's non-version bytes) stay
 	// byte-identical.
+	//
+	// CRITICAL (codex review): each --version-path may hold a DIFFERENT
+	// container even when the extracted version agrees (e.g. .name =
+	// "myapp v1.2.3" and .label = "release-1.2.3" both extract 1.2.3).
+	// We therefore compute and splice the new container PER PATH — never
+	// reuse path[0]'s container for the others, which would corrupt them.
 	if h.isStructured() && h.rule.VersionRegex != "" {
 		insp, ierr := h.inspectRaw(content)
 		if ierr != nil {
 			return nil, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, ierr)
 		}
-		if len(insp.Versions) == 0 {
-			return nil, fmt.Errorf("--define-rule %q applied to %s: --version-path matched no value", h.block.Pattern, h.path)
+		if len(insp.Versions) != len(h.rule.VersionPaths) {
+			return nil, fmt.Errorf("--define-rule %q applied to %s: internal — %d path values for %d --version-path (cannot map containers safely)", h.block.Pattern, h.path, len(insp.Versions), len(h.rule.VersionPaths))
 		}
-		// All path values must agree (multi-path / xml dual-span are
-		// already collapsed to a single value per Field by inspectRaw).
-		raw := insp.Versions[0].Value
-		newContainer, rerr := regexReplaceGroup1(raw, h.rule.VersionRegex, newVersion)
-		if rerr != nil {
-			return nil, fmt.Errorf("--define-rule %q applied to %s: --version-path value %q: %w", h.block.Pattern, h.path, raw, rerr)
+		cur := content
+		for i, vp := range h.rule.VersionPaths {
+			raw := insp.Versions[i].Value
+			newContainer, rerr := regexReplaceGroup1(raw, h.rule.VersionRegex, newVersion)
+			if rerr != nil {
+				return nil, fmt.Errorf("--define-rule %q applied to %s: --version-path %q value %q: %w", h.block.Pattern, h.path, vp, raw, rerr)
+			}
+			// Restrict the rule to this single path so the format
+			// Replace touches only its container; re-locate against the
+			// updated buffer each iteration so byte offsets stay valid.
+			sub := h.rule
+			sub.VersionPaths = []string{vp}
+			out, err := h.replaceRawWith(sub, cur, raw, newContainer)
+			if err != nil {
+				return nil, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, err)
+			}
+			cur = out
 		}
-		out, err := h.replaceRaw(content, raw, newContainer)
-		if err != nil {
-			return nil, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, err)
-		}
-		return out, nil
+		return cur, nil
 	}
 
 	out, err := h.replaceRaw(content, current, newVersion)
@@ -218,10 +240,16 @@ func (h *cliRuleHandler) inspectRaw(content []byte) (Inspection, error) {
 
 // replaceRaw is the write counterpart of inspectRaw.
 func (h *cliRuleHandler) replaceRaw(content []byte, current, newVersion string) ([]byte, error) {
-	if h.rule.Format == "xml" {
-		return xmlDotReplace(h.rule, content, current, newVersion)
+	return h.replaceRawWith(h.rule, content, current, newVersion)
+}
+
+// replaceRawWith dispatches a write for an explicit rule (used by the
+// path+regex 2-stage write to restrict the rule to a single path).
+func (h *cliRuleHandler) replaceRawWith(rule CandidateRule, content []byte, current, newVersion string) ([]byte, error) {
+	if rule.Format == "xml" {
+		return xmlDotReplace(rule, content, current, newVersion)
 	}
-	return formatReplace(h.rule, content, current, newVersion)
+	return formatReplace(rule, content, current, newVersion)
 }
 
 // countRegexMatches counts how many disjoint matches `vrx` has in

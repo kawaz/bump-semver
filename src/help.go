@@ -120,8 +120,10 @@ Not in the table? Define your own rule with --define-rule (DR-0029):
                               glob:<pattern>). Subsequent --format / --version-*
                               / --name-* flags belong to this block until the
                               next --define-rule.
-  --format <FMT>             text|json|yaml|toml (xml is Phase 2+).
-  --version-path <DOTPATH>   For json/yaml/toml: where the version field is
+  --format <FMT>             text|json|yaml|toml|xml. xml resolves the final
+                             path segment against both a child element and an
+                             attribute (same value = ok, differing = ambiguous).
+  --version-path <DOTPATH>   For json/yaml/toml/xml: where the version field is
                              (e.g. $.version, plugin.version, deps[0].version).
   --version-regex <PATTERN>  For text: regex with one capture group
                              (exact one match required, 0/2+ matches = error).

@@ -50,7 +50,7 @@ func validateRuleBlock(block ruleBlock) error {
 		if opts.NamePath != nil {
 			return fmt.Errorf("--define-rule %q: --format text does not support --name-path", block.Pattern)
 		}
-	case "json", "yaml", "toml":
+	case "json", "yaml", "toml", "xml":
 		if opts.VersionPath == nil && opts.VersionRegex == nil {
 			return fmt.Errorf("--define-rule %q: --format %s requires --version-path or --version-regex (or both, see DR-0029)", block.Pattern, f)
 		}
@@ -102,7 +102,7 @@ type cliRuleHandler struct {
 }
 
 func (h *cliRuleHandler) Inspect(content []byte) (Inspection, error) {
-	insp, err := tryRule(h.rule, content)
+	insp, err := h.inspectRaw(content)
 	if err != nil {
 		return Inspection{}, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, err)
 	}
@@ -116,7 +116,41 @@ func (h *cliRuleHandler) Inspect(content []byte) (Inspection, error) {
 			return Inspection{}, fmt.Errorf("--define-rule %q applied to %s: --version-regex matched %d times, exactly one match required (use a more specific regex, e.g. add line anchors (?m)^ or stricter context)", h.block.Pattern, h.path, n)
 		}
 	}
+	// DR-0029 § "Path / Regex 併記時の挙動": structured format
+	// (json/yaml/toml/xml) WITH both a path and a regex performs a
+	// 2-stage extraction — the path locates a scalar string, then the
+	// regex pulls capture group 1 out of that string. The inspectRaw
+	// step already extracted the raw path value(s); apply the regex on
+	// top here.
+	if h.isStructured() && h.rule.VersionRegex != "" {
+		for i := range insp.Versions {
+			v, rerr := regexExtractGroup1(insp.Versions[i].Value, h.rule.VersionRegex)
+			if rerr != nil {
+				return Inspection{}, fmt.Errorf("--define-rule %q applied to %s: --version-path value %q: %w", h.block.Pattern, h.path, insp.Versions[i].Value, rerr)
+			}
+			insp.Versions[i].Value = v
+		}
+	}
+	if h.isStructured() && h.rule.NameRegex != "" {
+		for i := range insp.Names {
+			if v, rerr := regexExtractGroup1(insp.Names[i].Value, h.rule.NameRegex); rerr == nil {
+				insp.Names[i].Value = v
+			}
+		}
+	}
 	return insp, nil
+}
+
+// isStructured reports whether the rule's format is a tree-parsed
+// format (json/yaml/toml/xml) as opposed to text. Only structured
+// formats support the path+regex 2-stage extraction.
+func (h *cliRuleHandler) isStructured() bool {
+	switch h.rule.Format {
+	case "json", "yaml", "toml", "xml":
+		return len(h.rule.VersionPaths) > 0
+	default:
+		return false
+	}
 }
 
 func (h *cliRuleHandler) Replace(content []byte, current, newVersion string) ([]byte, error) {
@@ -132,11 +166,62 @@ func (h *cliRuleHandler) Replace(content []byte, current, newVersion string) ([]
 			return nil, fmt.Errorf("--define-rule %q applied to %s: --version-regex matched %d times, exactly one match required for --write", h.block.Pattern, h.path, n)
 		}
 	}
-	out, err := formatReplace(h.rule, content, current, newVersion)
+	// DR-0029 § "Path / Regex 併記時の挙動" (write side): for a
+	// structured format with both path and regex, the path value is a
+	// container string (e.g. "myapp v1.0.5") whose regex group 1 must
+	// be replaced in place — NOT the whole path value. We achieve this
+	// without per-format byte offsets by computing the new container
+	// string (group 1 swapped) and asking the existing format Replace
+	// to swap the whole path value for it. Because every format's
+	// Replace rewrites only the value's byte range, the surrounding
+	// document (and the container string's non-version bytes) stay
+	// byte-identical.
+	if h.isStructured() && h.rule.VersionRegex != "" {
+		insp, ierr := h.inspectRaw(content)
+		if ierr != nil {
+			return nil, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, ierr)
+		}
+		if len(insp.Versions) == 0 {
+			return nil, fmt.Errorf("--define-rule %q applied to %s: --version-path matched no value", h.block.Pattern, h.path)
+		}
+		// All path values must agree (multi-path / xml dual-span are
+		// already collapsed to a single value per Field by inspectRaw).
+		raw := insp.Versions[0].Value
+		newContainer, rerr := regexReplaceGroup1(raw, h.rule.VersionRegex, newVersion)
+		if rerr != nil {
+			return nil, fmt.Errorf("--define-rule %q applied to %s: --version-path value %q: %w", h.block.Pattern, h.path, raw, rerr)
+		}
+		out, err := h.replaceRaw(content, raw, newContainer)
+		if err != nil {
+			return nil, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, err)
+		}
+		return out, nil
+	}
+
+	out, err := h.replaceRaw(content, current, newVersion)
 	if err != nil {
 		return nil, fmt.Errorf("--define-rule %q applied to %s: %w", h.block.Pattern, h.path, err)
 	}
 	return out, nil
+}
+
+// inspectRaw dispatches extraction to the right engine. CLI xml rules
+// use the unified dot-path resolver (xmlDotInspect), NOT the builtin
+// plist-flavoured "xml" format that tryRule would pick. Every other
+// format goes through the shared tryRule dispatcher.
+func (h *cliRuleHandler) inspectRaw(content []byte) (Inspection, error) {
+	if h.rule.Format == "xml" {
+		return xmlDotInspect(h.rule, content)
+	}
+	return tryRule(h.rule, content)
+}
+
+// replaceRaw is the write counterpart of inspectRaw.
+func (h *cliRuleHandler) replaceRaw(content []byte, current, newVersion string) ([]byte, error) {
+	if h.rule.Format == "xml" {
+		return xmlDotReplace(h.rule, content, current, newVersion)
+	}
+	return formatReplace(h.rule, content, current, newVersion)
 }
 
 // countRegexMatches counts how many disjoint matches `vrx` has in
@@ -149,6 +234,58 @@ func countRegexMatches(vrx string, content []byte) (int, error) {
 		return 0, fmt.Errorf("invalid --version-regex: %w", err)
 	}
 	return len(re.FindAllIndex(content, -1)), nil
+}
+
+// regexExtractGroup1 applies `vrx` to `s` and returns capture group 1.
+// Enforces exactly-one-match (DR-0029 cardinality): 0 matches → error,
+// 2+ matches → ambiguous error. Used by the structured-format path+regex
+// 2-stage extraction (= regex applied to the value located by a path).
+func regexExtractGroup1(s, vrx string) (string, error) {
+	re, err := regexp.Compile(vrx)
+	if err != nil {
+		return "", fmt.Errorf("invalid --version-regex: %w", err)
+	}
+	if re.NumSubexp() < 1 {
+		return "", fmt.Errorf("--version-regex has no capture group")
+	}
+	all := re.FindAllStringSubmatchIndex(s, -1)
+	if len(all) == 0 {
+		return "", fmt.Errorf("--version-regex did not match")
+	}
+	if len(all) > 1 {
+		return "", fmt.Errorf("--version-regex matched %d times, exactly one match required", len(all))
+	}
+	loc := all[0]
+	if loc[2] < 0 {
+		return "", fmt.Errorf("--version-regex capture group did not participate")
+	}
+	return s[loc[2]:loc[3]], nil
+}
+
+// regexReplaceGroup1 returns `s` with capture group 1 of `vrx` replaced
+// by `newVal`, preserving every other byte (= pinpoint rewrite of the
+// version inside a container string located by a path). Enforces the
+// same exactly-one-match cardinality as regexExtractGroup1.
+func regexReplaceGroup1(s, vrx, newVal string) (string, error) {
+	re, err := regexp.Compile(vrx)
+	if err != nil {
+		return "", fmt.Errorf("invalid --version-regex: %w", err)
+	}
+	if re.NumSubexp() < 1 {
+		return "", fmt.Errorf("--version-regex has no capture group")
+	}
+	all := re.FindAllStringSubmatchIndex(s, -1)
+	if len(all) == 0 {
+		return "", fmt.Errorf("--version-regex did not match")
+	}
+	if len(all) > 1 {
+		return "", fmt.Errorf("--version-regex matched %d times, exactly one match required", len(all))
+	}
+	loc := all[0]
+	if loc[2] < 0 {
+		return "", fmt.Errorf("--version-regex capture group did not participate")
+	}
+	return s[:loc[2]] + newVal + s[loc[3]:], nil
 }
 
 // detectHandlerWithCliRule wires a validated CLI ruleBlock into a

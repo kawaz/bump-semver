@@ -163,23 +163,20 @@ func TestParse_DefineRule_DupFlagInGlobal(t *testing.T) {
 	}
 }
 
-func TestParse_DefineRule_InvalidFormat(t *testing.T) {
+func TestParse_DefineRule_XMLAccepted(t *testing.T) {
 	t.Parallel()
-	// --format xml is rejected (Phase 2+).
-	_, err := parseArgs([]string{
+	// --format xml is accepted (dot-path unified, DR-0029 updated).
+	args, err := parseArgs([]string{
 		"get", "a.xml",
 		"--define-rule", "a.xml",
 		"--format", "xml",
-		"--version-path", "$.version",
+		"--version-path", "$.project.version",
 	})
-	if err == nil {
-		t.Fatalf("parse should have errored on --format xml")
+	if err != nil {
+		t.Fatalf("--format xml should be accepted: %v", err)
 	}
-	if !strings.Contains(err.Error(), "xml") {
-		t.Errorf("error %q should mention xml", err)
-	}
-	if !strings.Contains(err.Error(), "Phase 2+") {
-		t.Errorf("error %q should mention Phase 2+", err)
+	if len(args.ruleBlocks) != 2 || *args.ruleBlocks[1].Opts.Format != "xml" {
+		t.Errorf("ruleBlocks: %+v", args.ruleBlocks)
 	}
 }
 

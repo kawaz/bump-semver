@@ -33,15 +33,19 @@ import "fmt"
 // Format selects parser/serializer (DR-0029 § "Phase 1 で必要な flag"):
 //
 //	"text" → parser-less, VersionRegex required, VersionPath unusable
-//	"json" / "yaml" / "toml" → tree-parsed, VersionPath primary,
+//	"json" / "yaml" / "toml" / "xml" → tree-parsed, VersionPath primary,
 //	                           VersionRegex optional (2-stage extract
 //	                           on path-value or whole-file regex)
 //
-// "xml" is Phase 1 scope-out (= codex Critical C-3): XML's tree
-// semantics differs from JSON/YAML/TOML (= element repetition /
-// attributes / text nodes / namespaces / root anchoring), and a shared
-// dot-path contract would lock in a wrong shape. Deferred to Phase 2+
-// behind a separate path-language DR.
+// "xml" uses the SAME dot-path language as json/yaml/toml (DR-0029 §
+// "パス言語統一"). XML's structural difference (a node carries both
+// child elements and attributes) is resolved by checking both
+// interpretations of the final path segment: exactly one match wins,
+// both-equal is accepted, both-different is an ambiguous error (see
+// format_xml_dotpath.go). textContent is trimmed on read and rewritten
+// in place (surrounding whitespace preserved). The codex C-3 concern
+// (XML tree differs) is met by this dual-resolution rule rather than a
+// separate path language.
 type ruleOpts struct {
 	Format       *string
 	VersionPath  *string
@@ -73,12 +77,13 @@ type ruleBlock struct {
 // isGlobal reports whether this block is the implicit global scope.
 func (b ruleBlock) isGlobal() bool { return b.Pattern == "" }
 
-// allowedRuleFormats enumerates valid --format values for Phase 1
-// (DR-0029 / DR-0030). xml is deliberately excluded (= Phase 2+, see
-// DR-0029 § "Out of scope"); xml-element / pbxproj are internal-only
-// (= used by builtin rules, not exposed to --define-rule users).
+// allowedRuleFormats enumerates valid --format values for DR-0029
+// user-defined rules. xml uses the unified dot-path language (see
+// format_xml_dotpath.go). The internal-only builtin formats
+// (xml-element / pbxproj / plist-flavoured xml) are NOT exposed to
+// --define-rule users — CLI xml goes through xmlDot* exclusively.
 var allowedRuleFormats = map[string]bool{
-	"text": true, "json": true, "yaml": true, "toml": true,
+	"text": true, "json": true, "yaml": true, "toml": true, "xml": true,
 }
 
 // ensureRuleBlocks lazy-initialises out.ruleBlocks with the implicit
@@ -104,8 +109,7 @@ func ensureRuleBlocks(out *cliArgs) {
 //     hint 付き error。
 //  3. 0c: 同じ block 内に同じ flag を 2 回書くと error (= last-write-
 //     wins より surprise が少ない、意図不明)。
-//  4. --format 専用: text|json|yaml|toml 以外は error (= xml は
-//     Phase 2+ で別 DR、それ以外は無効な enum)。
+//  4. --format 専用: text|json|yaml|toml|xml 以外は error。
 //
 // targetField is one of "Format" / "VersionPath" / "VersionRegex" /
 // "NamePath" / "NameRegex"; assignRuleFlag uses it to pick the right
@@ -115,7 +119,7 @@ func assignRuleFlag(out *cliArgs, flagName, targetField, value string) error {
 		return fmt.Errorf("%s value cannot be empty", flagName)
 	}
 	if targetField == "Format" && !allowedRuleFormats[value] {
-		return fmt.Errorf("%s value %q is not a valid format (expected one of text|json|yaml|toml; xml is Phase 2+ scope, see DR-0029)", flagName, value)
+		return fmt.Errorf("%s value %q is not a valid format (expected one of text|json|yaml|toml|xml)", flagName, value)
 	}
 	ensureRuleBlocks(out)
 	// 0a 補強: once --define-rule has appeared, the global block is

@@ -95,6 +95,7 @@ bump-version level="patch": ensure-clean
 # push to origin/main with gates
 push: ci check-outdated-translations check-version-bumped
     bump-semver vcs push --branch main --jj-bookmark-auto-advance
+    @echo '[hint] CI 成功後 `brew upgrade kawaz/tap/bump-semver` でローカルも更新'
 
 # ---------- utility ----------
 

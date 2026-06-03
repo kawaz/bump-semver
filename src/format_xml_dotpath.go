@@ -186,16 +186,22 @@ func xmlDotResolve(content []byte, path string) (xmlDotResult, error) {
 			stack = append(stack, v.Name.Local)
 			// Child interpretation: stack == segs exactly.
 			if stackEquals(stack, segs) {
-				h, perr := readTrimmedInnerText(dec, &prevOffset)
+				h, ateEnd, perr := readTrimmedInnerText(dec, &prevOffset)
 				if perr != nil {
 					return xmlDotResult{}, perr
 				}
 				if h.value != "" {
 					childHits = append(childHits, h)
 				}
-				// readTrimmedInnerText advanced the decoder past the
-				// CharData; the matching EndElement token will pop the
-				// stack on a later iteration.
+				// If the matched element was empty / self-closing,
+				// readTrimmedInnerText consumed this element's
+				// EndElement token, so the loop's EndElement case will
+				// NOT fire for it — pop here to keep the stack aligned.
+				// Otherwise (CharData read) the EndElement still arrives
+				// on a later iteration and pops there.
+				if ateEnd && len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
 				continue
 			}
 			// Attribute interpretation: stack == segs[:-1] and the last
@@ -250,11 +256,15 @@ func stackEquals(stack, segs []string) bool {
 // returns the whitespace-trimmed value plus the byte range of the
 // trimmed portion (surrounding whitespace excluded). prevOffset is
 // updated so the caller's scan loop stays in sync.
-func readTrimmedInnerText(dec *xml.Decoder, prevOffset *int) (xmlDotHit, error) {
+// Returns (hit, ateEndElement, error). ateEndElement is true when the
+// token read was this element's EndElement (empty / self-closing case):
+// the caller must then pop the stack itself, because the main loop's
+// EndElement branch will never see that token.
+func readTrimmedInnerText(dec *xml.Decoder, prevOffset *int) (xmlDotHit, bool, error) {
 	rawStart := int(dec.InputOffset())
 	tok, err := dec.Token()
 	if err != nil {
-		return xmlDotHit{}, err
+		return xmlDotHit{}, false, err
 	}
 	rawEnd := int(dec.InputOffset())
 	*prevOffset = rawEnd
@@ -263,7 +273,7 @@ func readTrimmedInnerText(dec *xml.Decoder, prevOffset *int) (xmlDotHit, error) 
 		raw := string(t)
 		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" {
-			return xmlDotHit{value: "", valueStart: rawStart, valueEnd: rawStart}, nil
+			return xmlDotHit{value: "", valueStart: rawStart, valueEnd: rawStart}, false, nil
 		}
 		// Compute the byte offsets of the trimmed value within the raw
 		// CharData span. Leading/trailing whitespace stays untouched on
@@ -274,12 +284,16 @@ func readTrimmedInnerText(dec *xml.Decoder, prevOffset *int) (xmlDotHit, error) 
 			value:      trimmed,
 			valueStart: rawStart + leadWS,
 			valueEnd:   rawEnd - trailWS,
-		}, nil
+		}, false, nil
 	case xml.EndElement:
-		// Empty / self-closing element.
-		return xmlDotHit{value: "", valueStart: rawStart, valueEnd: rawStart}, nil
+		// Empty / self-closing element: this is the matched element's
+		// own EndElement, consumed here. Signal the caller to pop.
+		return xmlDotHit{value: "", valueStart: rawStart, valueEnd: rawStart}, true, nil
 	default:
-		return xmlDotHit{value: "", valueStart: rawStart, valueEnd: rawStart}, nil
+		// Comment / ProcInst / nested StartElement etc. — no scalar
+		// inner text. We did not consume an EndElement, so the caller
+		// keeps the stack as-is (the element's EndElement still comes).
+		return xmlDotHit{value: "", valueStart: rawStart, valueEnd: rawStart}, false, nil
 	}
 }
 

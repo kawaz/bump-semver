@@ -243,6 +243,51 @@ func TestXMLDot_MultipleElementsDifferentValues(t *testing.T) {
 	}
 }
 
+func TestXMLDot_SelfClosingTargetThenRealMatch(t *testing.T) {
+	t.Parallel()
+	// codex regression: a self-closing <ver/> matched first would
+	// consume its EndElement and (pre-fix) leave the stack unbalanced,
+	// so the following real <ver>1.0</ver> was missed. After the fix the
+	// real value is found.
+	doc := []byte(`<root><ver/><ver>1.0.0</ver></root>`)
+	insp, err := xmlDotInspect(xmlRule("root.ver"), doc)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if len(insp.Versions) != 1 || insp.Versions[0].Value != "1.0.0" {
+		t.Errorf("Versions = %+v, want one 1.0.0 (self-closing first must not corrupt stack)", insp.Versions)
+	}
+}
+
+func TestXMLDot_EmptyTargetThenSibling(t *testing.T) {
+	t.Parallel()
+	// Empty <ver></ver> followed by an unrelated sibling: stack must
+	// stay aligned so the sibling's path still resolves.
+	doc := []byte(`<root><ver></ver><name>x</name></root>`)
+	// root.ver is empty (no value), root.name resolves fine.
+	insp, err := xmlDotInspect(xmlRule("root.name"), doc)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if insp.Versions[0].Value != "x" {
+		t.Errorf("Value = %q, want x", insp.Versions[0].Value)
+	}
+}
+
+func TestXMLDot_SelfClosingThenNestedTarget(t *testing.T) {
+	t.Parallel()
+	// <a/> self-closing at depth 2, then the real nested target. The
+	// stack pop must keep depth tracking correct.
+	doc := []byte(`<root><a/><group><ver>2.0.0</ver></group></root>`)
+	insp, err := xmlDotInspect(xmlRule("root.group.ver"), doc)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if insp.Versions[0].Value != "2.0.0" {
+		t.Errorf("Value = %q, want 2.0.0", insp.Versions[0].Value)
+	}
+}
+
 func TestXMLDot_NotFound(t *testing.T) {
 	t.Parallel()
 	doc := []byte(`<project><name>foo</name></project>`)

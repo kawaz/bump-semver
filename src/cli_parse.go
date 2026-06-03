@@ -215,6 +215,25 @@ type cliArgs struct {
 	vcsTag      vcsTagOpts
 	vcsOutdated vcsOutdatedOpts
 	glob        globOpts
+
+	// ruleBlocks captures DR-0029 user-defined rule blocks (--define-rule).
+	// Element 0 is always the implicit global block (Pattern == ""), even
+	// when no rule-definition flag was given (in which case Opts.hasAny()
+	// returns false and the global block has no effect). Each subsequent
+	// element is opened by --define-rule PATTERN. The parser appends rule-
+	// definition flags (--format / --version-path / --version-regex /
+	// --name-path / --name-regex) to the **last** block in this slice, so
+	// flag order within a block does not matter but the --define-rule
+	// position determines which block each flag joins.
+	//
+	// hasDefineRule reflects whether any --define-rule appeared on the
+	// command line. Used by parseSharedFlags to enforce the 0a 補強
+	// rule: once a --define-rule has appeared, rule-definition flags
+	// MUST belong to one of the named blocks. The global block becomes
+	// effectively closed (= you cannot mix global rule flags with
+	// per-PATTERN blocks once --define-rule starts).
+	ruleBlocks    []ruleBlock
+	hasDefineRule bool
 }
 
 var bumpActions = map[string]bool{
@@ -823,6 +842,11 @@ func parseBumpArgs(argv []string) (cliArgs, error) {
 // values, `--vcs` value validation) run at the end of this helper so
 // both verbs inherit them identically.
 func parseSharedFlags(out cliArgs, rest []string) (cliArgs, error) {
+	// Note: out.ruleBlocks stays nil unless a rule-definition flag
+	// actually appears (lazy init via ensureRuleBlocks below). This
+	// keeps the cliArgs struct byte-identical to the pre-DR-0029 shape
+	// for invocations that don't use --define-rule, so existing parse
+	// tests that verbatim-compare cliArgs continue to pass.
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
@@ -899,6 +923,100 @@ func parseSharedFlags(out cliArgs, rest []string) (cliArgs, error) {
 				return cliArgs{}, fmt.Errorf("--vcs specified twice")
 			}
 			out.vcsBase.Override = ptr(strings.TrimPrefix(a, "--vcs="))
+		// --- DR-0029: --define-rule + rule-definition flags ------------
+		//
+		// --define-rule PATTERN opens a new ruleBlock; subsequent rule-
+		// definition flags (--format / --version-path / --version-regex
+		// / --name-path / --name-regex) are appended to it until the
+		// next --define-rule or end of argv.
+		//
+		// Before the first --define-rule, the same rule-definition flags
+		// fill the implicit global block (ruleBlocks[0], Pattern == "").
+		// After the first --define-rule, writing to the global block is
+		// rejected — the 0a 補強 rule: global flags must come BEFORE
+		// any --define-rule, never sandwiched between named blocks
+		// (= typo defence: --define-rule misspellings can't silently
+		// turn block flags into global flags).
+		case a == "--define-rule":
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--define-rule requires a value (the PATTERN to match sources)")
+			}
+			pat := rest[i+1]
+			if pat == "" {
+				return cliArgs{}, fmt.Errorf("--define-rule PATTERN cannot be empty")
+			}
+			ensureRuleBlocks(&out)
+			out.ruleBlocks = append(out.ruleBlocks, ruleBlock{Pattern: pat})
+			out.hasDefineRule = true
+			i++
+		case strings.HasPrefix(a, "--define-rule="):
+			pat := strings.TrimPrefix(a, "--define-rule=")
+			if pat == "" {
+				return cliArgs{}, fmt.Errorf("--define-rule PATTERN cannot be empty")
+			}
+			ensureRuleBlocks(&out)
+			out.ruleBlocks = append(out.ruleBlocks, ruleBlock{Pattern: pat})
+			out.hasDefineRule = true
+		case a == "--format":
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--format requires a value (text|json|yaml|toml)")
+			}
+			if err := assignRuleFlag(&out, "--format", "Format", rest[i+1]); err != nil {
+				return cliArgs{}, err
+			}
+			i++
+		case strings.HasPrefix(a, "--format="):
+			if err := assignRuleFlag(&out, "--format", "Format", strings.TrimPrefix(a, "--format=")); err != nil {
+				return cliArgs{}, err
+			}
+		case a == "--version-path":
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--version-path requires a value (a dot-path like $.version)")
+			}
+			if err := assignRuleFlag(&out, "--version-path", "VersionPath", rest[i+1]); err != nil {
+				return cliArgs{}, err
+			}
+			i++
+		case strings.HasPrefix(a, "--version-path="):
+			if err := assignRuleFlag(&out, "--version-path", "VersionPath", strings.TrimPrefix(a, "--version-path=")); err != nil {
+				return cliArgs{}, err
+			}
+		case a == "--version-regex":
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--version-regex requires a value (a regex with one capture group)")
+			}
+			if err := assignRuleFlag(&out, "--version-regex", "VersionRegex", rest[i+1]); err != nil {
+				return cliArgs{}, err
+			}
+			i++
+		case strings.HasPrefix(a, "--version-regex="):
+			if err := assignRuleFlag(&out, "--version-regex", "VersionRegex", strings.TrimPrefix(a, "--version-regex=")); err != nil {
+				return cliArgs{}, err
+			}
+		case a == "--name-path":
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--name-path requires a value (a dot-path like $.name)")
+			}
+			if err := assignRuleFlag(&out, "--name-path", "NamePath", rest[i+1]); err != nil {
+				return cliArgs{}, err
+			}
+			i++
+		case strings.HasPrefix(a, "--name-path="):
+			if err := assignRuleFlag(&out, "--name-path", "NamePath", strings.TrimPrefix(a, "--name-path=")); err != nil {
+				return cliArgs{}, err
+			}
+		case a == "--name-regex":
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--name-regex requires a value (a regex with one capture group)")
+			}
+			if err := assignRuleFlag(&out, "--name-regex", "NameRegex", rest[i+1]); err != nil {
+				return cliArgs{}, err
+			}
+			i++
+		case strings.HasPrefix(a, "--name-regex="):
+			if err := assignRuleFlag(&out, "--name-regex", "NameRegex", strings.TrimPrefix(a, "--name-regex=")); err != nil {
+				return cliArgs{}, err
+			}
 		case a == "--":
 			// Treat all remaining argv as inputs (lets paths starting with `-` through).
 			out.inputs = append(out.inputs, rest[i+1:]...)

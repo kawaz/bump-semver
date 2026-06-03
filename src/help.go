@@ -113,6 +113,25 @@ versions must agree; otherwise a "version mismatch:" error lists each origin
 and value. With --write, only FILE-origin inputs are written back (vcs: and
 cmd: are read-only).
 
+Not in the table? Define your own rule with --define-rule (DR-0029):
+
+  --define-rule <PATTERN>    Open a rule block for SOURCES matching <PATTERN>
+                             (= absolute path, relative path, basename, or
+                              glob:<pattern>). Subsequent --format / --version-*
+                              / --name-* flags belong to this block until the
+                              next --define-rule.
+  --format <FMT>             text|json|yaml|toml (xml is Phase 2+).
+  --version-path <DOTPATH>   For json/yaml/toml: where the version field is
+                             (e.g. $.version, plugin.version, deps[0].version).
+  --version-regex <PATTERN>  For text: regex with one capture group
+                             (exact one match required, 0/2+ matches = error).
+  --name-path / --name-regex Optional package-name extraction (symmetric).
+
+  Rule-definition flags placed BEFORE the first --define-rule act as the
+  global default (= applies to every SOURCE not covered by a named block).
+  CLI rules always override builtin rules; an extraction failure on a CLI
+  rule is a hard error (no silent fall-through to builtin).
+
 VCS helpers (DR-0020):
   vcs get root              Print the repository root
   vcs get backend           Print "git" or "jj"

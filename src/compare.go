@@ -50,6 +50,7 @@ func runCompare(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		VCSKind:    vcsOverride,
 		PeerExpand: false,
 		Glob:       args.glob,
+		RuleBlocks: args.ruleBlocks,
 	})
 	if err != nil {
 		return emitErr(stderr, args, err)

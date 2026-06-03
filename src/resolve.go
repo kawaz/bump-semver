@@ -102,6 +102,13 @@ type stdinReadState struct {
 // string means "no sibling to borrow from", which is an error for
 // vcs: rev-mode specs.
 func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *stdinReadState, backend vcsBackend, borrowedFile string) (resolvedInput, error) {
+	return resolveInputWithRules(arg, argIdx, totalVERorStdin, stdin, st, backend, borrowedFile, nil)
+}
+
+// resolveInputWithRules is the DR-0029 generalisation of resolveInput.
+// ruleBlocks is passed through to the FILE-origin path; non-FILE inputs
+// (VER / `-` / vcs: / cmd:) are unaffected by user-defined rules.
+func resolveInputWithRules(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *stdinReadState, backend vcsBackend, borrowedFile string, ruleBlocks []ruleBlock) (resolvedInput, error) {
 	if arg == "-" {
 		if !st.consumed {
 			st.consumed = true
@@ -130,7 +137,7 @@ func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *
 	// Try as file first if it exists. Use Stat so we don't masquerade
 	// directories or sockets as parseable VERs.
 	if fi, err := os.Stat(arg); err == nil && !fi.IsDir() {
-		return resolveFile(arg)
+		return resolveFileWithRules(arg, ruleBlocks)
 	}
 
 	// Try as VER.
@@ -150,7 +157,16 @@ func resolveInput(arg string, argIdx, totalVERorStdin int, stdin io.Reader, st *
 }
 
 func resolveFile(file string) (resolvedInput, error) {
-	h, err := detectHandler(file)
+	return resolveFileWithRules(file, nil)
+}
+
+// resolveFileWithRules is the DR-0029 generalisation of resolveFile.
+// When ruleBlocks is non-nil, the path is first checked against the
+// blocks; a winning named block (or global block with rule flags) is
+// applied via detectHandlerWithCliRule. Otherwise (no block matches,
+// or ruleBlocks is nil) the existing builtin path is used.
+func resolveFileWithRules(file string, ruleBlocks []ruleBlock) (resolvedInput, error) {
+	h, err := pickHandlerForFile(file, ruleBlocks)
 	if err != nil {
 		return resolvedInput{}, err
 	}
@@ -177,7 +193,14 @@ func resolveFile(file string) (resolvedInput, error) {
 // shortcut: the path is treated as a name hint and content is read
 // from stdin.
 func resolveFileFromStdin(file string, stdin io.Reader) (resolvedInput, error) {
-	h, err := detectHandler(file)
+	return resolveFileFromStdinWithRules(file, stdin, nil)
+}
+
+// resolveFileFromStdinWithRules is the DR-0029 generalisation of
+// resolveFileFromStdin. Same role as resolveFileWithRules but for the
+// "single FILE + stdin pipe" shortcut.
+func resolveFileFromStdinWithRules(file string, stdin io.Reader, ruleBlocks []ruleBlock) (resolvedInput, error) {
+	h, err := pickHandlerForFile(file, ruleBlocks)
 	if err != nil {
 		return resolvedInput{}, err
 	}
@@ -285,6 +308,14 @@ type resolveInputsOpts struct {
 	// Glob carries the parsed --glob-* flags (DR-0024). Read only when a
 	// `glob:` selector is present in inputs.
 	Glob globOpts
+	// RuleBlocks carries the parsed --define-rule blocks (DR-0029).
+	// nil = no user-defined rules → existing builtin auto-detection path
+	// stays in effect (= zero behaviour change for non-DR-0029 callers).
+	// When non-nil and at least one rule-flag-bearing block is present,
+	// each FILE-origin input is resolved through detectHandlerWithCliRule
+	// when a block matches the path, else falls through to detectHandler
+	// (= builtin) when the global block has no flags either.
+	RuleBlocks []ruleBlock
 }
 
 func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]resolvedInput, error) {
@@ -415,7 +446,7 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 			if rev, file, isFunc, _ := vcsParseSpec(in); !isFunc && file == "" && len(borrowFiles) > 1 {
 				_ = rev
 				for _, bf := range borrowFiles {
-					ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, backend, bf)
+					ri, err := resolveInputWithRules(in, argIdx, rawCount, stdin, &st, backend, bf, opts.RuleBlocks)
 					if err != nil {
 						return nil, err
 					}
@@ -436,13 +467,54 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 				continue
 			}
 		}
-		ri, err := resolveInput(in, argIdx, rawCount, stdin, &st, backend, fileForBorrow)
+		ri, err := resolveInputWithRules(in, argIdx, rawCount, stdin, &st, backend, fileForBorrow, opts.RuleBlocks)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, ri)
 	}
+	// DR-0029 § "dead block": every named --define-rule must have matched
+	// at least one SOURCE; otherwise the user wrote something that has
+	// silent no-effect, which is a typo magnet.
+	if len(opts.RuleBlocks) > 0 {
+		if err := checkDeadBlocks(opts.RuleBlocks, out); err != nil {
+			return nil, err
+		}
+	}
 	return out, nil
+}
+
+// checkDeadBlocks emits a usage error if any named --define-rule block
+// failed to match any of the resolved SOURCES (DR-0029 § "dead block").
+// Only FILE-origin inputs are checked (= VER / stdin / vcs: / cmd:
+// inputs have no path-pattern semantics).
+func checkDeadBlocks(blocks []ruleBlock, resolved []resolvedInput) error {
+	if len(blocks) == 0 {
+		return nil
+	}
+	matched := map[int]bool{}
+	for _, ri := range resolved {
+		if ri.file == "" {
+			continue
+		}
+		m, err := resolveRuleBlock(ri.file, blocks)
+		if err != nil {
+			continue
+		}
+		if m.BlockIdx > 0 {
+			matched[m.BlockIdx] = true
+		}
+	}
+	dead := detectDeadBlocks(blocks, matched)
+	if len(dead) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(dead))
+	for _, idx := range dead {
+		labels = append(labels, fmt.Sprintf("--define-rule %q", blocks[idx].Pattern))
+	}
+	return fmt.Errorf("dead --define-rule block(s) (no SOURCE matched): %s\nhint: remove the unused --define-rule, or add a SOURCE whose path matches the PATTERN",
+		strings.Join(labels, ", "))
 }
 
 func isStdinPipe(stdin io.Reader) bool {

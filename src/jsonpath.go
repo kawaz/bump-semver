@@ -26,6 +26,15 @@ import (
 // addresses. The path must start with '.' (or '[' for the rare top-level
 // quoted-key entry).
 func parseJSONPath(p string) ([]string, error) {
+	if p == "" {
+		return nil, fmt.Errorf("path must start with '.' or '[': %q", p)
+	}
+	// DR-0029: accept JSONPath-style optional leading `$`. `$.foo` and
+	// `.foo` are equivalent (the dollar refers to the document root and
+	// is purely cosmetic to align with common JSONPath examples).
+	if p[0] == '$' {
+		p = p[1:]
+	}
 	if p == "" || (p[0] != '.' && p[0] != '[') {
 		return nil, fmt.Errorf("path must start with '.' or '[': %q", p)
 	}

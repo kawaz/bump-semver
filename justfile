@@ -100,3 +100,4 @@ push: ci check-outdated-translations check-version-bumped
 version:
     echo "VERSION: $(cat VERSION)"
     if [ -x ./bin/bump-semver ]; then echo "binary: $(./bin/bump-semver --version)"; fi
+    if command -v bump-semver >/dev/null 2>&1; then echo "local binary: $(bump-semver --version)"; fi

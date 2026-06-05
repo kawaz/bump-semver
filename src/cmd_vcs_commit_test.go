@@ -10,6 +10,7 @@ import (
 
 // TestRun_VcsCommit_NoArgs: `vcs commit` with no args shows the help.
 func TestRun_VcsCommit_NoArgs(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "commit"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
 	if err != nil {
@@ -23,6 +24,7 @@ func TestRun_VcsCommit_NoArgs(t *testing.T) {
 // TestRun_VcsCommit_NoMessage_NoAmend: `-m` is required unless --amend.
 // Missing message (and no --amend) → exit 2.
 func TestRun_VcsCommit_NoMessage_NoAmend(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -44,6 +46,7 @@ func TestRun_VcsCommit_NoMessage_NoAmend(t *testing.T) {
 // DR-0020 makes this an opinionated safety rejection — exit 2 with a
 // hint that names the supported modes (--staged / PATH).
 func TestRun_VcsCommit_DashA_Rejected(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -67,6 +70,7 @@ func TestRun_VcsCommit_DashA_Rejected(t *testing.T) {
 // TestRun_VcsCommit_PathAndStaged_Rejected: path + --staged is ambiguous,
 // must reject with exit 2.
 func TestRun_VcsCommit_PathAndStaged_Rejected(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -89,6 +93,7 @@ func TestRun_VcsCommit_PathAndStaged_Rejected(t *testing.T) {
 // and no --amend, the error hint must come from backend.Kind(); git tells
 // the user to use --staged or pass a PATH.
 func TestRun_VcsCommit_NoMode_DynamicHint_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -112,6 +117,7 @@ func TestRun_VcsCommit_NoMode_DynamicHint_Git(t *testing.T) {
 // TestRun_VcsCommit_NoMode_DynamicHint_Jj: jj's hint must explicitly say
 // that `-a` is not supported (kawaz CLI design safety).
 func TestRun_VcsCommit_NoMode_DynamicHint_Jj(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -138,6 +144,7 @@ func TestRun_VcsCommit_NoMode_DynamicHint_Jj(t *testing.T) {
 // VERSION, run `vcs commit -m MSG VERSION`, HEAD advances and worktree
 // is clean.
 func TestRun_VcsCommit_Paths_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -161,6 +168,7 @@ func TestRun_VcsCommit_Paths_Git(t *testing.T) {
 // TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent: all-nonexistent
 // PATH list → exit 0, no HEAD movement (declarative convergence).
 func TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -182,6 +190,7 @@ func TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent(t *testing.T) {
 
 // TestRun_VcsCommit_Staged_Git: --staged commits the index in one shot.
 func TestRun_VcsCommit_Staged_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -205,6 +214,7 @@ func TestRun_VcsCommit_Staged_Git(t *testing.T) {
 
 // TestRun_VcsCommit_Amend_Git: --amend with -m updates the last commit.
 func TestRun_VcsCommit_Amend_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -229,6 +239,7 @@ func TestRun_VcsCommit_Amend_Git(t *testing.T) {
 // TestRun_VcsCommit_Paths_Jj: jj end-to-end happy path mirrors the git
 // test — modify VERSION, commit, @- now describes the commit.
 func TestRun_VcsCommit_Paths_Jj(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -254,6 +265,7 @@ func TestRun_VcsCommit_Paths_Jj(t *testing.T) {
 // amend symmetry: the only difference is "new commit vs absorb into
 // previous", not which path modes are accepted).
 func TestRun_VcsCommit_Amend_WithPath_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -287,6 +299,7 @@ func TestRun_VcsCommit_Amend_WithPath_Git(t *testing.T) {
 // IS the fold-into-previous source for git) and is accepted as an
 // explicit synonym for bare `--amend` (DR-0020 PR-4.1 symmetry).
 func TestRun_VcsCommit_Amend_WithStaged_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -312,6 +325,7 @@ func TestRun_VcsCommit_Amend_WithStaged_Git(t *testing.T) {
 // --staged` is still rejected (step 2 / path+staged exclusivity is
 // amend-agnostic — only step 3.5 was removed for PR-4.1).
 func TestRun_VcsCommit_Amend_PathAndStaged_Rejected(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -333,6 +347,7 @@ func TestRun_VcsCommit_Amend_PathAndStaged_Rejected(t *testing.T) {
 // TestRun_VcsCommit_NotARepo: outside any vcs repo, `vcs commit` should
 // surface exit 3 (newVcsBackend failure), consistent with get/is/diff.
 func TestRun_VcsCommit_NotARepo(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	withCwd(t, dir, func() {
 		var stderr bytes.Buffer
@@ -354,6 +369,7 @@ func TestRun_VcsCommit_NotARepo(t *testing.T) {
 // line into git/jj-specific phrasing, mirroring the `--staged` block
 // just above it.
 func TestHelpVcsCommit_BareAmendIsBackendSplit(t *testing.T) {
+	t.Parallel()
 	body := helpVcsCommit
 	if strings.Contains(body, "fold ALL current changes") {
 		t.Errorf("PR-5.1 replaces 'fold ALL current changes' with backend-split phrasing, "+

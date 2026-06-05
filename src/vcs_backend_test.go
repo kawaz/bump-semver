@@ -17,6 +17,7 @@ import (
 
 // TestNewVcsBackend_GitOnly: pure git repo resolves to a git backend.
 func TestNewVcsBackend_GitOnly(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -35,6 +36,7 @@ func TestNewVcsBackend_GitOnly(t *testing.T) {
 // TestNewVcsBackend_JjOverGit: a colocated git+jj repo selects jj
 // (matches the existing detectVcs precedence in DR-0008).
 func TestNewVcsBackend_JjOverGit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -53,6 +55,7 @@ func TestNewVcsBackend_JjOverGit(t *testing.T) {
 // TestNewVcsBackend_Override: --vcs git on a colocated repo forces the
 // git backend.
 func TestNewVcsBackend_Override(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -70,6 +73,7 @@ func TestNewVcsBackend_Override(t *testing.T) {
 
 // TestNewVcsBackend_NoRepo: no .git / .jj in cwd ancestors is an error.
 func TestNewVcsBackend_NoRepo(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	withCwd(t, dir, func() {
 		_, err := newVcsBackend(vcsAuto)
@@ -82,6 +86,7 @@ func TestNewVcsBackend_NoRepo(t *testing.T) {
 // TestGitBackend_Root: returns the repo root (the directory containing
 // .git in our fixture).
 func TestGitBackend_Root(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -114,6 +119,7 @@ func TestGitBackend_Root(t *testing.T) {
 // TestGitBackend_CurrentBranch: the fixture's `git init -b main` puts
 // the working tree on main, so the backend should report "main".
 func TestGitBackend_CurrentBranch(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -136,6 +142,7 @@ func TestGitBackend_CurrentBranch(t *testing.T) {
 // TestGitBackend_CurrentBranch_Detached: detached HEAD is ambiguous and
 // must return exitCodeAmbiguous via *exitErr.
 func TestGitBackend_CurrentBranch_Detached(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -160,6 +167,7 @@ func TestGitBackend_CurrentBranch_Detached(t *testing.T) {
 // TestJjBackend_Root: returns the repo root (jj root with a colocated
 // fixture is the same as the git fixture's working dir).
 func TestJjBackend_Root(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -190,6 +198,7 @@ func TestJjBackend_Root(t *testing.T) {
 // TestJjBackend_CurrentBranch_SingleBookmark: a colocated repo with one
 // bookmark at the nearest ancestor returns that bookmark name.
 func TestJjBackend_CurrentBranch_SingleBookmark(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -215,6 +224,7 @@ func TestJjBackend_CurrentBranch_SingleBookmark(t *testing.T) {
 // TestJjBackend_CurrentBranch_MultipleBookmarks: more than one bookmark
 // at the nearest ancestor commit is ambiguous (exit 4).
 func TestJjBackend_CurrentBranch_MultipleBookmarks(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -240,6 +250,7 @@ func TestJjBackend_CurrentBranch_MultipleBookmarks(t *testing.T) {
 // TestJjBackend_CurrentBranch_NoBookmark: zero bookmarks in the
 // ancestors of @ is also ambiguous (exit 4).
 func TestJjBackend_CurrentBranch_NoBookmark(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -266,6 +277,7 @@ func TestJjBackend_CurrentBranch_NoBookmark(t *testing.T) {
 // TestGitBackend_IsClean_Clean: a freshly-committed git fixture is clean
 // (tracked files all match HEAD, no staged changes).
 func TestGitBackend_IsClean_Clean(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -285,6 +297,7 @@ func TestGitBackend_IsClean_Clean(t *testing.T) {
 // TestGitBackend_IsClean_TrackedDirty: modifying a tracked file (without
 // staging) makes the worktree dirty.
 func TestGitBackend_IsClean_TrackedDirty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -307,6 +320,7 @@ func TestGitBackend_IsClean_TrackedDirty(t *testing.T) {
 // TestGitBackend_IsClean_StagedDirty: a `git add`-ed change makes the
 // worktree dirty (even though the workdir matches the index after the add).
 func TestGitBackend_IsClean_StagedDirty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -331,6 +345,7 @@ func TestGitBackend_IsClean_StagedDirty(t *testing.T) {
 // make the worktree dirty (PR-2 contract: untracked excluded; future
 // --include-untracked is an additive extension).
 func TestGitBackend_IsClean_UntrackedIgnored(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -353,6 +368,7 @@ func TestGitBackend_IsClean_UntrackedIgnored(t *testing.T) {
 // TestJjBackend_IsClean_Clean: fresh colocated jj repo has an empty `@`
 // (jj puts a new empty change on top of HEAD at init).
 func TestJjBackend_IsClean_Clean(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -372,6 +388,7 @@ func TestJjBackend_IsClean_Clean(t *testing.T) {
 // TestJjBackend_IsClean_TrackedDirty: editing a tracked file is picked up
 // by jj's automatic snapshot — `@` becomes non-empty → dirty.
 func TestJjBackend_IsClean_TrackedDirty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -395,6 +412,7 @@ func TestJjBackend_IsClean_TrackedDirty(t *testing.T) {
 // (unlike git, where untracked files are excluded). This is jj's design
 // — the contrast vs git is intentional and documented in DR-0020 PR-2.
 func TestJjBackend_IsClean_NewFileDirty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -460,6 +478,7 @@ func jjMergeFixture(t *testing.T, extraFile string) string {
 // without any merge-specific short-circuit — pinned here to lock the
 // invariant that empty merges remain clean.
 func TestJjBackend_IsClean_MergeEmpty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -483,6 +502,7 @@ func TestJjBackend_IsClean_MergeEmpty(t *testing.T) {
 // commit carrying uncommitted content is dirty just like any other
 // non-empty change.
 func TestJjBackend_IsClean_MergeNonEmpty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -505,6 +525,7 @@ func TestJjBackend_IsClean_MergeNonEmpty(t *testing.T) {
 // non-empty patch when the workdir differs from REV. The fixture's bump
 // commit is HEAD; comparing against HEAD~1 (= initial) gives a VERSION diff.
 func TestGitBackend_Diff_NoPaths_HasDiff(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -527,6 +548,7 @@ func TestGitBackend_Diff_NoPaths_HasDiff(t *testing.T) {
 // TestGitBackend_Diff_NoDiff_EmptyBytes: diffing the worktree against
 // HEAD (clean fixture) produces no patch text and no error.
 func TestGitBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -548,6 +570,7 @@ func TestGitBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
 // "declarative convergence"). When the path list survives to git, the
 // result is whatever exists in that path scope.
 func TestGitBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -571,6 +594,7 @@ func TestGitBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
 // bytes / nil error. It must NOT call `git diff REV --` with an empty
 // path list (which would mean "diff everything").
 func TestGitBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -590,6 +614,7 @@ func TestGitBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
 // TestGitBackend_Diff_BadRev: an unresolvable REV is reported as a VCS-exec
 // error (exit code 3 via *exitErr).
 func TestGitBackend_Diff_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -609,6 +634,7 @@ func TestGitBackend_Diff_BadRev(t *testing.T) {
 // TestJjBackend_Diff_NoPaths_HasDiff: jj fixture against @-- (= initial)
 // returns the bump-commit diff (VERSION change).
 func TestJjBackend_Diff_NoPaths_HasDiff(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -631,6 +657,7 @@ func TestJjBackend_Diff_NoPaths_HasDiff(t *testing.T) {
 // TestJjBackend_Diff_NoDiff_EmptyBytes: diffing @ against @ yields no
 // patch and no error.
 func TestJjBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -651,6 +678,7 @@ func TestJjBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
 // rule as git — a nonexistent path doesn't error, and existing paths still
 // produce their diff.
 func TestJjBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -671,6 +699,7 @@ func TestJjBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
 // no error, and (critically) we must not call jj with no paths and let
 // it return the full diff.
 func TestJjBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -690,6 +719,7 @@ func TestJjBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
 // TestJjBackend_Diff_BadRev: an unresolvable REV is reported as a VCS-exec
 // error (exit 3 via *exitErr).
 func TestJjBackend_Diff_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -711,6 +741,7 @@ func TestJjBackend_Diff_BadRev(t *testing.T) {
 // TestGitBackend_DiffNameStatus_HasChanges: with no path filter, returns
 // tab-separated lines like "M\tVERSION" mirroring `git diff --name-status`.
 func TestGitBackend_DiffNameStatus_HasChanges(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -735,6 +766,7 @@ func TestGitBackend_DiffNameStatus_HasChanges(t *testing.T) {
 
 // TestGitBackend_DiffNameStatus_NoChanges: clean fixture vs HEAD → empty.
 func TestGitBackend_DiffNameStatus_NoChanges(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -754,6 +786,7 @@ func TestGitBackend_DiffNameStatus_NoChanges(t *testing.T) {
 // TestGitBackend_DiffNameStatus_PathFilter: nonexistent paths are silently
 // dropped (same declarative-convergence rule as Diff).
 func TestGitBackend_DiffNameStatus_PathFilter(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -773,6 +806,7 @@ func TestGitBackend_DiffNameStatus_PathFilter(t *testing.T) {
 // TestGitBackend_DiffNameStatus_AllPathsNonexistent: every path filtered →
 // empty bytes, no error, must not widen back to all paths.
 func TestGitBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -791,6 +825,7 @@ func TestGitBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
 
 // TestGitBackend_DiffNameStatus_BadRev: unresolvable REV → exit 3.
 func TestGitBackend_DiffNameStatus_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -811,6 +846,7 @@ func TestGitBackend_DiffNameStatus_BadRev(t *testing.T) {
 // `jj diff --summary` produces "M VERSION" (space). The backend must
 // normalize to git's tab format so cross-backend output is uniform.
 func TestJjBackend_DiffNameStatus_HasChanges_TabNormalized(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -834,6 +870,7 @@ func TestJjBackend_DiffNameStatus_HasChanges_TabNormalized(t *testing.T) {
 
 // TestJjBackend_DiffNameStatus_NoChanges: diff against @ → empty.
 func TestJjBackend_DiffNameStatus_NoChanges(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -852,6 +889,7 @@ func TestJjBackend_DiffNameStatus_NoChanges(t *testing.T) {
 
 // TestJjBackend_DiffNameStatus_AllPathsNonexistent: empty result, no widen.
 func TestJjBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -870,6 +908,7 @@ func TestJjBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
 
 // TestJjBackend_DiffNameStatus_BadRev: unresolvable REV → exit 3.
 func TestJjBackend_DiffNameStatus_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -919,6 +958,7 @@ func TestJjBackend_DiffNameStatus_BadRev(t *testing.T) {
 // TestGitBackend_Commit_Paths: path-mode commit picks up exactly the
 // listed (tracked-modified) files; others remain dirty.
 func TestGitBackend_Commit_Paths(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -961,6 +1001,7 @@ func TestGitBackend_Commit_Paths(t *testing.T) {
 // `git diff --quiet` would skip it (untracked files are ignored by git
 // diff) — the backend must `git add -- PATHS` before checking presence.
 func TestGitBackend_Commit_Paths_NewFile(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -991,6 +1032,7 @@ func TestGitBackend_Commit_Paths_NewFile(t *testing.T) {
 // TestGitBackend_Commit_Paths_NonexistentOnly: every supplied path is
 // nonexistent → no commit, no error (declarative convergence).
 func TestGitBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1013,6 +1055,7 @@ func TestGitBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 // TestGitBackend_Commit_Paths_PartialExist: a mix of existing and
 // nonexistent paths commits only the existing ones (no error).
 func TestGitBackend_Commit_Paths_PartialExist(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1038,6 +1081,7 @@ func TestGitBackend_Commit_Paths_PartialExist(t *testing.T) {
 // TestGitBackend_Commit_Staged: --staged commits the index (any pending
 // `git add`-ed paths in one go), leaves unstaged worktree edits alone.
 func TestGitBackend_Commit_Staged(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1068,6 +1112,7 @@ func TestGitBackend_Commit_Staged(t *testing.T) {
 
 // TestGitBackend_Commit_Staged_Nothing: --staged with empty index → no-op.
 func TestGitBackend_Commit_Staged_Nothing(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1089,6 +1134,7 @@ func TestGitBackend_Commit_Staged_Nothing(t *testing.T) {
 // TestGitBackend_Commit_Amend_NoEdit: --amend without -m folds working
 // state into HEAD and preserves the existing commit message.
 func TestGitBackend_Commit_Amend_NoEdit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1114,6 +1160,7 @@ func TestGitBackend_Commit_Amend_NoEdit(t *testing.T) {
 // TestGitBackend_Commit_Amend_WithMessage: --amend -m rewrites the
 // last commit's message.
 func TestGitBackend_Commit_Amend_WithMessage(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1139,6 +1186,7 @@ func TestGitBackend_Commit_Amend_WithMessage(t *testing.T) {
 // TestJjBackend_Commit_Paths: only the listed path's changes land in the
 // committed change, others remain in the next (new) working copy.
 func TestJjBackend_Commit_Paths(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1174,6 +1222,7 @@ func TestJjBackend_Commit_Paths(t *testing.T) {
 // nonexistent → no commit, no error (declarative convergence). The @ id
 // must stay the same (no new change created).
 func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1194,6 +1243,7 @@ func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 
 // TestJjBackend_Commit_Staged: --staged commits all current @ changes.
 func TestJjBackend_Commit_Staged(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1223,6 +1273,7 @@ func TestJjBackend_Commit_Staged(t *testing.T) {
 // TestJjBackend_Commit_Staged_Nothing: --staged on an empty @ → no-op
 // (advisor #1 — DR-0020 explicitly excludes empty commits).
 func TestJjBackend_Commit_Staged_Nothing(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1244,6 +1295,7 @@ func TestJjBackend_Commit_Staged_Nothing(t *testing.T) {
 // TestJjBackend_Commit_Amend_NoEdit: --amend (no -m) folds @ into @-,
 // preserving @-'s description.
 func TestJjBackend_Commit_Amend_NoEdit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1271,6 +1323,7 @@ func TestJjBackend_Commit_Amend_NoEdit(t *testing.T) {
 // TestJjBackend_Commit_Amend_WithMessage: --amend -m rewrites @-'s
 // description while absorbing @ into it.
 func TestJjBackend_Commit_Amend_WithMessage(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1302,6 +1355,7 @@ func TestJjBackend_Commit_Amend_WithMessage(t *testing.T) {
 // ONLY the listed paths' working-tree content into HEAD; unrelated
 // dirty / untracked files stay dirty / untracked.
 func TestGitBackend_Commit_Amend_Paths(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1333,6 +1387,7 @@ func TestGitBackend_Commit_Amend_Paths(t *testing.T) {
 // TestGitBackend_Commit_Amend_Paths_NoEdit: `--amend -- PATHS` (no -m)
 // preserves the previous commit's message while folding the path.
 func TestGitBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1358,6 +1413,7 @@ func TestGitBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
 // as PATH must be picked up (mirroring non-amend path mode — without a
 // preceding `git add` the diff gate would miss it).
 func TestGitBackend_Commit_Amend_Paths_NewFile(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1382,6 +1438,7 @@ func TestGitBackend_Commit_Amend_Paths_NewFile(t *testing.T) {
 // path-mode declarative convergence; differs from bare `--amend` which
 // is an ungated explicit rewrite).
 func TestGitBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1404,6 +1461,7 @@ func TestGitBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
 // the index = bare-amend behaviour. Explicit synonym for `--amend` in
 // the PR-4.1 commit/amend symmetry.
 func TestGitBackend_Commit_Amend_Staged(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1427,6 +1485,7 @@ func TestGitBackend_Commit_Amend_Staged(t *testing.T) {
 // TestJjBackend_Commit_Amend_Paths: amend + PATHS squashes only the
 // listed paths from @ into @-; other @ changes remain in @.
 func TestJjBackend_Commit_Amend_Paths(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1460,6 +1519,7 @@ func TestJjBackend_Commit_Amend_Paths(t *testing.T) {
 // the editor-prompt-on-combined-description trap that bare jj squash
 // hits when both @ and @- have descriptions).
 func TestJjBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1487,6 +1547,7 @@ func TestJjBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
 // TestJjBackend_Commit_Amend_Paths_NonexistentOnly: all-nonexistent
 // PATH list during amend → no-op, @- and @ unchanged.
 func TestJjBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1510,6 +1571,7 @@ func TestJjBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
 // the entire @ change into @- (= same effect as bare amend; explicit
 // synonym for PR-4.1 symmetry).
 func TestJjBackend_Commit_Amend_Staged(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1544,6 +1606,7 @@ func TestJjBackend_Commit_Amend_Staged(t *testing.T) {
 // interactive callers). PR-4.1 switches the no-edit path to
 // --use-destination-message to make this deterministic.
 func TestJjBackend_Commit_Amend_NoEdit_BothHaveDesc(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1605,6 +1668,7 @@ func exitCodeOf(err error) int {
 // (we don't verify subprocess stderr here — the contract is just
 // "no error").
 func TestGitBackend_Fetch_DefaultRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1621,6 +1685,7 @@ func TestGitBackend_Fetch_DefaultRemote(t *testing.T) {
 // TestGitBackend_Fetch_NonexistentRemote: an unknown remote name surfaces
 // as an *exitErr with exitCodeVCSExec so the dispatcher exits 3.
 func TestGitBackend_Fetch_NonexistentRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1642,6 +1707,7 @@ func TestGitBackend_Fetch_NonexistentRemote(t *testing.T) {
 // store (colocated repo). Round-trips through `jj git fetch --remote
 // origin`.
 func TestJjBackend_Fetch_DefaultRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1658,6 +1724,7 @@ func TestJjBackend_Fetch_DefaultRemote(t *testing.T) {
 // TestJjBackend_Fetch_NonexistentRemote: jj reports "No matching remotes"
 // as exit 1 — we wrap it as exitCodeVCSExec.
 func TestJjBackend_Fetch_NonexistentRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1679,6 +1746,7 @@ func TestJjBackend_Fetch_NonexistentRemote(t *testing.T) {
 // is a "new branch" creation; git exits 0. We then verify the bare's
 // ref points at the same commit as the local main.
 func TestGitBackend_Push_NewBranch(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1708,6 +1776,7 @@ func TestGitBackend_Push_NewBranch(t *testing.T) {
 // same commit, git exits 0 ("Everything up-to-date") and our wrapper
 // surfaces that as a clean nil — the DR-0020 idempotency rule.
 func TestGitBackend_Push_NothingToPush(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1725,6 +1794,7 @@ func TestGitBackend_Push_NothingToPush(t *testing.T) {
 // our push must be rejected and surface as nonFastForwardError so the
 // dispatcher can map to exit 5.
 func TestGitBackend_Push_NonFastForward(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1753,6 +1823,7 @@ func TestGitBackend_Push_NonFastForward(t *testing.T) {
 
 // TestGitBackend_Push_BadRemote: unknown remote name → exit 3.
 func TestGitBackend_Push_BadRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1773,6 +1844,7 @@ func TestGitBackend_Push_BadRemote(t *testing.T) {
 // TestJjBackend_Push_NewBookmark: pushing a new bookmark to an empty bare
 // succeeds (jj 0.41 handles new bookmarks without --allow-new).
 func TestJjBackend_Push_NewBookmark(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1800,6 +1872,7 @@ func TestJjBackend_Push_NewBookmark(t *testing.T) {
 
 // TestJjBackend_Push_NothingToPush: remote already has it → success.
 func TestJjBackend_Push_NothingToPush(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1825,6 +1898,7 @@ func TestJjBackend_Push_NothingToPush(t *testing.T) {
 // the attacker fixture; jj's stale-info rejection surfaces as
 // exitCodeNonFastForward.
 func TestJjBackend_Push_NonFastForward(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -1951,6 +2025,7 @@ func localParentSHA(t *testing.T, work string) string {
 // TestGitBackend_TagPush_NewTag: a fresh NAME at HEAD is created locally
 // and pushed; the bare ends up holding it.
 func TestGitBackend_TagPush_NewTag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -1975,6 +2050,7 @@ func TestGitBackend_TagPush_NewTag(t *testing.T) {
 // which is already true). This isolates the local-create-skip branch
 // because the remote already has it too (preloaded).
 func TestGitBackend_TagPush_SameRevIdempotent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2008,6 +2084,7 @@ func TestGitBackend_TagPush_SameRevIdempotent(t *testing.T) {
 // without `--allow-move` is the integrity violation case (exit 4). The
 // bare must remain pointing at the original REV (no side-effect).
 func TestGitBackend_TagPush_DiffRevNoMoveFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2042,6 +2119,7 @@ func TestGitBackend_TagPush_DiffRevNoMoveFlag(t *testing.T) {
 // TestGitBackend_TagPush_DiffRevAllowMove: with `--allow-move=true`, the
 // move is permitted; bare ends up pointing at the new REV.
 func TestGitBackend_TagPush_DiffRevAllowMove(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2068,6 +2146,7 @@ func TestGitBackend_TagPush_DiffRevAllowMove(t *testing.T) {
 // TestGitBackend_TagPush_BadRev: unresolvable REV surfaces as exitCodeVCSExec
 // (3) — distinct from the integrity-violation exit 4 so callers can branch.
 func TestGitBackend_TagPush_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2089,6 +2168,7 @@ func TestGitBackend_TagPush_BadRev(t *testing.T) {
 
 // TestGitBackend_TagPush_BadRemote: unknown remote → exit 3.
 func TestGitBackend_TagPush_BadRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2113,6 +2193,7 @@ func TestGitBackend_TagPush_BadRemote(t *testing.T) {
 // TestGitBackend_TagDelete_PresentTag: a tag present locally and on the
 // bare is removed from both.
 func TestGitBackend_TagDelete_PresentTag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2145,6 +2226,7 @@ func TestGitBackend_TagDelete_PresentTag(t *testing.T) {
 // no-op success (rm -f semantic). Critical: git's bare `git tag -d NAME`
 // errors when the tag is missing, so the backend MUST pre-check existence.
 func TestGitBackend_TagDelete_AbsentIdempotent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2162,6 +2244,7 @@ func TestGitBackend_TagDelete_AbsentIdempotent(t *testing.T) {
 // of `:refs/tags/NAME` reports "deleting a non-existent ref" but exits 0,
 // so the backend can run it unconditionally without breaking idempotence.
 func TestGitBackend_TagDelete_LocalOnly(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2186,6 +2269,7 @@ func TestGitBackend_TagDelete_LocalOnly(t *testing.T) {
 // half → exit 3. The local half already ran (idempotent) but the remote
 // failure surfaces.
 func TestGitBackend_TagDelete_BadRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -2209,6 +2293,7 @@ func TestGitBackend_TagDelete_BadRemote(t *testing.T) {
 // TestJjBackend_TagPush_NewTag: fresh tag at @- via jj tag set + jj git
 // export + native git push to origin.
 func TestJjBackend_TagPush_NewTag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2237,6 +2322,7 @@ func TestJjBackend_TagPush_NewTag(t *testing.T) {
 // and skip the create on a same-rev match. The push half stays — that's
 // the 片落ちリカバリ behaviour.
 func TestJjBackend_TagPush_SameRevIdempotent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2271,6 +2357,7 @@ func TestJjBackend_TagPush_SameRevIdempotent(t *testing.T) {
 // side-effect on the bare (jj's own "Refusing to move tag" hint would be
 // exit 1 untransformed).
 func TestJjBackend_TagPush_DiffRevNoMoveFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2304,6 +2391,7 @@ func TestJjBackend_TagPush_DiffRevNoMoveFlag(t *testing.T) {
 // TestJjBackend_TagPush_DiffRevAllowMove: with `--allow-move`, the move is
 // permitted: `jj tag set --allow-move` + export + force-push.
 func TestJjBackend_TagPush_DiffRevAllowMove(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2333,6 +2421,7 @@ func TestJjBackend_TagPush_DiffRevAllowMove(t *testing.T) {
 
 // TestJjBackend_TagPush_BadRev: unresolvable REV → exit 3.
 func TestJjBackend_TagPush_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2357,6 +2446,7 @@ func TestJjBackend_TagPush_BadRev(t *testing.T) {
 // TestJjBackend_TagDelete_PresentTag: jj tag delete + jj git export +
 // remote delete; both sides end up tagless.
 func TestJjBackend_TagDelete_PresentTag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2386,6 +2476,7 @@ func TestJjBackend_TagDelete_PresentTag(t *testing.T) {
 // idempotent (exit 0 with "No matching tags"). The remote half is also
 // idempotent (git's `push :refs/tags/NAME` against a missing ref exits 0).
 func TestJjBackend_TagDelete_AbsentIdempotent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2403,6 +2494,7 @@ func TestJjBackend_TagDelete_AbsentIdempotent(t *testing.T) {
 // The colocated fixtures above never hit jjGitPushDir's fall-through to
 // the resolved git_target — this test does.
 func TestJjBackend_TagPush_NonColocated(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2429,6 +2521,7 @@ func TestJjBackend_TagPush_NonColocated(t *testing.T) {
 // `git -C <git_target> push origin :refs/tags/NAME` in the non-colocated
 // layout, so it gets a dedicated test for the same reason.
 func TestJjBackend_TagDelete_NonColocated(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2463,6 +2556,7 @@ func TestJjBackend_TagDelete_NonColocated(t *testing.T) {
 
 // TestJjBackend_TagDelete_BadRemote: unknown remote → exit 3.
 func TestJjBackend_TagDelete_BadRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2504,6 +2598,7 @@ func TestJjBackend_TagDelete_BadRemote(t *testing.T) {
 // be at @-'s change_id on the local AND on the bare (= bookmark advanced
 // AND push happened).
 func TestJjBackend_Push_AutoAdvance_Forward(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2542,6 +2637,7 @@ func TestJjBackend_Push_AutoAdvance_Forward(t *testing.T) {
 // TestJjBackend_Push_AutoAdvance_AlreadyAtParent: bookmark is already at @-;
 // auto-advance is a no-op for the move step, push proceeds normally.
 func TestJjBackend_Push_AutoAdvance_AlreadyAtParent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2562,6 +2658,7 @@ func TestJjBackend_Push_AutoAdvance_AlreadyAtParent(t *testing.T) {
 // bookmark untouched. Per kawaz original spec: "<name> が @ 自身を指す →
 // 通常 push (auto-advance 不要)".
 func TestJjBackend_Push_AutoAdvance_AtWorkingCopy_Clean(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2606,6 +2703,7 @@ func TestJjBackend_Push_AutoAdvance_AtWorkingCopy_Clean(t *testing.T) {
 // bookmark on the sibling, finally re-edit / new on the original bump
 // line so the bookmark is sideways relative to the final @.
 func TestJjBackend_Push_AutoAdvance_Divergent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2649,6 +2747,7 @@ func TestJjBackend_Push_AutoAdvance_Divergent(t *testing.T) {
 // the publishable one (= "immutable 化" pattern, kawaz 確定 2026-05-31).
 // Push then proceeds against the bookmark at @.
 func TestJjBackend_Push_AutoAdvance_Dirty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -2687,6 +2786,7 @@ func TestJjBackend_Push_AutoAdvance_Dirty(t *testing.T) {
 // PR-5.2 previously rejected here at exit 3 as a defensive guard; the new
 // contract is "git ignores jj-prefixed flags", verified by this test.
 func TestGitBackend_Push_AutoAdvance_SilentNoOp(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}

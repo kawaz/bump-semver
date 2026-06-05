@@ -12,6 +12,7 @@ import (
 // TestRun_VcsTagLatest_PR_PRTagLatest hosts all PR-Tag-Latest dispatcher
 // subtests. The structure mirrors TestRun_VcsTagPR6 for consistency.
 func TestRun_VcsTagLatest(t *testing.T) {
+	// Mutates package-level `ghRunner` / `ghLookPath` seams; cannot be parallel.
 	// --- help routing -------------------------------------------------
 	t.Run("vcs tag latest --help documents the flags", func(t *testing.T) {
 		var stdout bytes.Buffer

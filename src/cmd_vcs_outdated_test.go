@@ -90,6 +90,7 @@ func setupOutdatedGitRepo(t *testing.T) string {
 // TestRun_VcsOutdated_T2_Translation: literal-FROM + mandatory `{}` TO.
 // README.md was re-touched; README-{ja,en}.md weren't → exit 1.
 func TestRun_VcsOutdated_T2_Translation(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -123,6 +124,7 @@ func TestRun_VcsOutdated_T2_Translation(t *testing.T) {
 // src/sub/bar.ts → lib/sub/bar.js (fresh: bar.ts unchanged since init)
 // At least one stale → exit 1.
 func TestRun_VcsOutdated_T1_Bundle(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -152,6 +154,7 @@ func TestRun_VcsOutdated_T1_Bundle(t *testing.T) {
 // TestRun_VcsOutdated_T1_AllFresh: when no source has moved beyond its
 // derived, exit 0 with no output.
 func TestRun_VcsOutdated_T1_AllFresh(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -201,6 +204,7 @@ func TestRun_VcsOutdated_T1_AllFresh(t *testing.T) {
 // GIT_{AUTHOR,COMMITTER}_DATE fixed via gitDateEnv we can pin two
 // commits to the same epoch and assert the equal-boundary directly.
 func TestRun_VcsOutdated_SameSecondIsFresh(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -243,6 +247,7 @@ func TestRun_VcsOutdated_SameSecondIsFresh(t *testing.T) {
 // TestRun_VcsOutdated_Explain: --explain emits the full FROM→TO table
 // and exits 0 regardless of stale rows.
 func TestRun_VcsOutdated_Explain(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -268,6 +273,7 @@ func TestRun_VcsOutdated_Explain(t *testing.T) {
 // TestRun_VcsOutdated_MultiPair: multiple `--`-separated pairs, exit 1
 // if any pair is stale.
 func TestRun_VcsOutdated_MultiPair(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -301,6 +307,7 @@ func TestRun_VcsOutdated_MultiPair(t *testing.T) {
 // TestRun_VcsOutdated_MissingMandatory: TO with `{ja,en}` where one of
 // the options is absent → exit 1 with `missing` status.
 func TestRun_VcsOutdated_MissingMandatory(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -343,6 +350,7 @@ func TestRun_VcsOutdated_MissingMandatory(t *testing.T) {
 // both README.md and README-ja.md and TO is `README-{ja,en}.md`, the
 // source path itself should NOT be flagged as its own derived.
 func TestRun_VcsOutdated_AutoExclude(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -381,6 +389,7 @@ func TestRun_VcsOutdated_AutoExclude(t *testing.T) {
 // a .gitignored path and assert it's excluded by default (gitignored
 // respected) and included with --glob-gitignored=false.
 func TestRun_VcsOutdated_GlobFlagsApply(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -438,6 +447,7 @@ func TestRun_VcsOutdated_GlobFlagsApply(t *testing.T) {
 
 // TestRun_VcsOutdated_UsageError: missing args → exit 2.
 func TestRun_VcsOutdated_UsageError(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -460,6 +470,7 @@ func TestRun_VcsOutdated_UsageError(t *testing.T) {
 // `**/*-ja.md` → `${1}/${2}.md` mapping must NOT produce a leading-slash
 // derived path when the source is at root (= README-ja.md → README.md).
 func TestRun_VcsOutdated_LeadingSlashDogfood(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -509,6 +520,7 @@ func TestRun_VcsOutdated_LeadingSlashDogfood(t *testing.T) {
 // Default: literal-FROM-not-found warns + exits 0.
 // --strict: same case exits 1.
 func TestRun_VcsOutdated_StrictLiteralFromMissing(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -562,6 +574,7 @@ func TestRun_VcsOutdated_StrictLiteralFromMissing(t *testing.T) {
 // pattern that, if value escape were missing, would re-glob the `*` and
 // match unrelated siblings.
 func TestRun_VcsOutdated_TOReGlobLiteralEmbed(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -613,6 +626,7 @@ func TestRun_VcsOutdated_TOReGlobLiteralEmbed(t *testing.T) {
 // subprocess error must propagate through fmt.Errorf("... %w", ...) and
 // land as exitCodeVCSExec at the top level (= 3), not flatten to exit 2.
 func TestRun_VcsOutdated_VCSErrorPropagates(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -646,6 +660,7 @@ func TestRun_VcsOutdated_VCSErrorPropagates(t *testing.T) {
 // consumes one `$N` slot. End-to-end via the cmd: brace alt becomes a
 // captured literal we can reference in TO.
 func TestRun_VcsOutdated_FromBraceCapture(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -696,6 +711,7 @@ func TestRun_VcsOutdated_FromBraceCapture(t *testing.T) {
 // fell through to a literal branch while doublestar matched it as a
 // wildcard — any successful match panicked spec §7's internal-bug path.
 func TestRun_VcsOutdated_RejectQuestionMarkInFrom(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -733,6 +749,7 @@ func TestRun_VcsOutdated_RejectQuestionMarkInFrom(t *testing.T) {
 
 // TestRun_VcsOutdated_RejectQuestionMarkInTo pins Tier-1 NC-1 (TO side).
 func TestRun_VcsOutdated_RejectQuestionMarkInTo(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -768,6 +785,7 @@ func TestRun_VcsOutdated_RejectQuestionMarkInTo(t *testing.T) {
 // existence check is performed against the literal path; pathological
 // filenames are user responsibility per spec §9.
 func TestRun_VcsOutdated_TOReGlobLiteralEmbed_NonGlobTO(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -816,6 +834,7 @@ func TestRun_VcsOutdated_TOReGlobLiteralEmbed_NonGlobTO(t *testing.T) {
 
 // TestRun_VcsOutdated_NoArgsHelp: bare `vcs outdated` → help routed.
 func TestRun_VcsOutdated_NoArgsHelp(t *testing.T) {
+	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	err := run([]string{"vcs", "outdated"}, bytes.NewReader(nil), &stdout, &stderr)
 	if err != nil {
@@ -834,6 +853,7 @@ func TestRun_VcsOutdated_NoArgsHelp(t *testing.T) {
 
 // K1 (OQ-19): `--strict --explain` → exit 0 even with stale rows.
 func TestRun_VcsOutdated_StrictPlusExplain_ExitZero(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -853,6 +873,7 @@ func TestRun_VcsOutdated_StrictPlusExplain_ExitZero(t *testing.T) {
 
 // K2 (OQ-19): `--strict --explain` + literal-FROM miss → exit 0.
 func TestRun_VcsOutdated_StrictPlusExplain_LitMissExitZero(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -869,6 +890,7 @@ func TestRun_VcsOutdated_StrictPlusExplain_LitMissExitZero(t *testing.T) {
 
 // K3 (OQ-20): `--explain` + mandatory missing → exit 0 but stdout says "will fail".
 func TestRun_VcsOutdated_ExplainPlusMissing_TextContradictsExit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -897,6 +919,7 @@ func TestRun_VcsOutdated_ExplainPlusMissing_TextContradictsExit(t *testing.T) {
 
 // K4 (OQ-21): `--strict` + lit-miss in any pair silences other pairs' stale rows.
 func TestRun_VcsOutdated_StrictShortCircuitsStaleRow(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -922,6 +945,7 @@ func TestRun_VcsOutdated_StrictShortCircuitsStaleRow(t *testing.T) {
 
 // K5: FROM `glob:` empty body → exit 2.
 func TestRun_VcsOutdated_GlobEmptyBodyRejected(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -939,6 +963,7 @@ func TestRun_VcsOutdated_GlobEmptyBodyRejected(t *testing.T) {
 
 // K6: TO `glob:` empty body → exit 2.
 func TestRun_VcsOutdated_ToGlobEmptyBodyRejected(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -957,6 +982,7 @@ func TestRun_VcsOutdated_ToGlobEmptyBodyRejected(t *testing.T) {
 // K7 (OQ-22, openConcern): empty TO `""` quietly succeeds as "fresh" against cwd dir.
 // Characterization: pins the silent-green gap. NOT a contract — see OQ-22.
 func TestRun_VcsOutdated_EmptyToCharacterization(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -978,6 +1004,7 @@ func TestRun_VcsOutdated_EmptyToCharacterization(t *testing.T) {
 
 // K8: trailing `--` (= empty group ignored).
 func TestRun_VcsOutdated_TrailingPairSeparator(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -995,6 +1022,7 @@ func TestRun_VcsOutdated_TrailingPairSeparator(t *testing.T) {
 
 // K9: leading `--` (= same as no leading sep).
 func TestRun_VcsOutdated_LeadingPairSeparator(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1012,6 +1040,7 @@ func TestRun_VcsOutdated_LeadingPairSeparator(t *testing.T) {
 
 // K10: only `--` → usage exit 2.
 func TestRun_VcsOutdated_OnlyPairSeparator(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1029,6 +1058,7 @@ func TestRun_VcsOutdated_OnlyPairSeparator(t *testing.T) {
 
 // K11: multi-pair, same FROM, two TOs — both pairs' rows are emitted independently.
 func TestRun_VcsOutdated_MultiPairSameFrom(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1054,6 +1084,7 @@ func TestRun_VcsOutdated_MultiPairSameFrom(t *testing.T) {
 
 // K12 (OQ-23): pair 2 syntax error short-circuits and discards pair 1's results.
 func TestRun_VcsOutdated_Pair2ErrorShortCircuits(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1079,6 +1110,7 @@ func TestRun_VcsOutdated_Pair2ErrorShortCircuits(t *testing.T) {
 
 // K13: untracked derived (= on disk, not in VCS) → exit 1 non-explain.
 func TestRun_VcsOutdated_UntrackedDerivedExit1(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1103,6 +1135,7 @@ func TestRun_VcsOutdated_UntrackedDerivedExit1(t *testing.T) {
 
 // K14: untracked derived under `--explain` → exit 0 with `[untracked: ...]` text.
 func TestRun_VcsOutdated_UntrackedDerivedExplain(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1126,6 +1159,7 @@ func TestRun_VcsOutdated_UntrackedDerivedExplain(t *testing.T) {
 // K15 (OQ-24): cross-source case — source A's derived path equals source B's path.
 // Characterization: NOT excluded; A→B row is emitted (fresh if B's ts >= A's).
 func TestRun_VcsOutdated_CrossSourceNotExcluded(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1171,6 +1205,7 @@ func TestRun_VcsOutdated_CrossSourceNotExcluded(t *testing.T) {
 
 // K16: jj backend happy-path — stale derived → exit 1.
 func TestRun_VcsOutdated_JjBackendStale(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj required")
 	}
@@ -1197,6 +1232,7 @@ func TestRun_VcsOutdated_JjBackendStale(t *testing.T) {
 
 // K17: `--vcs jj` in non-jj dir → exit 3.
 func TestRun_VcsOutdated_WrongVcsJjExit3(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip()
 	}
@@ -1229,6 +1265,7 @@ func TestRun_VcsOutdated_WrongVcsJjExit3(t *testing.T) {
 
 // K18: glob FROM 0-match (NOT literal) → exit 0 even with `--strict`.
 func TestRun_VcsOutdated_StrictGlobZeroMatchExit0(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1246,6 +1283,7 @@ func TestRun_VcsOutdated_StrictGlobZeroMatchExit0(t *testing.T) {
 // K19: `$0` in TO yields source's own path → per-source auto-exclude triggers,
 // so no rows are emitted (and exit is 0 since there's nothing to fail on).
 func TestRun_VcsOutdated_Dollar0InToExcluded(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1266,6 +1304,7 @@ func TestRun_VcsOutdated_Dollar0InToExcluded(t *testing.T) {
 
 // K20: `--glob-dotfile=true` reaches sources under dot directories.
 func TestRun_VcsOutdated_GlobDotfileFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1322,6 +1361,7 @@ func TestRun_VcsOutdated_GlobDotfileFlag(t *testing.T) {
 // the capture regex. This test pins the fixed behavior: case-different
 // path is matched and surfaces in `--explain` output.
 func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1358,6 +1398,7 @@ func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
 
 // K22: `--explain` with no FROM matches → exit 0 with empty stdout.
 func TestRun_VcsOutdated_ExplainNoMatches(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1377,6 +1418,7 @@ func TestRun_VcsOutdated_ExplainNoMatches(t *testing.T) {
 
 // K23: `$N` out-of-range in TO → empty literal contributes to path.Clean.
 func TestRun_VcsOutdated_OutOfRangeBackrefCleaned(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1407,6 +1449,7 @@ func TestRun_VcsOutdated_OutOfRangeBackrefCleaned(t *testing.T) {
 
 // K24: bare `$10` in TO (ambiguous) → exit 2.
 func TestRun_VcsOutdated_AmbiguousDollar10InTo(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1424,6 +1467,7 @@ func TestRun_VcsOutdated_AmbiguousDollar10InTo(t *testing.T) {
 
 // K25: `${abc}` named in TO → exit 2.
 func TestRun_VcsOutdated_NamedRefInTo(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}
@@ -1443,6 +1487,7 @@ func TestRun_VcsOutdated_NamedRefInTo(t *testing.T) {
 // Companion to C24 — same semantic but exercises the EMPTY alt branch
 // explicitly (alts = "" and "-ja"; only "-ja" exists).
 func TestRun_VcsOutdated_EmptyAltBraceTOMissingExit1(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip()
 	}

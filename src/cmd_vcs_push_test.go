@@ -10,6 +10,7 @@ import (
 
 // TestRun_VcsPush_Branch: `vcs push --branch main` pushes to origin.
 func TestRun_VcsPush_Branch(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -25,6 +26,7 @@ func TestRun_VcsPush_Branch(t *testing.T) {
 // TestRun_VcsPush_BookmarkAlias: `vcs push --bookmark main` is an alias of
 // `--branch main`.
 func TestRun_VcsPush_BookmarkAlias(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -41,6 +43,7 @@ func TestRun_VcsPush_BookmarkAlias(t *testing.T) {
 // (matches the existing `vcs commit` / `vcs diff` convention — bare verb
 // = help, partial verb = error).
 func TestRun_VcsPush_NoArgs(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "push"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
 	if err != nil {
@@ -55,6 +58,7 @@ func TestRun_VcsPush_NoArgs(t *testing.T) {
 // --branch/--bookmark) is a usage error — NAME is required (no auto-
 // detection by design).
 func TestRun_VcsPush_MissingName(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -76,6 +80,7 @@ func TestRun_VcsPush_MissingName(t *testing.T) {
 // --bookmark on the same invocation is a usage error (they're aliases of
 // one field, double-set rejected).
 func TestRun_VcsPush_BranchAndBookmarkBothSet(t *testing.T) {
+	t.Parallel()
 	err := run([]string{"vcs", "push", "--branch", "main", "--bookmark", "main"},
 		bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
@@ -89,6 +94,7 @@ func TestRun_VcsPush_BranchAndBookmarkBothSet(t *testing.T) {
 
 // TestRun_VcsPush_RemoteFlag: `--remote NAME` overrides the default origin.
 func TestRun_VcsPush_RemoteFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -104,6 +110,7 @@ func TestRun_VcsPush_RemoteFlag(t *testing.T) {
 
 // TestRun_VcsPush_BadRemote: nonexistent remote → exit 3.
 func TestRun_VcsPush_BadRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -129,6 +136,7 @@ func TestRun_VcsPush_BadRemote(t *testing.T) {
 // should read the underlying tool's message directly rather than an
 // editorial paraphrase.
 func TestRun_VcsPush_NonFastForward(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -170,6 +178,7 @@ func TestRun_VcsPush_NonFastForward(t *testing.T) {
 // it on stderr but we don't lock the channel here) so the user can see
 // the convergence happened rather than a silent no-op.
 func TestRun_VcsPush_NothingToPush(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -194,6 +203,7 @@ func TestRun_VcsPush_NothingToPush(t *testing.T) {
 // BOTH stdout and stderr. This matches the bump-semver --quiet contract
 // where hint-class output goes away under -q.
 func TestRun_VcsPush_NothingToPush_Quiet(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -216,6 +226,7 @@ func TestRun_VcsPush_NothingToPush_Quiet(t *testing.T) {
 // TestRun_VcsPush_RejectForce: `--force` is intentionally not provided —
 // any attempt is a usage error.
 func TestRun_VcsPush_RejectForce(t *testing.T) {
+	t.Parallel()
 	err := run([]string{"vcs", "push", "--branch", "main", "--force"},
 		bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
@@ -230,6 +241,7 @@ func TestRun_VcsPush_RejectForce(t *testing.T) {
 // TestRun_VcsPush_UnknownVerbFlag: a verb-local flag on the wrong verb
 // (e.g. --tags) is rejected at the parser layer.
 func TestRun_VcsPush_UnknownFlag(t *testing.T) {
+	t.Parallel()
 	err := run([]string{"vcs", "push", "--branch", "main", "--tags"},
 		bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
@@ -244,6 +256,7 @@ func TestRun_VcsPush_UnknownFlag(t *testing.T) {
 // TestRun_VcsHelp_FetchPush: `vcs --help` includes fetch / push in the
 // verb list.
 func TestRun_VcsHelp_FetchPush(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
 	if err != nil {
@@ -260,6 +273,7 @@ func TestRun_VcsHelp_FetchPush(t *testing.T) {
 
 // TestRun_VcsFetchHelp / TestRun_VcsPushHelp: per-verb help works.
 func TestRun_VcsFetchHelp(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "fetch", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
 	if err != nil {
@@ -276,6 +290,7 @@ func TestRun_VcsFetchHelp(t *testing.T) {
 // kawaz's confirmation was "branch 一本化で help に jj では bookmark の
 // 意と簡潔記載て", i.e. terminology bridge, not alias advertising.
 func TestRun_VcsPushHelp(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "push", "--help"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
 	if err != nil {
@@ -310,6 +325,7 @@ func TestRun_VcsPushHelp(t *testing.T) {
 // occurrences may appear (= one inline mention, not a re-explanation
 // of the mutual-exclusion rule).
 func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
+	t.Parallel()
 	body := helpVcsPush
 	// Old verbose lines that PR-5.1 deletes.
 	for _, banned := range []string{
@@ -335,6 +351,7 @@ func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
 // promise the deleted `remote has diverged` editorial hint — keep the
 // text honest about what bump-semver actually prints (= git/jj raw).
 func TestHelpVcsPush_NoEditorialHint(t *testing.T) {
+	t.Parallel()
 	body := helpVcsPush
 	if strings.Contains(body, "remote has diverged") {
 		t.Errorf("helpVcsPush should not promise a hint that PR-5.1 removed, got: %q", body)
@@ -351,6 +368,7 @@ func TestHelpVcsPush_NoEditorialHint(t *testing.T) {
 // export failure. The first attempt fails with a transient-looking
 // stderr; the second succeeds; Push returns nil.
 func TestJjBackend_Push_ExportRetrySucceeds(t *testing.T) {
+	// Mutates package-level `jjGitExportFunc` seam; cannot be parallel.
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -386,6 +404,7 @@ func TestJjBackend_Push_ExportRetrySucceeds(t *testing.T) {
 // case (ref-hierarchy conflict, issue #493) which is the most common
 // in practice.
 func TestJjBackend_Push_ExportRetryFailsTwice(t *testing.T) {
+	// Mutates package-level `jjGitExportFunc` seam; cannot be parallel.
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -435,6 +454,7 @@ func TestJjBackend_Push_ExportRetryFailsTwice(t *testing.T) {
 // stderr doesn't match a known pattern, the generic fallback still
 // triggers (retry + exit 3 + issue link).
 func TestJjBackend_Push_ExportRetryGenericFallback(t *testing.T) {
+	// Mutates package-level `jjGitExportFunc` seam; cannot be parallel.
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -503,6 +523,7 @@ func setupJjForAutoAdvance(t *testing.T) (work, bare string) {
 // jj-specific text leaks into stderr. The same script can therefore run
 // against both jj and git backends without conditional branching.
 func TestRun_VcsPush_AutoAdvance_GitSilentNoOp(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -537,6 +558,7 @@ func TestRun_VcsPush_AutoAdvance_GitSilentNoOp(t *testing.T) {
 // copy, bookmark sitting before @-, flag set; auto-advance runs and the
 // push succeeds. End-to-end mirror of TestRun_VcsPush_Branch.
 func TestRun_VcsPush_AutoAdvance_JjForward(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -562,6 +584,7 @@ func TestRun_VcsPush_AutoAdvance_JjForward(t *testing.T) {
 // are first-class; users wanting strict clean-only gate with `vcs is
 // clean` themselves). Push succeeds and the bare receives the @ commit.
 func TestRun_VcsPush_AutoAdvance_JjDirty(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -597,6 +620,7 @@ func TestRun_VcsPush_AutoAdvance_JjDirty(t *testing.T) {
 // check applies symmetrically to both clean (target=@-) and dirty
 // (target=@) paths — the same push-reject trap exists on either side.
 func TestRun_VcsPush_AutoAdvance_JjCleanTargetNoDescription(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -634,6 +658,7 @@ func TestRun_VcsPush_AutoAdvance_JjCleanTargetNoDescription(t *testing.T) {
 // description"), and the user hits a retry loop because nothing in the
 // flow describes the @ for them.
 func TestRun_VcsPush_AutoAdvance_JjDirtyNoDescription(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -673,6 +698,7 @@ func TestRun_VcsPush_AutoAdvance_JjDirtyNoDescription(t *testing.T) {
 // rather than a Go-side TrimSpace == "" check; the latter would over-
 // reject relative to jj's actual push gate.
 func TestRun_VcsPush_AutoAdvance_JjDirtyWhitespaceDescription(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -707,6 +733,7 @@ func TestRun_VcsPush_AutoAdvance_JjDirtyWhitespaceDescription(t *testing.T) {
 // `vcs push --remote origin` (NAME required) — this test pins the
 // "flag is parsed cleanly, semantic checks happen downstream" boundary.
 func TestRun_VcsPush_AutoAdvance_ParserAcceptsFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}

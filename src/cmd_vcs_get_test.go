@@ -10,6 +10,7 @@ import (
 
 // TestRun_VcsGet_NoArgs: `vcs get` with no key shows the vcs-get help.
 func TestRun_VcsGet_NoArgs(t *testing.T) {
+	t.Parallel()
 	var stdout bytes.Buffer
 	err := run([]string{"vcs", "get"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
 	if err != nil {
@@ -23,6 +24,7 @@ func TestRun_VcsGet_NoArgs(t *testing.T) {
 // TestRun_VcsGet_UnknownKey: an unknown key is a usage error (exit 2)
 // and the error names the available keys.
 func TestRun_VcsGet_UnknownKey(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -45,6 +47,7 @@ func TestRun_VcsGet_UnknownKey(t *testing.T) {
 
 // TestRun_VcsGet_Backend_Git: prints "git" on a git-only repo.
 func TestRun_VcsGet_Backend_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -64,6 +67,7 @@ func TestRun_VcsGet_Backend_Git(t *testing.T) {
 // TestRun_VcsGet_Backend_Jj: prints "jj" on a colocated git+jj repo
 // (jj wins over git per DR-0008 precedence).
 func TestRun_VcsGet_Backend_Jj(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -82,6 +86,7 @@ func TestRun_VcsGet_Backend_Jj(t *testing.T) {
 
 // TestRun_VcsGet_Root_Git: prints the repo root path.
 func TestRun_VcsGet_Root_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -108,6 +113,7 @@ func TestRun_VcsGet_Root_Git(t *testing.T) {
 
 // TestRun_VcsGet_CurrentBranch_Git: prints "main" for the fixture.
 func TestRun_VcsGet_CurrentBranch_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -127,6 +133,7 @@ func TestRun_VcsGet_CurrentBranch_Git(t *testing.T) {
 // TestRun_VcsGet_CurrentBranch_Detached: detached HEAD returns exit 4
 // (exitCodeAmbiguous), not the standard exit 2 (usage).
 func TestRun_VcsGet_CurrentBranch_Detached(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -148,6 +155,7 @@ func TestRun_VcsGet_CurrentBranch_Detached(t *testing.T) {
 // TestRun_VcsGet_Backend_VcsOverride: --vcs git on a colocated repo
 // forces the git backend (was jj otherwise).
 func TestRun_VcsGet_Backend_VcsOverride(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -167,6 +175,7 @@ func TestRun_VcsGet_Backend_VcsOverride(t *testing.T) {
 // TestRun_VcsGet_Quiet: -q suppresses the stdout value but the command
 // still exits 0.
 func TestRun_VcsGet_Quiet(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -187,6 +196,7 @@ func TestRun_VcsGet_Quiet(t *testing.T) {
 // report exit 3 (VCS exec / not-a-repo) — distinct from the get's own
 // usage errors.
 func TestRun_VcsGet_NoRepo(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	withCwd(t, dir, func() {
 		var stderr bytes.Buffer
@@ -206,6 +216,7 @@ func TestRun_VcsGet_NoRepo(t *testing.T) {
 // TestRun_VcsGet_RejectNameStatusShort: `vcs get -s root` must exit 2
 // (verb-local flag for diff, not valid on get).
 func TestRun_VcsGet_RejectNameStatusShort(t *testing.T) {
+	t.Parallel()
 	var stderr bytes.Buffer
 	err := run([]string{"vcs", "get", "-s", "root"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
 	if err == nil {
@@ -225,6 +236,7 @@ func TestRun_VcsGet_RejectNameStatusShort(t *testing.T) {
 
 // TestRun_VcsGet_RejectNameStatusLong: long form must also exit 2.
 func TestRun_VcsGet_RejectNameStatusLong(t *testing.T) {
+	t.Parallel()
 	var stderr bytes.Buffer
 	err := run([]string{"vcs", "get", "--name-status", "root"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
 	if err == nil {
@@ -242,6 +254,7 @@ func TestRun_VcsGet_RejectNameStatusLong(t *testing.T) {
 // TestRun_VcsGet_RejectUnknownFlag: a completely unknown flag is also
 // rejected (covers the generic catch-all, not just -s/--name-status).
 func TestRun_VcsGet_RejectUnknownFlag(t *testing.T) {
+	t.Parallel()
 	var stderr bytes.Buffer
 	err := run([]string{"vcs", "get", "--foobar", "root"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
 	if err == nil {
@@ -268,6 +281,7 @@ func TestRun_VcsGet_RejectUnknownFlag(t *testing.T) {
 // TestRun_VcsGet_GlobalQuietStillAccepted: regression guard — global
 // `-q` must still work for `vcs get` (it's a global flag, not verb-local).
 func TestRun_VcsGet_GlobalQuietStillAccepted(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}

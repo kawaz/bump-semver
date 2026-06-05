@@ -8,6 +8,7 @@ import (
 
 // TestRun_VcsFetch_DefaultOrigin: `vcs fetch` (no args) targets origin.
 func TestRun_VcsFetch_DefaultOrigin(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -24,6 +25,7 @@ func TestRun_VcsFetch_DefaultOrigin(t *testing.T) {
 // TestRun_VcsFetch_NamedRemote: `vcs fetch <remote>` targets the given
 // remote.
 func TestRun_VcsFetch_NamedRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -39,6 +41,7 @@ func TestRun_VcsFetch_NamedRemote(t *testing.T) {
 
 // TestRun_VcsFetch_NonexistentRemote: bad remote name → exit 3.
 func TestRun_VcsFetch_NonexistentRemote(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -57,6 +60,7 @@ func TestRun_VcsFetch_NonexistentRemote(t *testing.T) {
 
 // TestRun_VcsFetch_TooManyArgs: `vcs fetch` accepts at most one positional.
 func TestRun_VcsFetch_TooManyArgs(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -76,6 +80,7 @@ func TestRun_VcsFetch_TooManyArgs(t *testing.T) {
 // TestRun_VcsFetch_UnknownFlag: `vcs fetch --branch X` is rejected at the
 // parser layer (--branch is push-only).
 func TestRun_VcsFetch_UnknownFlag(t *testing.T) {
+	t.Parallel()
 	err := run([]string{"vcs", "fetch", "--branch", "main"}, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("expected usage error")

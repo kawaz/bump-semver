@@ -10,6 +10,7 @@ import (
 // TestRun_VcsDiff_NoArgs: `vcs diff` with no REV shows the vcs-diff help
 // (matches the no-args convention used by `vcs get` and `vcs is`).
 func TestRun_VcsDiff_NoArgs(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -29,6 +30,7 @@ func TestRun_VcsDiff_NoArgs(t *testing.T) {
 // TestRun_VcsDiff_Git_HasDiff: `vcs diff HEAD~1` on the fixture prints a
 // patch covering VERSION on stdout and exits 0.
 func TestRun_VcsDiff_Git_HasDiff(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -48,6 +50,7 @@ func TestRun_VcsDiff_Git_HasDiff(t *testing.T) {
 // TestRun_VcsDiff_Git_NoDiff: `vcs diff HEAD` on a clean fixture produces
 // no stdout, exits 0.
 func TestRun_VcsDiff_Git_NoDiff(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -67,6 +70,7 @@ func TestRun_VcsDiff_Git_NoDiff(t *testing.T) {
 // TestRun_VcsDiff_Git_PathFilter: `vcs diff REV VERSION nope.txt` returns
 // the VERSION diff and silently ignores the nonexistent path.
 func TestRun_VcsDiff_Git_PathFilter(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -86,6 +90,7 @@ func TestRun_VcsDiff_Git_PathFilter(t *testing.T) {
 // TestRun_VcsDiff_Git_AllPathsNonexistent: every path filtered out → empty
 // stdout, exit 0. Must NOT fall through to "diff everything".
 func TestRun_VcsDiff_Git_AllPathsNonexistent(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -104,6 +109,7 @@ func TestRun_VcsDiff_Git_AllPathsNonexistent(t *testing.T) {
 
 // TestRun_VcsDiff_Git_BadRev: unresolvable REV → exit 3 (VCS exec).
 func TestRun_VcsDiff_Git_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -124,6 +130,7 @@ func TestRun_VcsDiff_Git_BadRev(t *testing.T) {
 // TestRun_VcsDiff_Jj_HasDiff: `vcs diff @--` on a jj fixture prints the
 // bump diff (VERSION) and exits 0.
 func TestRun_VcsDiff_Jj_HasDiff(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -142,6 +149,7 @@ func TestRun_VcsDiff_Jj_HasDiff(t *testing.T) {
 
 // TestRun_VcsDiff_NoRepo: outside a vcs repo → exit 3.
 func TestRun_VcsDiff_NoRepo(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	withCwd(t, dir, func() {
 		var stderr bytes.Buffer
@@ -161,6 +169,7 @@ func TestRun_VcsDiff_NoRepo(t *testing.T) {
 // TestRun_VcsDiff_NameStatus_Git: `vcs diff -s HEAD~1` prints
 // tab-separated M/A/D lines (git-native format) and exits 0.
 func TestRun_VcsDiff_NameStatus_Git(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -183,6 +192,7 @@ func TestRun_VcsDiff_NameStatus_Git(t *testing.T) {
 
 // TestRun_VcsDiff_NameStatus_LongOption: --name-status equivalent to -s.
 func TestRun_VcsDiff_NameStatus_LongOption(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -201,6 +211,7 @@ func TestRun_VcsDiff_NameStatus_LongOption(t *testing.T) {
 
 // TestRun_VcsDiff_NameStatus_Jj: jj backend produces tab-normalized output.
 func TestRun_VcsDiff_NameStatus_Jj(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -220,6 +231,7 @@ func TestRun_VcsDiff_NameStatus_Jj(t *testing.T) {
 // TestRun_VcsDiff_Quiet_HasChanges_ExitsFalse: -q with diff present →
 // stdout empty, exit code 1 (predicate-false), no error message.
 func TestRun_VcsDiff_Quiet_HasChanges_ExitsFalse(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -245,6 +257,7 @@ func TestRun_VcsDiff_Quiet_HasChanges_ExitsFalse(t *testing.T) {
 
 // TestRun_VcsDiff_Quiet_NoChanges_ExitsZero: -q with no diff → exit 0.
 func TestRun_VcsDiff_Quiet_NoChanges_ExitsZero(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -263,6 +276,7 @@ func TestRun_VcsDiff_Quiet_NoChanges_ExitsZero(t *testing.T) {
 
 // TestRun_VcsDiff_QuietLong_HasChanges: --quiet alias works the same way.
 func TestRun_VcsDiff_QuietLong_HasChanges(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -279,6 +293,7 @@ func TestRun_VcsDiff_QuietLong_HasChanges(t *testing.T) {
 // TestRun_VcsDiff_QuietAll_HasChanges: -qq also reflects presence via
 // exit code. stderr is suppressed even for error paths.
 func TestRun_VcsDiff_QuietAll_HasChanges(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -299,6 +314,7 @@ func TestRun_VcsDiff_QuietAll_HasChanges(t *testing.T) {
 // TestRun_VcsDiff_NameStatusAndQuiet_QuietWins: `-s -q` → -q wins;
 // stdout empty, exit reflects presence (1 = has diff).
 func TestRun_VcsDiff_NameStatusAndQuiet_QuietWins(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -319,6 +335,7 @@ func TestRun_VcsDiff_NameStatusAndQuiet_QuietWins(t *testing.T) {
 // TestRun_VcsDiff_Quiet_BadRev: -q + bad REV → exit 3 (VCS exec), not 1.
 // Distinguishing exec failure from predicate-false is required by DR-0020.
 func TestRun_VcsDiff_Quiet_BadRev(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -339,6 +356,7 @@ func TestRun_VcsDiff_Quiet_BadRev(t *testing.T) {
 // TestRun_VcsDiff_Quiet_Jj_HasChanges: jj backend also surfaces diff
 // presence via exit 1.
 func TestRun_VcsDiff_Quiet_Jj_HasChanges(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
 		t.Skip("git+jj fixture requires both binaries")
 	}
@@ -355,6 +373,7 @@ func TestRun_VcsDiff_Quiet_Jj_HasChanges(t *testing.T) {
 // TestRun_VcsDiff_Quiet_AllPathsNonexistent_ExitsZero: every path
 // filtered → empty diff → exit 0 (matches "no diff" branch).
 func TestRun_VcsDiff_Quiet_AllPathsNonexistent_ExitsZero(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}

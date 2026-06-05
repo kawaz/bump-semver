@@ -11,6 +11,7 @@ import (
 // existing structure (one top-level test per concern) is preserved.
 // Subtests share the same setup helpers as the PR-5 fetch/push tests.
 func TestRun_VcsTagPR6(t *testing.T) {
+	t.Parallel()
 	// TestRun_VcsTag_NoSubVerb: `vcs tag` alone shows the per-verb help
 	// (matches the `vcs commit` / `vcs push` no-args convention).
 	t.Run("vcs tag (no sub-verb) shows tag help", func(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 // Compare against vcs:HEAD~1 (which holds the pre-bump 0.0.1) — current
 // version 1.2.3 should be greater.
 func TestRun_VcsInput_Simple(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -28,6 +29,7 @@ func TestRun_VcsInput_Simple(t *testing.T) {
 // File borrowing: the second argument has no FILE component, so the
 // path is taken from the first FILE-origin sibling (`VERSION`).
 func TestRun_VcsInput_FileBorrow(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -46,6 +48,7 @@ func TestRun_VcsInput_FileBorrow(t *testing.T) {
 // the replacement subcommand `vcs tag latest`. v0 policy allows
 // immediate replacement without a deprecation period.
 func TestRun_VcsInput_LatestTag_Removed(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -68,6 +71,7 @@ func TestRun_VcsInput_LatestTag_Removed(t *testing.T) {
 
 // --write with vcs: input is rejected before any side effects.
 func TestRun_VcsInput_WriteRejected(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -89,6 +93,7 @@ func TestRun_VcsInput_WriteRejected(t *testing.T) {
 // read-only schemas resolved from external sources without a writable
 // backing file).
 func TestRun_CmdInput_WriteRejected(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "VERSION"), []byte("1.2.3\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -110,6 +115,7 @@ func TestRun_CmdInput_WriteRejected(t *testing.T) {
 // suitable for jj. We only have a git fixture here, so this primarily
 // tests the flag parsing + override propagation path.
 func TestRun_VcsInput_VcsForceFlag(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -141,6 +147,7 @@ func TestRun_VcsInput_InvalidVcsValue(t *testing.T) {
 // an error — the user has to supply `vcs:HEAD~1:path` or pair it with
 // a real file.
 func TestRun_VcsInput_BorrowRequired(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -178,6 +185,7 @@ func TestRun_VcsInput_UnknownFunction(t *testing.T) {
 // so two `vcs:HEAD~1:VERSION` references should agree with each other
 // and with a same-valued VER input.
 func TestRun_VcsInput_MultipleVcs(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -196,6 +204,7 @@ func TestRun_VcsInput_MultipleVcs(t *testing.T) {
 // present and one of them names a file explicitly, downstream
 // file-omitted vcs: inputs borrow from it.
 func TestRun_VcsInput_BorrowFromVcsExplicit(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -213,6 +222,7 @@ func TestRun_VcsInput_BorrowFromVcsExplicit(t *testing.T) {
 
 // All-vcs-with-no-file is an error: nothing to borrow from.
 func TestRun_VcsInput_AllVcsNoFile(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
@@ -235,6 +245,7 @@ func TestRun_VcsInput_AllVcsNoFile(t *testing.T) {
 // with two siblings (`a.json` agrees with HEAD, `b.json` doesn't) and
 // passing them in different orders.
 func TestRun_VcsInput_BorrowPositionOrder(t *testing.T) {
+	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}

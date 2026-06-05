@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -254,11 +255,26 @@ func setupGitRepo(t *testing.T, tags []string, fileVersion string) string {
 	return dir
 }
 
+// cwdMu serialises the os.Chdir critical section in withCwd so VCS
+// tests can opt into t.Parallel(). os.Chdir mutates process-wide state;
+// any non-fn() code running concurrently must not depend on cwd. All
+// test fixtures here use absolute paths (runIn sets cmd.Dir, mk uses
+// filepath.Join(dir, ...)), so the unsafe window is only the fn()
+// body itself — which the mutex covers.
+var cwdMu sync.Mutex
+
 // withCwd runs fn with the working directory temporarily switched to
 // dir. The vcs detection probes cwd, so tests need a way to point it
 // at a fixture without polluting the rest of the test suite.
+//
+// The cwdMu lock makes withCwd safe under t.Parallel(): concurrent
+// withCwd calls serialise the chdir critical section while their
+// outer test bodies (fixture setup, assertions on returned data)
+// continue to overlap.
 func withCwd(t *testing.T, dir string, fn func()) {
 	t.Helper()
+	cwdMu.Lock()
+	defer cwdMu.Unlock()
 	orig, err := getCwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

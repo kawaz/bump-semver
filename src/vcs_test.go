@@ -186,6 +186,19 @@ func jjAvailable() bool {
 // signing / template defaults.
 func runIn(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
+	runInEnv(t, dir, nil, name, args...)
+}
+
+// runInEnv is like runIn but appends extra env vars on top of the
+// hermetic base. Use it to pin commit timestamps via
+// GIT_AUTHOR_DATE / GIT_COMMITTER_DATE so tests don't need real-time
+// sleeps to create a >=1s gap between commits.
+//
+// extraEnv is appended last so duplicate keys override the hermetic
+// defaults (relies on exec.Cmd.Env's documented "last value wins"
+// for repeated keys — see os/exec docs).
+func runInEnv(t *testing.T, dir string, extraEnv []string, name string, args ...string) {
+	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = append([]string{},
@@ -200,6 +213,7 @@ func runIn(t *testing.T, dir string, name string, args ...string) {
 		"JJ_USER=Test",
 		"JJ_EMAIL=test@example.com",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run %s %v in %s: %v\n%s", name, args, dir, err, out)

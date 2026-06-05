@@ -2,11 +2,35 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+)
+
+// gitDateEnv returns GIT_AUTHOR_DATE / GIT_COMMITTER_DATE env entries
+// pinning both author and committer time to the given Unix epoch.
+// Used to fabricate a deterministic timestamp gap between commits
+// without real-time sleep (git's %ct is second-granularity).
+//
+// vcs outdated reads committer date only (`git log -1 --format=%ct`,
+// vcs_backend.go:1948); author date is pinned alongside purely for
+// internal consistency, not because the comparison consumes it.
+func gitDateEnv(epoch int64) []string {
+	ts := fmt.Sprintf("%d +0000", epoch)
+	return []string{
+		"GIT_AUTHOR_DATE=" + ts,
+		"GIT_COMMITTER_DATE=" + ts,
+	}
+}
+
+// Pinned timestamps for outdated-fixture commits. T1 is the initial
+// commit, T2 = T1 + 1 is the bump (source becomes strictly newer than
+// derived). Any pair with T2 > T1 works; the actual values are arbitrary.
+const (
+	tsBase int64 = 1700000000
+	tsBump int64 = 1700000001
 )
 
 // setupOutdatedGitRepo builds a git fixture for `vcs outdated` tests.
@@ -50,27 +74,17 @@ func setupOutdatedGitRepo(t *testing.T) string {
 	mk("lib/foo.js", "foo.js1")
 	mk("lib/sub/bar.js", "bar.js1")
 	runIn(t, dir, "git", "add", ".")
-	runIn(t, dir, "git", "commit", "-qm", "initial")
-	// Sleep so the second commit's ts is strictly greater than the
-	// first's. git's %ct is second-granularity, so we need a 1-second
-	// gap (or more) for the comparison to register as "newer".
-	sleepOneSecond(t)
+	runInEnv(t, dir, gitDateEnv(tsBase), "git", "commit", "-qm", "initial")
 	// Second commit: bump README.md and src/foo.ts only (= derived
 	// translations and lib/foo.js are now stale; lib/sub/bar.js stays
-	// fresh because src/sub/bar.ts wasn't re-touched).
+	// fresh because src/sub/bar.ts wasn't re-touched). Pinned to
+	// tsBump (= tsBase + 1s) so source ts is strictly newer than
+	// derived without a real-time sleep.
 	mk("README.md", "en2")
 	mk("src/foo.ts", "foo2")
 	runIn(t, dir, "git", "add", ".")
-	runIn(t, dir, "git", "commit", "-qm", "bump source files")
+	runInEnv(t, dir, gitDateEnv(tsBump), "git", "commit", "-qm", "bump source files")
 	return dir
-}
-
-// sleepOneSecond pauses for >=1 second so git's second-granularity
-// committer timestamps register a different value on the next commit.
-// 1.1s gives a safety margin against scheduling jitter.
-func sleepOneSecond(t *testing.T) {
-	t.Helper()
-	time.Sleep(1100 * time.Millisecond)
 }
 
 // TestRun_VcsOutdated_T2_Translation: literal-FROM + mandatory `{}` TO.
@@ -158,12 +172,12 @@ func TestRun_VcsOutdated_T1_AllFresh(t *testing.T) {
 	mk("src/foo.ts", "ts")
 	mk("lib/foo.js", "js")
 	runIn(t, dir, "git", "add", ".")
-	runIn(t, dir, "git", "commit", "-qm", "initial")
-	// Re-touch derived AFTER source so derived is strictly newer.
-	sleepOneSecond(t)
+	runInEnv(t, dir, gitDateEnv(tsBase), "git", "commit", "-qm", "initial")
+	// Re-touch derived AFTER source so derived is strictly newer:
+	// pin to tsBump (= tsBase + 1s) instead of real-time sleep.
 	mk("lib/foo.js", "js2")
 	runIn(t, dir, "git", "add", ".")
-	runIn(t, dir, "git", "commit", "-qm", "regen lib")
+	runInEnv(t, dir, gitDateEnv(tsBump), "git", "commit", "-qm", "regen lib")
 	withCwd(t, dir, func() {
 		var stdout, stderr bytes.Buffer
 		err := run([]string{"vcs", "outdated", "glob:src/**/*.ts", "lib/$1/$2.js"},
@@ -173,6 +187,55 @@ func TestRun_VcsOutdated_T1_AllFresh(t *testing.T) {
 		}
 		if stdout.Len() != 0 {
 			t.Errorf("expected empty stdout on fresh, got %q", stdout.String())
+		}
+	})
+}
+
+// TestRun_VcsOutdated_SameSecondIsFresh exercises the equality boundary:
+// when source and derived share the same committer timestamp (same
+// second), staleness is decided by `dts < sourceTS` (cmd_vcs_outdated.go:
+// the strict-less comparison). Equal seconds are therefore fresh.
+//
+// This case was practically untestable before the env-pinned timestamp
+// switch: real-time sleep produced a >=1s gap by construction. With
+// GIT_{AUTHOR,COMMITTER}_DATE fixed via gitDateEnv we can pin two
+// commits to the same epoch and assert the equal-boundary directly.
+func TestRun_VcsOutdated_SameSecondIsFresh(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	runIn(t, dir, "git", "init", "-q", "-b", "main")
+	runIn(t, dir, "git", "config", "commit.gpgsign", "false")
+	mk := func(rel, content string) {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// First commit: derived (lib/foo.js) only. Pinned to tsBase.
+	mk("lib/foo.js", "js1")
+	runIn(t, dir, "git", "add", ".")
+	runInEnv(t, dir, gitDateEnv(tsBase), "git", "commit", "-qm", "initial derived")
+	// Second commit: source (src/foo.ts) only — also pinned to tsBase.
+	// → final committer ts: source=tsBase, derived=tsBase (equal).
+	// Expectation: fresh (exit 0, empty stdout).
+	mk("src/foo.ts", "ts1")
+	runIn(t, dir, "git", "add", ".")
+	runInEnv(t, dir, gitDateEnv(tsBase), "git", "commit", "-qm", "add source same-second")
+	withCwd(t, dir, func() {
+		var stdout, stderr bytes.Buffer
+		err := run([]string{"vcs", "outdated", "glob:src/**/*.ts", "lib/$1/$2.js"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if err != nil {
+			t.Errorf("expected fresh (exit 0) on equal-second boundary, got %v (stderr=%s)",
+				err, stderr.String())
+		}
+		if stdout.Len() != 0 {
+			t.Errorf("expected empty stdout on equal-second boundary, got %q", stdout.String())
 		}
 	})
 }
@@ -1078,13 +1141,12 @@ func TestRun_VcsOutdated_CrossSourceNotExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	runIn(t, dir, "git", "add", ".")
-	runIn(t, dir, "git", "commit", "-qm", "init")
-	sleepOneSecond(t)
+	runInEnv(t, dir, gitDateEnv(tsBase), "git", "commit", "-qm", "init")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("en2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	runIn(t, dir, "git", "add", ".")
-	runIn(t, dir, "git", "commit", "-qm", "bump")
+	runInEnv(t, dir, gitDateEnv(tsBump), "git", "commit", "-qm", "bump")
 	withCwd(t, dir, func() {
 		// FROM matches README.md + README-ja.md. TO = README{,-ja}.md.
 		// Per-source auto-exclude removes README.md→README.md and

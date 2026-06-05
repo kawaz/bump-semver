@@ -91,7 +91,6 @@ Go sources live under `src/`, leaving only metadata (README / docs / Taskfile.pk
 ├── Taskfile.pkl
 ├── VERSION
 ├── README{,-ja}.md
-├── UPGRADING.md             v0.4.x → v0.5.0 migration guide
 ├── docs/
 └── src/
     ├── main.go              entrypoint, argv parsing, multi-input consistency
@@ -212,7 +211,7 @@ Exit codes:
 - `1` — predicate false
 - `2` — error (parse failure, mismatch, unsupported file, etc.)
 
-This follows the `test` / `dpkg --compare-versions` convention (DR-0006 確定論点 A). The bump path's old "error = exit 1" behaviour was also unified to `2` here; shell scripts that previously branched on `$? -eq 1` for errors should switch to `$? -ne 0` (see UPGRADING.md).
+This follows the `test` / `dpkg --compare-versions` convention (DR-0006 確定論点 A). The bump path's old "error = exit 1" behaviour was also unified to `2` here; shell scripts that previously branched on `$? -eq 1` for errors should switch to `$? -ne 0`.
 
 #### precision suffix (DR-0017)
 

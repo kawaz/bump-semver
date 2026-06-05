@@ -3,7 +3,6 @@
 ```
 .
 ├── README.md / README-ja.md     ユーザ向け入口 (target API 仕様、英訳ペア)
-├── UPGRADING.md                 メジャー版間の移行ガイド (英語のみ)
 ├── LICENSE                       MIT (kawaz)
 ├── VERSION                       現バージョン文字列 (release.yml がこれを監視)
 ├── go.mod / go.sum               Go module 定義 (リポルートに維持)
@@ -61,10 +60,6 @@
 ### release.yml が `VERSION` ファイルを監視
 
 `paths: ["VERSION"]` により VERSION 変更コミットが push されたときだけ release ジョブが起動する。`just bump-version [level]` がこのファイルを書き換えて release commit を作る (push は `just push`)。
-
-### `UPGRADING.md` をリポルートに置く理由
-
-破壊変更があるバージョン跨ぎでユーザが最初に開くドキュメント。`README.md` から誘導する性質上、直下にあった方が動線が短い (LICENSE / README と同じ慣習)。kawaz/* の他リポでも UPGRADING.md は直下に置く運用で揃える。英訳ペアは作らず英語のみ (kawaz の OSS 慣習)。
 
 ### `spec_table_test.go` の役割
 

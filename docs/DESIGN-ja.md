@@ -91,7 +91,6 @@ Go ソースは `src/` 配下に隔離し、リポジトリ直下にはメタ情
 ├── Taskfile.pkl
 ├── VERSION
 ├── README{,-ja}.md
-├── UPGRADING.md             v0.4.x → v0.5.0 移行ガイド
 ├── docs/
 └── src/
     ├── main.go              entrypoint, argv パース, multi-input 整合性検証
@@ -212,7 +211,7 @@ separator 不一致 (`1.2_3`) はエラー。
 - `1` = 偽
 - `2` = エラー (パース失敗、整合性 NG、未対応ファイル等)
 
-これは `test` / `dpkg --compare-versions` 慣習に揃えた (DR-0006 確定論点 A)。bump 系の旧 exit code 1 (エラー) もこの統一に合わせて 2 に変更されているため、`if [ $? -eq 1 ]` を直接見る古いスクリプトは `if [ $? -ne 0 ]` への書き換えが必要 (UPGRADING.md 参照)。
+これは `test` / `dpkg --compare-versions` 慣習に揃えた (DR-0006 確定論点 A)。bump 系の旧 exit code 1 (エラー) もこの統一に合わせて 2 に変更されているため、`if [ $? -eq 1 ]` を直接見る古いスクリプトは `if [ $? -ne 0 ]` への書き換えが必要。
 
 #### precision suffix (DR-0017)
 

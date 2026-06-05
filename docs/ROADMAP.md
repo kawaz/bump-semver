@@ -12,7 +12,7 @@
 
 ### JVM (Gradle) / .NET (csproj 系) / Maven (pom.xml) / Haskell (cabal) / RPM (spec) 対応 + 新 format `xml-element` (v0.14.0 / DR-0018)
 
-`pom.xml` (Maven) と `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) のために、`<key>/<string>` ペア専用の既存 `xml` format とは別系統の slash-rooted XML path format `xml-element` を新設。`/project/version` のような element path で値を取得 / 書き換え (XML 名前空間は local name で比較、byte range splice で DOCTYPE / 属性順序 / インデント完全保持)。同時に DR-0012 の regex format を拡張して `build.gradle` (Groovy DSL の 3 形 `version = '...'` / `version "..."` / `version = "..."` を 1 regex で吸収)、`build.gradle.kts` (Kotlin DSL)、`*.cabal` (Haskell、`cabal-version:` と line-anchored で区別)、`*.spec` (RPM、capital V で `Name:` / `Release:` と区別) を path-pinned / basename / glob 各レイヤで追加。詳細は [DR-0018](./decisions/DR-0018-jvm-dotnet-haskell-rpm-support.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+`pom.xml` (Maven) と `*.csproj` / `*.fsproj` / `*.vbproj` (.NET MSBuild) のために、`<key>/<string>` ペア専用の既存 `xml` format とは別系統の slash-rooted XML path format `xml-element` を新設。`/project/version` のような element path で値を取得 / 書き換え (XML 名前空間は local name で比較、byte range splice で DOCTYPE / 属性順序 / インデント完全保持)。同時に DR-0012 の regex format を拡張して `build.gradle` (Groovy DSL の 3 形 `version = '...'` / `version "..."` / `version = "..."` を 1 regex で吸収)、`build.gradle.kts` (Kotlin DSL)、`*.cabal` (Haskell、`cabal-version:` と line-anchored で区別)、`*.spec` (RPM、capital V で `Name:` / `Release:` と区別) を path-pinned / basename / glob 各レイヤで追加。詳細は [DR-0018](./decisions/DR-0018-jvm-dotnet-haskell-rpm-support.md) を参照。
 
 ### `compare` の precision suffix (v0.13.0 / DR-0017)
 
@@ -20,15 +20,15 @@
 
 ### `BUMP_SEMVER_VCS` 環境変数廃止 + `--vcs auto` 明示値 + help 3 段化 (v0.13.0 / DR-0016 + help 改修)
 
-DR-0008 で導入した env による VCS 検出 override (`BUMP_SEMVER_VCS=jj|git`) を廃止し、`--vcs jj|git|auto` フラグ単独で制御する形に整理 (一度 env を export すると CLI から auto detect に戻せない罠の解消 + help セクション圧縮)。`auto` を default 明示値として許可。あわせて help を 3 段化: `--help` (短)、`--help-full` (完全リファレンス)、`bump-semver <action> --help` (action 固有: helpBump / helpPre / helpGet / helpCompare)。help 定数を `src/help.go` に分離。詳細は [DR-0016](./decisions/DR-0016-remove-bump-semver-vcs-env.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+DR-0008 で導入した env による VCS 検出 override (`BUMP_SEMVER_VCS=jj|git`) を廃止し、`--vcs jj|git|auto` フラグ単独で制御する形に整理 (一度 env を export すると CLI から auto detect に戻せない罠の解消 + help セクション圧縮)。`auto` を default 明示値として許可。あわせて help を 3 段化: `--help` (短)、`--help-full` (完全リファレンス)、`bump-semver <action> --help` (action 固有: helpBump / helpPre / helpGet / helpCompare)。help 定数を `src/help.go` に分離。詳細は [DR-0016](./decisions/DR-0016-remove-bump-semver-vcs-env.md) を参照。
 
 ### Xcode `project.pbxproj` (multi-match 同期) + `Info.plist` (XML plist) (v0.12.0 / DR-0015)
 
-`format_pbxproj.go` を新設し、Xcode の `<project>.xcodeproj/project.pbxproj` の OpenStep plist 内に複数行ある `MARKETING_VERSION = ...;` を **同期更新** する形式を実装した。Inspect は全マッチを `line:N` Path 付きで返し、不一致時は main.go 既存の `formatMismatchError` で column-aligned に表示される。`format_xml.go` を新設し、`Info.plist` (XML plist) の `<key>CFBundleShortVersionString</key><string>...</string>` ペアを `encoding/xml` Decoder で位置特定 + byte range 書き換えで処理 (DOCTYPE / インデント / 兄弟 key 完全保持)。Xcode 11+ の `$(MARKETING_VERSION)` placeholder は ParseVersion 失敗 → `unsupported file:` で落ちるのが自然な振る舞い。`CFBundleVersion` (build number) はスコープ外。詳細は [DR-0015](./decisions/DR-0015-pbxproj-and-info-plist.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+`format_pbxproj.go` を新設し、Xcode の `<project>.xcodeproj/project.pbxproj` の OpenStep plist 内に複数行ある `MARKETING_VERSION = ...;` を **同期更新** する形式を実装した。Inspect は全マッチを `line:N` Path 付きで返し、不一致時は main.go 既存の `formatMismatchError` で column-aligned に表示される。`format_xml.go` を新設し、`Info.plist` (XML plist) の `<key>CFBundleShortVersionString</key><string>...</string>` ペアを `encoding/xml` Decoder で位置特定 + byte range 書き換えで処理 (DOCTYPE / インデント / 兄弟 key 完全保持)。Xcode 11+ の `$(MARKETING_VERSION)` placeholder は ParseVersion 失敗 → `unsupported file:` で落ちるのが自然な振る舞い。`CFBundleVersion` (build number) はスコープ外。詳細は [DR-0015](./decisions/DR-0015-pbxproj-and-info-plist.md) を参照。
 
 ### TOML section-scoped Replace + `pyproject.toml` / `mojoproject.toml` (v0.11.0 / DR-0014)
 
-`format_toml.go` の Replace を section-scoped 一般化 (`tomlReplaceInSection`) し、`pyproject.toml` (`[project].version` (try) → `[tool.poetry].version` の OR fallback) と `mojoproject.toml` (`[workspace].version`) を path-pinned confidence 3 ルールとして追加した。TOML format 全体の VersionPaths semantics を「first-match-wins (OR)」に変更 (JSON は AND 維持)。両方のセクションを持つ pyproject.toml は最初の hit だけ書き換える MVP 仕様。詳細は [DR-0014](./decisions/DR-0014-toml-section-scoped.md) と [UPGRADING.md](../UPGRADING.md) を参照。
+`format_toml.go` の Replace を section-scoped 一般化 (`tomlReplaceInSection`) し、`pyproject.toml` (`[project].version` (try) → `[tool.poetry].version` の OR fallback) と `mojoproject.toml` (`[workspace].version`) を path-pinned confidence 3 ルールとして追加した。TOML format 全体の VersionPaths semantics を「first-match-wins (OR)」に変更 (JSON は AND 維持)。両方のセクションを持つ pyproject.toml は最初の hit だけ書き換える MVP 仕様。詳細は [DR-0014](./decisions/DR-0014-toml-section-scoped.md) を参照。
 
 ### `--version --json` 対応 (v0.7.1)
 

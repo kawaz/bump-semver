@@ -223,6 +223,35 @@ _check-version-bumped *target_paths:
 6. VERSION bump v0.33.0
 7. push (= `just push` 経由) → CI watch → release workflow
 
+## Phase 1 既知の制約 (= 2026-06-10 land 時点)
+
+`--excludes` は **expand 後の path list に対する set-subtraction** として実装されている (= `expandGlobInputs` 後の slice から `excludeInputs` で削る)。これにより以下の制約がある:
+
+**literal directory selector に対する file-level exclude は効かない**
+
+```bash
+# NG: src/ は単一 directory entry、glob:**/*_test.go と overlap しない
+bump-semver vcs diff REV src/ --excludes 'glob:src/**/*_test.go'
+
+# OK: include 側も file-level に展開してから set-subtraction
+bump-semver vcs diff REV 'glob:src/**/*.go' --excludes 'glob:src/**/*_test.go'
+```
+
+理由: 現実装は `expandGlobInputs` 後の path list (= literal directory はそのまま、`glob:` は file 展開) で set 演算する。literal `src/` は 1 entry のまま、`src/main_test.go` 等の file path とは別の entry なので集合差分で削れない。
+
+**Phase 2 (= follow-up DR) で解決予定**
+
+正しい解は **backend pathspec への forwarding**:
+- git: `git diff REV -- src/ ':!src/**/*_test.go'`
+- jj: `jj diff --from REV --to @ -- 'src/' '~glob:src/**/*_test.go'`
+
+これにより:
+- literal directory + file-level exclude が透過的に動く
+- 大規模 subtree の全 file 列挙を Go 側で行わなくて済む (= 性能改善)
+- git / jj 自身の pathspec 表現力 (= さらに richer な exclude rule) も活用可
+
+Phase 2 land までは **include 側も `glob:` で file-level に揃える** ことで運用回避。本リポの `justfile` `check-version-bumped` も `glob:src/**/*.go` 形を採用 (= dogfood 例)。
+
 ## 補足: phase 2 の方向性
 
 `vcs commit` / `vcs outdated` への `--excludes` / `file:` 適用は、本 DR の phase 1 land 後の実需観察で判断:

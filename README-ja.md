@@ -358,6 +358,8 @@ bump-semver vcs outdated --strict README.md 'README-{ja,en}.md'
 | `-`  | stdin から VER を 1 行読込 (1 回のみ使用可) |
 | `vcs:REV[:FILE]` | jj/git の `<REV>` 時点のファイル内容から取得 (自動判定、[vcs: 入力](#vcs-入力) 参照) |
 | `cmd:<shell-command>` | shell コマンドを `bash -c` で実行し、stdout の最初の非空行を VER として取得 (read-only、[cmd: 入力](#cmd-入力) 参照) |
+| `glob:<pattern>` | doublestar による glob 展開でマッチした path 群を展開 ([DR-0024](./docs/decisions/DR-0024-glob-prefix.md)、`vcs diff` / `vcs commit` / `vcs outdated` で利用可) |
+| `file:<path>` | `<path>` の改行区切り path list を読み込み、`#` コメント / 空行スキップ、各行は literal or `glob:` shape ([DR-0033](./docs/decisions/DR-0033-vcs-excludes-and-file-prefix.md)、v0.33.0+ で `vcs diff` で利用可) |
 
 > **最新 tag / 最新 release の取得** (v0.32.0+、[DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)): 入力 record と subcommand の両経路を提供。入力 record `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` は 1-liner ergonomic 向け (`compare gt VERSION 'vcs:latest-tag()'`、stable only)。subcommand [`vcs get latest-tag`](#vcs-サブコマンド) / [`vcs get latest-release`](#vcs-サブコマンド) は richer option (`--include-prerelease`、`--json` で 12 field version schema、`--repository REPO`) を備える。歴史: v0.29.0 で `vcs tag latest [--source <tag|release>]` を導入、v0.32.0 で 2 verb に分割 (source 軸を verb 名に畳む)。
 

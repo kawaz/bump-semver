@@ -62,13 +62,16 @@ ensure-clean:
     bump-semver vcs is clean
 
 # fail if bump-trigger-paths changed since origin/main but VERSION was not bumped
+# (DR-0033 dogfood: test 専用の追加では VERSION bump を要求しない)
 check-version-bumped: (_check-version-bumped "src/" "go.mod" "go.sum")
 
 # (helper) diff があれば VERSION が origin/main より上がっているか検証
+# `--excludes glob:src/**/*_test.go` で test 専用変更を bump-trigger から除外
+# (= DR-0033 phase 1 dogfood)
 [private]
 [script]
 _check-version-bumped *target_paths:
-    if ! bump-semver vcs diff -q main@origin -- "$@"; then
+    if ! bump-semver vcs diff -q main@origin -- "$@" --excludes 'glob:src/**/*_test.go'; then
         bump-semver compare gt VERSION vcs:main@origin
     fi
 

@@ -271,18 +271,41 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	rev := args.vcsArgs[0]
 	rawPaths := args.vcsArgs[1:]
 
-	// DR-0024: expand `glob:` selectors. selectorsGiven=true means the user
-	// supplied at least one path selector (literal or glob:); if the
-	// expansion collapses to an empty list we MUST short-circuit instead
-	// of calling b.Diff(rev, []) — the latter widens to "diff everything"
-	// (see gitBackend.Diff comment), violating the existing declarative-
-	// convergence rule that "selectors given but all-nonexistent → diff
-	// nothing".
+	// DR-0024: expand `glob:` / `file:` selectors. selectorsGiven=true means
+	// the user supplied at least one path selector (literal / glob: / file:);
+	// if the expansion collapses to an empty list we MUST short-circuit
+	// instead of calling b.Diff(rev, []) — the latter widens to "diff
+	// everything" (see gitBackend.Diff comment), violating the existing
+	// declarative-convergence rule that "selectors given but all-nonexistent
+	// → diff nothing".
 	paths, err := expandGlobInputs(rawPaths, args.glob)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
 	selectorsGiven := len(rawPaths) > 0
+	// DR-0033 post-filter: apply --excludes after include expansion. When
+	// no positional selectors were given (= "diff everything"), excludes
+	// still apply against the resulting "all-tracked" set computed by the
+	// backend — but the backend takes "no paths" to mean "no filter", so
+	// we have to short-circuit only when --excludes 単独 では NOT happen
+	// (= 全 include を maintain したまま backend に投げ、出力後に exclude
+	// するのは patch ベースだと難しい)。phase 1 では:
+	//   - 位置指定あり: include set を expand → excludes で削る → backend
+	//     に投げる (= 通常 path 経路)
+	//   - 位置指定なし + excludes あり: excludes は単独で意味を持たない
+	//     (= 「何を全 include から引く?」を backend が知らない)。usage
+	//     error を返して利用者に明示要求する。
+	if len(args.vcsDiff.Excludes) > 0 {
+		if !selectorsGiven {
+			return emitVcsUsage(stderr, args,
+				fmt.Errorf("vcs diff: --excludes requires at least one positional PATH (= explicit include set; bare 'diff everything' minus excludes is not supported in phase 1, DR-0033)"))
+		}
+		filtered, ferr := excludeInputs(paths, args.vcsDiff.Excludes, args.glob)
+		if ferr != nil {
+			return emitVcsErr(stderr, args, ferr)
+		}
+		paths = filtered
+	}
 
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)

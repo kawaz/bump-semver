@@ -109,6 +109,12 @@ type vcsDiffOpts struct {
 	// instead of a raw patch. -q wins over -s for stdout but the exit
 	// code still reflects diff presence.
 	NameStatus bool
+
+	// Excludes holds `--excludes PATTERN` values (DR-0033). Each value is
+	// a literal path / `glob:` / `file:` selector that is post-filtered
+	// out of the include set (= position-independent set subtraction).
+	// Repeatable + append; nil = no exclusion.
+	Excludes []string
 }
 
 // vcsCommitOpts groups verb-local flags for `vcs commit` (DR-0020 PR-4
@@ -513,6 +519,26 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			// case is skipped and the generic unknown-flag catch-all
 			// below rejects with exit 2.
 			out.vcsDiff.NameStatus = true
+		case a == "--excludes" && out.vcsVerb == "diff":
+			// DR-0033: --excludes PATTERN (repeatable + append). Value
+			// accepts literal / glob: / file: shape (= 位置引数と対称)。
+			// Empty value is a usage error to avoid silent no-op when
+			// the user typos `--excludes ""`.
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--excludes requires a value (literal path / glob: / file:)")
+			}
+			val := rest[i+1]
+			if val == "" {
+				return cliArgs{}, fmt.Errorf("--excludes value must not be empty")
+			}
+			out.vcsDiff.Excludes = append(out.vcsDiff.Excludes, val)
+			i++
+		case strings.HasPrefix(a, "--excludes=") && out.vcsVerb == "diff":
+			val := strings.TrimPrefix(a, "--excludes=")
+			if val == "" {
+				return cliArgs{}, fmt.Errorf("--excludes value must not be empty")
+			}
+			out.vcsDiff.Excludes = append(out.vcsDiff.Excludes, val)
 		case a == "-m" && out.vcsVerb == "commit":
 			// Verb-local to `vcs commit`. Takes a value.
 			if out.vcsCommit.Message != nil {

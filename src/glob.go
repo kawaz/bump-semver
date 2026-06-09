@@ -200,10 +200,14 @@ func anyGlob(inputs []string) bool {
 	return false
 }
 
-// expandGlobInputs walks inputs and expands each `glob:<pat>` selector into
-// the list of matched paths. Non-glob inputs pass through unchanged. The
-// resulting slice preserves position order (matches from each glob:
-// selector are spliced in at the glob: selector's position).
+// expandGlobInputs walks inputs and expands `glob:<pat>` / `file:<path>`
+// selectors into the list of matched paths. Non-prefixed inputs pass through
+// unchanged. The resulting slice preserves position order (matches from each
+// selector are spliced in at the selector's position).
+//
+// `glob:` (DR-0024) and `file:` (DR-0033) share this entry point so include /
+// exclude post-filter (DR-0033) and downstream verbs see a uniform pre-expanded
+// path list regardless of which prefix was used.
 //
 // A 0-match glob: selector contributes nothing to the output (silent skip).
 // This means a sole `bump-semver get glob:none.txt` ends up with 0 inputs;
@@ -211,22 +215,73 @@ func anyGlob(inputs []string) bool {
 // the same exit-2 error the user would get from a literal missing FILE
 // list. That's the right level — the parser stays uniform, the dispatcher
 // owns the "did you give me anything?" assertion.
+//
+// `file:` selectors are read once per occurrence; nested `file:` inside the
+// list is rejected (see DR-0033 § scope-out).
 func expandGlobInputs(inputs []string, opts globOpts) ([]string, error) {
 	out := make([]string, 0, len(inputs))
 	for _, in := range inputs {
-		if !hasGlobPrefix(in) {
+		switch {
+		case hasGlobPrefix(in):
+			pat, err := parseGlobSpec(in)
+			if err != nil {
+				return nil, err
+			}
+			matches, err := expandGlob(pat, opts, defaultHomeFn)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, matches...)
+		case hasFilePrefix(in):
+			path, err := parseFileSpec(in)
+			if err != nil {
+				return nil, err
+			}
+			paths, err := expandFileSpec(path, opts)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, paths...)
+		default:
 			out = append(out, in)
+		}
+	}
+	return out, nil
+}
+
+// excludeInputs returns includes with paths matching any excludePattern removed.
+// Each excludePattern accepts the same shape as positional selectors (literal /
+// `glob:` / `file:`) — DR-0033 原則 3 で対称性を保証している。
+//
+// Semantics: post-filter, order-independent (= 順序非依存). The final set is
+// the include set minus the union of all exclude patterns. Empty excludes
+// returns includes unchanged.
+//
+// When an exclude pattern is a literal (= no `glob:` / `file:` prefix), it is
+// matched **exactly** against include entries (same byte sequence). This
+// mirrors git pathspec's literal-match semantics; users wanting prefix /
+// subtree exclusion should use `glob:dir/**` explicitly.
+func excludeInputs(includes []string, excludePatterns []string, opts globOpts) ([]string, error) {
+	if len(excludePatterns) == 0 || len(includes) == 0 {
+		return includes, nil
+	}
+	// Expand the union of exclude patterns into a concrete path set.
+	excludeSet := make(map[string]struct{})
+	for _, pat := range excludePatterns {
+		expanded, err := expandGlobInputs([]string{pat}, opts)
+		if err != nil {
+			return nil, fmt.Errorf("--excludes %s: %w", pat, err)
+		}
+		for _, p := range expanded {
+			excludeSet[p] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(includes))
+	for _, p := range includes {
+		if _, drop := excludeSet[p]; drop {
 			continue
 		}
-		pat, err := parseGlobSpec(in)
-		if err != nil {
-			return nil, err
-		}
-		matches, err := expandGlob(pat, opts, defaultHomeFn)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, matches...)
+		out = append(out, p)
 	}
 	return out, nil
 }

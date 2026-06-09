@@ -358,6 +358,8 @@ Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the bu
 | `-`  | Read VER from stdin, one line (used at most once) |
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from jj or git (auto-detected, see [vcs: input](#vcs-input)) |
 | `cmd:<shell-command>` | Run `<shell-command>` via `bash -c`, take the first non-empty stdout line as VER (read-only, see [cmd: input](#cmd-input)) |
+| `glob:<pattern>` | Expand to matching paths via doublestar globbing ([DR-0024](./docs/decisions/DR-0024-glob-prefix.md), accepted on `vcs diff` / `vcs commit` / `vcs outdated`) |
+| `file:<path>` | Read newline-separated path list from `<path>`; `#` comments and blank lines skipped, each line accepts literal or `glob:` shape ([DR-0033](./docs/decisions/DR-0033-vcs-excludes-and-file-prefix.md), accepted on `vcs diff` in v0.33.0+) |
 
 > **Latest-tag / latest-release lookups** (v0.32.0+, [DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)): both input records and subcommands are supported. Input records `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` give 1-liner ergonomic (`compare gt VERSION 'vcs:latest-tag()'`) with stable-only filtering. Subcommands [`vcs get latest-tag`](#vcs-subcommands) / [`vcs get latest-release`](#vcs-subcommands) expose the richer option set (`--include-prerelease`, `--json` with the 12-field version schema, `--repository REPO`). Historical: v0.29.0 introduced `vcs tag latest [--source <tag|release>]`, v0.32.0 split that into the two `vcs get latest-*` verbs (source axis folded into the verb name).
 

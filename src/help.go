@@ -556,18 +556,22 @@ Examples:
 // silently dropped (kawaz's design decision). When every supplied path
 // is filtered out the command exits 0 with empty stdout — it explicitly
 // does NOT widen back to "diff everything".
-const helpVcsDiff = `bump-semver vcs diff — print the patch between REV and the working copy [DR-0020]
+const helpVcsDiff = `bump-semver vcs diff — print the patch between REV and the working copy [DR-0020 / DR-0033]
 
 Usage:
-  bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..]
+  bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..] [--excludes PATTERN]...
 
 Arguments:
   REV          The revision to compare against (git: any rev-spec like
                HEAD~1, origin/main, <sha>; jj: any revset like @-, main@origin).
-  PATH..       Optional path filter. Nonexistent paths are silently
-               ignored (declarative convergence). When every PATH is
-               filtered out, stdout is empty and exit is 0 — the verb
-               does NOT widen back to "all paths" in that case.
+  PATH..       Optional path filter (= include set). Each entry is a
+               literal path, 'glob:<pattern>' (DR-0024), or
+               'file:<path>' (DR-0033 — read newline-separated path list
+               from <path>; '#' comments and blank lines skipped, lines
+               accept literal or 'glob:' shapes). Nonexistent paths are
+               silently ignored (declarative convergence). When every
+               PATH is filtered out, stdout is empty and exit is 0 — the
+               verb does NOT widen back to "all paths" in that case.
 
 Notes:
   - git: runs 'git diff REV [-- PATH..]' (one-rev form = REV vs working
@@ -586,6 +590,16 @@ Options:
   -s, --name-status      Emit one '<CODE>\\t<path>' line per changed
                          file (M/A/D) instead of the raw patch.
                          Mirrors 'git diff --name-status'.
+  --excludes PATTERN     Post-filter the include set: any path matching
+                         a PATTERN is dropped from the final selector.
+                         Repeatable (= append, each --excludes adds one
+                         pattern). Order-independent: final set = include
+                         ∖ ⋃(excludes). PATTERN accepts the same shape
+                         as positional PATH (literal / glob: / file:).
+                         Phase 1 constraint: at least one positional
+                         PATH must be given when --excludes is used (=
+                         bare 'diff everything' minus excludes is not
+                         supported in v0.33.0). DR-0033 で詳細。
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -613,6 +627,10 @@ Examples:
   bump-semver vcs diff -s HEAD~1                # M/A/D file list (git --name-status format)
   bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
                                                 # exit 0 ⇔ no diff in VERSION
+  bump-semver vcs diff -q HEAD~1 src/ --excludes 'glob:src/**/*_test.go'
+                                                # is non-test src/ unchanged? (DR-0033)
+  bump-semver vcs diff HEAD~1 file:.bump-targets --excludes file:.bump-excludes
+                                                # include / exclude via external lists
 `
 
 // helpVcsCommit documents `vcs commit` (DR-0020 PR-4).

@@ -179,13 +179,13 @@ _check-version-bumped *target_paths:
 
 ## 影響範囲 / migration
 
-### 内部実装 (= v0.33.4 phase 2 v2 land 時点の最終形)
+### 内部実装
 
 - `src/file_input.go`: `hasFilePrefix` / `parseFileSpec` / `expandFileSpec` / `readPatternListFile` (= `--excludes file:` 用)。nested `file:` は両 helper で reject (= MVP scope-out、字面 check で循環防止)
-- `src/glob.go`: `expandGlobInputs` を glob:/file: 両対応に拡張、`dedupPreserveOrder` を出口に追加。旧 `excludeInputs` (set-subtraction) は test 用 helper として残置
-- `src/cli_parse.go`: `--excludes PATTERN` flag parser (= `vcs diff` verb-local)、`vcsDiffOpts.Excludes []string` field 追加
-- `src/vcs_backend.go`: `Diff` / `DiffNameStatus` signature に `excludes []string` 追加。`buildGitPathspec` / `buildJjPathspec` / `trimGlobPrefix` 新規
-- `src/vcs_cmd.go` `runVcsCmdDiff`: include は `expandGlobInputs` で literal pass、excludes は `flattenExcludePatterns` で `file:` を展開、backend に forward
+- `src/glob.go`: `expandGlobInputs` で glob:/file: 両対応、`dedupPreserveOrder` を出口に
+- `src/cli_parse.go`: `--excludes PATTERN` flag parser (= `vcs diff` verb-local)、`vcsDiffOpts.Excludes []string`
+- `src/vcs_backend.go`: `Diff` / `DiffNameStatus` signature に `excludes []string`、`buildGitPathspec` / `buildJjPathspec` / `trimGlobPrefix`
+- `src/vcs_cmd.go` `runVcsCmdDiff`: include は `expandGlobInputs` で backend に literal pass、excludes は `flattenExcludePatterns` で `file:` を展開して backend に forward
 - `src/help.go`: `vcs diff` help に `--excludes` 説明、入力モード表 (`vcs:` / `cmd:` / `glob:` 一覧) に `file:` 追加
 
 ### test 追加範囲
@@ -224,43 +224,26 @@ _check-version-bumped *target_paths:
 6. VERSION bump v0.33.0
 7. push (= `just push` 経由) → CI watch → release workflow
 
-## 補足: phase 2 で land 済 (2026-06-10) — literal directory 透過対応 + 削除 file 検知
+## 補足: backend pathspec forward 設計の含意
 
-DR-0033 land の翌日に、literal directory selector に対する file-level exclude が動かない問題、および削除 file が見逃される問題を是正した。
+`vcs diff` の `--excludes` は **backend (git/jj) に native pathspec として forward** される:
 
-### v0.33.2 (= phase 2 v1、後に revert)
-
-最初の試行: `expandVcsPathInputs` helper で literal directory を内部的に `glob:<dir>/**/*` 展開 (= dotfile 強制 on)、その後 set-subtraction で excludes を引く設計。
-
-`vcs diff src/ --excludes 'glob:src/**/*_test.go'` の include 期待通り動作するようになったが、**致命的 bug が露呈**:
-
-> `doublestar.FilepathGlob` は **現状の file system しか walk しない** ため、REV に存在し working copy で削除された file が include set に含まれず、`git diff` / `jj diff` の出力にも出ない (= 削除検知が消える)。
-
-codex stop-time review が指摘。
-
-### v0.33.4 (= phase 2 v2、現実装)
-
-設計を **backend pathspec への forward** に転換:
-
-- `vcsBackend.Diff` / `DiffNameStatus` signature を `(rev, paths, excludes)` に拡張
-- **git**: exclude pattern を `:(exclude,glob)<pat>` magic pathspec 長形に変換して append (= `:!pat` 短縮形は `**` を解釈しないので不採用、実機検証済)
-- **jj**: fileset 言語の単一式 `(inc1 | inc2) ~ exc1 ~ exc2` に組み立てて 1 引数として渡す (= 別 args 渡しは jj が union 解釈で wrong、jj 0.41 で実機検証済)
+- **git**: exclude pattern を `:(exclude,glob)<pat>` magic pathspec 長形に変換して append (= `:!pat` 短縮形は `**` を解釈しないので長形採用)
+- **jj**: fileset 言語の単一式 `(inc1 | inc2) ~ exc1 ~ exc2` に組み立てて 1 引数として渡す (= 別 args 渡しは jj が union 解釈で wrong)
 - `file:` 形式の excludes は dispatcher 側で flat pattern list に展開してから backend に渡す (backend は `file:` shape を知らない)
-- `expandVcsPathInputs` / 自前 set-subtraction は削除、include 側は `expandGlobInputs` (= glob: / file: 展開のみ) で backend に literal pass
-- `expandGlobInputs` 出口に `dedupPreserveOrder` を追加 (= include 重複排除)
 
 これにより:
 
-- **削除 file 透過**: backend (= git/jj) が REV と現状を比較するので、REV にあって working で削除された file も diff に出る
+- **削除 file 透過**: backend が REV と現状を比較するので、REV にあって working で削除された file も diff に出る (= 自前で `glob:dir/**/*` 展開する方式では doublestar walk が現状 fs しか見ず削除を見逃す、ので避ける)
 - **literal directory 透過**: `vcs diff src/ --excludes 'glob:src/**/*_test.go'` で `src/` は backend pathspec として、test 除外も backend pathspec として両立
-- **argv scaling**: 自前で 1000-file 展開する必要なし (= include / exclude pathspec 個別 entry)
+- **argv scaling**: 1000-file 展開不要 (= include / exclude pathspec 個別 entry)
 - **backend native 表現力活用**: git / jj 自身の pathspec / fileset 機能 (= magic pathspec / 演算子) に乗れる
 
 ### get / bump / compare 系の扱い
 
-`expandVcsPathInputs` は削除済 (= v0.33.4 で revert)。`expandGlobInputs` (= glob: / file: 展開のみ) は引き続き全 verb 共通の入口。`vcs diff` だけが backend pathspec forward を追加で行う。`get` / `bump` / `compare` 系は backend pathspec を介さない (= FILE content を直接読む) ので、本 DR の影響を受けない。
+`get` / `bump` / `compare` 系は backend pathspec を介さず FILE content を直接読む。`expandGlobInputs` (= glob: / file: 展開のみ) は全 verb 共通の入口、`vcs diff` だけが backend pathspec forward を追加で行う。
 
-## Security: shell injection 不可能、pathspec syntax 衝突は UX issue として受容 (v0.33.4 で確認)
+## Security: shell injection 不可能、pathspec syntax 衝突は UX issue として受容
 
 backend pathspec forward (= phase 2 v2、`:(exclude,glob)pat` / jj fileset) で
 user 入力を string 連結する経路があるため、injection リスクを確認した。
@@ -305,7 +288,7 @@ literal の `:`、`(`、`t`、`o`、`p`、`)` の連続 char で、何にも mat
 
 **4. pathspec syntax 衝突は UX issue として受容**
 
-実機検証 (v0.33.4 land 時):
+実機検証:
 
 | ケース | git の挙動 | jj の挙動 |
 |---|---|---|

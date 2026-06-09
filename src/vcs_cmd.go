@@ -289,12 +289,11 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	}
 	selectorsGiven := len(rawPaths) > 0
 	// DR-0033: --excludes is forwarded to the backend as native pathspec
-	// (`:(exclude,glob)pat` for git, `(includes) ~ pat ~ ...` fileset for jj).
-	// This avoids the literal-directory-drops-deletions trap of pre-expanding
-	// to a file list (= phase 2 v2, supersedes the set-subtraction model).
-	// `file:` excludes are expanded locally first since the backend doesn't
-	// know our `file:` shape; the resulting flat list of patterns is then
-	// forwarded as separate excludes.
+	// (`:(exclude,glob)pat` for git, `(includes) ~ pat ~ ...` fileset for jj),
+	// so the backend handles literal directory includes and deletions
+	// uniformly. `file:` excludes are expanded locally first since the
+	// backend doesn't know our `file:` shape; the resulting flat list of
+	// patterns is then forwarded as separate excludes.
 	var excludes []string
 	if len(args.vcsDiff.Excludes) > 0 {
 		if !selectorsGiven {

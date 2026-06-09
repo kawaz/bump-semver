@@ -92,7 +92,7 @@ bump-version level="patch": ensure-clean
 # push to origin/main with gates
 push: ci check-outdated-translations check-version-bumped
     bump-semver vcs push --branch main --jj-bookmark-auto-advance
-    @echo '[hint] CI 成功後 brew upgrade kawaz/tap/bump-semver でローカルも更新'
+    @echo "[hint] gh-monitor:watch-workflow --sha $(bump-semver vcs is jj && jj log -r main --no-graph -T 'commit_id' || git rev-parse main) kawaz/bump-semver で Release 成功後、brew upgrade kawaz/tap/bump-semver"
 
 # ---------- utility ----------
 

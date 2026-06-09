@@ -239,6 +239,68 @@ DR-0033 land の翌日 v0.33.2 で、literal directory selector に対する fil
 
 **`get` / `bump` / `compare` 系は対象外**: これら verb は FILE *content* を読む責務、directory は本来 unsupported (= 明示エラーが正しい挙動)。`expandGlobInputs` 経路は維持し、`expandVcsPathInputs` は `vcs` verb のみが利用する。
 
+## Security: shell injection 不可能、pathspec syntax 衝突は UX issue として受容 (v0.33.4 で確認)
+
+backend pathspec forward (= phase 2 v2、`:(exclude,glob)pat` / jj fileset) で
+user 入力を string 連結する経路があるため、injection リスクを確認した。
+
+**1. shell injection は不可能**
+
+`exec.Command("git", args...)` / `exec.Command("jj", args...)` は **`/bin/sh` を
+経由しない**。シェルメタ文字 (`;` / `&&` / `||` / `$()` / バックティック / `>`
+リダイレクト 等) はすべて argv の literal 文字として渡る。user が
+`--excludes ';rm -rf /'` を渡しても、git/jj が受け取るのは literal pattern
+`:(exclude,glob);rm -rf /` で、ファイルマッチに失敗するだけ (= no shell exec)。
+
+**2. jj fileset breakout の可否**
+
+`buildJjPathspec` は単一 fileset 式を文字列連結で組み立てる:
+
+```go
+sb.WriteString(p)  // user-controlled exclude pattern
+```
+
+user が `--excludes ') ~ ./important'` を渡すと、結果の fileset 式は
+`(includes) ~ ) ~ ./important` となり jj は **parse error** を返す。コード実行や
+exclude 範囲の不正拡張には繋がらない (= jj 側が syntax として reject)。
+
+仮に演算子付き pattern で「他の場所を巻き込んだ exclude」を狙っても、
+- exclude を追加する pattern (`X ~ Y`) → そもそも user は `--excludes Y` を別途指定可能、増分情報ゼロ
+- include を狭める pattern (`X & Z`) → exclude セクションでは include 側に効かない (= 単純な差分)
+
+→ 攻撃シナリオなし。
+
+**3. git magic pathspec breakout の可否**
+
+`buildGitPathspec` は `":(exclude,glob)" + trimGlobPrefix(e)` で連結。git の
+magic は **nested しない** (= `:(exclude,glob):(top)X` の `:(top)` は body の
+literal char として解釈、再 magic として扱われない)。
+
+user が `--excludes ':(top)X'` を渡しても、git は `:(exclude,glob):(top)X` を
+「exclude+glob magic、pattern body は `:(top)X`」と解釈する。`:(top)` は
+literal の `:`、`(`、`t`、`o`、`p`、`)` の連続 char で、何にも match しないだけ。
+
+→ 攻撃シナリオなし。
+
+**4. pathspec syntax 衝突は UX issue として受容**
+
+実機検証 (v0.33.4 land 時):
+
+| ケース | git の挙動 | jj の挙動 |
+|---|---|---|
+| `src/file with space.go` | ✓ argv 個別 token、literal 解釈 | ✓ 同 |
+| `src/sub(weird)/x.go` (= `()` 含む dir) | ✓ literal 扱い | ✓ literal 扱い |
+| `--excludes 'src/x ~ glob:**/main.go'` (= injection 風) | ✓ literal pattern、何も match せず安全 | parse error (jj fileset の `~` を演算子と誤解釈、ただし攻撃にはならない) |
+
+- パス内の `(` `)` `~` `&` `|` 等が **jj fileset の演算子** と衝突する場合、jj は
+  parse error を返す (= 該当 file が exclude されず、おそらく diff 結果に出る、
+  または backend が error 終了)
+- パスが `:` で始まる場合、git は magic pathspec と誤解釈する可能性
+
+これらは **「変な名前のファイルを使うユーザ側の責任」** として明示的に受容する
+(= bump-semver 側でエスケープ層を追加するコストが高く、99% の利用者には不要)。
+レア case で問題が顕在化したら、`:(literal)` 風の明示エスケープを後出し追加可能。
+
 ## 補足: phase 2 の方向性
 
 `vcs commit` / `vcs outdated` への `--excludes` / `file:` 適用は、本 DR の phase 1 land 後の実需観察で判断:

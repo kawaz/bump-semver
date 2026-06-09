@@ -43,30 +43,131 @@ func TestRun_VcsInput_FileBorrow(t *testing.T) {
 	})
 }
 
-// `vcs:latest-tag()` was removed in v0.29.0 (DR-0020 PR-Tag-Latest).
-// The input now produces an "unknown vcs function" error pointing at
-// the replacement subcommand `vcs tag latest`. v0 policy allows
-// immediate replacement without a deprecation period.
-func TestRun_VcsInput_LatestTag_Removed(t *testing.T) {
+// `vcs:latest-tag()` returns the largest stable semver tag of the cwd VCS
+// (DR-0032 input record revival). Current VERSION (1.2.3) > latest tag
+// (v1.0.0) → compare gt passes.
+func TestRun_VcsInput_LatestTag(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
 	}
 	dir := setupGitRepo(t, []string{"v1.0.0"}, "1.2.3")
 	withCwd(t, dir, func() {
-		var stderr bytes.Buffer
 		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
-			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
-		if err == nil {
-			t.Fatal("expected error: vcs:latest-tag() was removed")
-		}
-		if !strings.Contains(stderr.String(), "unknown vcs function") {
-			t.Errorf("stderr should mention 'unknown vcs function', got: %q", stderr.String())
-		}
-		if !strings.Contains(stderr.String(), "vcs tag latest") {
-			t.Errorf("stderr should point at the replacement `vcs tag latest`, got: %q", stderr.String())
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("expected gt true (VERSION=1.2.3 > vcs:latest-tag()=1.0.0), got: %v", err)
 		}
 	})
+}
+
+// `vcs:latest-tag()` excludes prereleases (= input record is stable-only,
+// DR-0032 原則 2)。Tags = [v1.0.0, v2.0.0-rc.1] → latest stable is v1.0.0,
+// not v2.0.0-rc.1。
+func TestRun_VcsInput_LatestTag_StableOnly(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"v1.0.0", "v2.0.0-rc.1"}, "1.2.3")
+	withCwd(t, dir, func() {
+		// Working tree (1.2.3) > latest stable (1.0.0).
+		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("expected gt true (stable filter excludes v2.0.0-rc.1), got: %v", err)
+		}
+	})
+}
+
+// `vcs get latest-tag --include-prerelease` is the path to include rc.1
+// etc. — the subcommand exposes the richer option set that the input
+// record subset omits (DR-0032 設計原則: subset 境界の例示)。
+func TestRun_VcsCmdGetLatestTag_IncludePre(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"v1.0.0", "v2.0.0-rc.1"}, "1.2.3")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "latest-tag", "--include-prerelease"},
+			bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("expected success, got: %v", err)
+		}
+		got := strings.TrimSpace(stdout.String())
+		if got != "2.0.0-rc.1" {
+			t.Errorf("expected `2.0.0-rc.1` with --include-prerelease, got %q", got)
+		}
+	})
+}
+
+// `vcs get latest-tag` (subcommand, no flags) returns the bare SemVer
+// form of the largest stable tag — `v1.0.0` tag → `1.0.0` output.
+func TestRun_VcsCmdGetLatestTag_BareSemver(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"v1.0.0", "v2.0.0-rc.1"}, "1.2.3")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "latest-tag"},
+			bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("expected success, got: %v", err)
+		}
+		got := strings.TrimSpace(stdout.String())
+		if got != "1.0.0" {
+			t.Errorf("expected `1.0.0` (stable filter, prefix stripped), got %q", got)
+		}
+	})
+}
+
+// `vcs get latest-tag --json` emits the 12-field version schema (= same
+// as `get --json`). `.version` preserves the raw tag string (`v1.0.0`,
+// = 旧 `--raw` 相当の情報を内包), `.semver` is the bare canonical form.
+func TestRun_VcsCmdGetLatestTag_JSON(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"v1.0.0"}, "1.2.3")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "latest-tag", "--json"},
+			bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("expected success, got: %v", err)
+		}
+		out := stdout.String()
+		// 12-field schema requires all of these keys.
+		required := []string{`"name":`, `"version":"v1.0.0"`, `"semver":"1.0.0"`,
+			`"major":1`, `"minor":0`, `"patch":0`,
+			`"pre":`, `"pre_id":`, `"pre_rest":`,
+			`"build_metadata":`, `"build_id":`, `"build_rest":`}
+		for _, want := range required {
+			if !strings.Contains(out, want) {
+				t.Errorf("JSON missing %q; got: %s", want, out)
+			}
+		}
+	})
+}
+
+// Old `vcs tag latest` is rejected with a migration hint to `vcs get
+// latest-tag` (DR-0032 v0 break policy: alias 残さず明示的 hint のみ).
+func TestRun_VcsTagLatest_Migrated(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	err := run([]string{"vcs", "tag", "latest"},
+		bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatal("expected error: vcs tag latest was moved")
+	}
+	if !strings.Contains(stderr.String(), "vcs get latest-tag") {
+		t.Errorf("stderr should point at the migration target `vcs get latest-tag`, got: %q", stderr.String())
+	}
 }
 
 // --write with vcs: input is rejected before any side effects.

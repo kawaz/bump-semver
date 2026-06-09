@@ -21,8 +21,8 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0016](./DR-0016-remove-bump-semver-vcs-env.md) — `BUMP_SEMVER_VCS` 環境変数廃止 + `--vcs auto` 一本化 (DR-0008 の env 部分を supersede)
 - [DR-0017](./DR-0017-compare-precision-suffix.md) — `compare` の precision suffix 拡張 (`eq-major` / `lt-minor` 等、5 base × 4 precision = 20 OP)
 - [DR-0018](./DR-0018-jvm-dotnet-haskell-rpm-support.md) — JVM (Gradle Groovy / Kotlin DSL) + .NET (`*.csproj` / `*.fsproj` / `*.vbproj`) + Maven (`pom.xml`) + Haskell (`*.cabal`) + RPM (`*.spec`) 対応。新 format `xml-element` 導入
-- [DR-0019](./DR-0019-vcs-latest-tag-remote-arg.md) — `vcs:latest-tag(<arg>)` で他リポの最新 tag 取得対応 + monorepo-style tag (`<name>@<version>`) の `@` peel fallback
-- [DR-0020](./DR-0020-vcs-subcommands.md) — `vcs` サブコマンド群 (git/jj 吸収のリリース/push 定型操作: get/is/diff/commit/push/tag)。未実装、ROADMAP 参照
+- [DR-0019](./DR-0019-vcs-latest-tag-remote-arg.md) — `vcs:latest-tag(<arg>)` で他リポの最新 tag 取得対応 + monorepo-style tag (`<name>@<version>`) の `@` peel fallback。Superseded by DR-0020 (= 一旦 subcommand 化で削除)、DR-0032 (= 入力 record 復活で部分再生)
+- [DR-0020](./DR-0020-vcs-subcommands.md) — `vcs` サブコマンド群 (git/jj 吸収のリリース/push 定型操作: get/is/diff/commit/push/tag)。PR-Tag-Latest section は Superseded by DR-0032 (= `vcs tag latest` → `vcs get latest-{tag,release}` に再整理 + JSON schema 統一 + 入力 record 復活)
 - [DR-0021](./DR-0021-cargo-workspace-package-version.md) — Cargo workspace の `[workspace.package].version` 対応 (`[package]` → `[workspace.package]` の OR フォールバック)。DR-0002 を supersede
 - [DR-0022](./DR-0022-justfile-re-adoption.md) — Justfile 回帰 (Taskfile.pkl + pkfire → Justfile + `bump-semver vcs` ドッグフード)。Taskfile.pkl は翻訳 check の shim としてのみ残存
 - [DR-0023](./DR-0023-n-arg-extension.md) — `get` / `compare` の N 引数化 + `vcs:` borrowing の N 個展開 (verb 別責務分離: get 対等ピア / compare F1 基準)
@@ -34,6 +34,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0029](./DR-0029-cli-user-defined-rule-phase1.md) — CLI から「自分のファイルにこの rule」を指定する口 (Phase 1)。`--define-rule <PATTERN>` ブロック方式 + match strength scoring (5: 絶対 / 3: 相対 / 2: basename / 1: glob / builtin fallback) + `--format <text|json|yaml|toml>` / `--version-path` / `--version-regex` / `--name-path` / `--name-regex`。get / compare / bump 全 verb で write も解禁、CLI rule は builtin より優先、extraction failure は hard error、`--version-regex` は exact one match (= builtin より厳格)、bump --write は atomic + path/regex 併用書き戻しアルゴリズム pin、name safety rail は warning hint で silent downgrade 防止。Prerequisite: DR-0030
 - [DR-0030](./DR-0030-format-regex-to-text-unification.md) — `format=regex` 概念廃止 → `format=text + VersionRegex` 統合 (`format=plain` も text に統合、enum を `text|json|yaml|toml|xml|xml-element` に整理)。internal refactor のみで機能不変、CLI 表面の変更なし。DR-0012 partial supersede。DR-0029 の `--format` enum 公開の前提
 - [DR-0031](./DR-0031-translate-rev-common-foundation.md) — rev 翻訳を共通基盤化 (`vcs:` と `vcs` サブコマンドの全 rev 受け口で利く `translateRev`)。altJjRev (FetchFile 専用フォールバック) を廃止して全 rev 受け口 (FetchFile / Diff / DiffNameStatus / resolveJjRev / resolveGitRev) の入口で 1 度通す形に統合。`origin/main` ↔ `main@origin` の双方向翻訳、backend 固有 syntax は pass-through。対称翻訳 (`@-`↔`HEAD^` 等) は v2 で再検討
+- [DR-0032](./DR-0032-vcs-get-latest-by-source-verb.md) — `vcs tag latest [--source <tag|release>]` を `vcs get latest-tag` / `vcs get latest-release` の 2 verb に分割 (= source 軸を verb 名に畳む、`--source` / `--raw` 廃止)。`--json` schema を `get --json` と同一の version schema に統一。入力 record `vcs:latest-tag([REPO])` 復活 + `vcs:latest-release([REPO])` 新設。DR-0020 PR-Tag-Latest を re-supersede、DR-0019 の入力 record を部分再生、DR-0031 (translateRev) とは独立 (= `expandRepoArg` / `translateRev` は別経路維持)
 
 ## Archived
 

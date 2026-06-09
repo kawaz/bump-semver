@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # bump-semver の `vcs tag latest` で全 tag が必要
+          fetch-depth: 0  # bump-semver の `vcs get latest-tag` で全 tag が必要
 
       # bump-semver 自身を install (dogfooding)
       - name: Install bump-semver
@@ -68,8 +68,9 @@ jobs:
           fi
 
           # 既存 tag より大きいか検証 (二重リリース防止)
-          # `vcs tag latest` は SemVer-parseable な tag のみ filter して
-          # 最大を返す (DR-0020 PR-Tag-Latest, v0.29.0+)。
+          # `vcs get latest-tag` は SemVer-parseable な tag のみ filter して
+          # 最大を返す (DR-0032, v0.32.0+ — DR-0020 PR-Tag-Latest の `vcs tag
+          # latest` を source 軸 verb 名畳み込みで再整理した後継)。
           # --include-prerelease は旧 `vcs:latest-tag()` の byte-identical
           # 移行 (旧実装は prerelease を含めていた) — README/UPGRADING で
           # 案内している移行手順と整合させるためここでも明示する。
@@ -77,19 +78,19 @@ jobs:
           # exit code 取り扱い:
           #   - 初回 release で tag が 1 件もない → exit 3 ("no semver-
           #     compatible tags found") → bootstrap として通過
-          #   - **v0.28.0 ← v0.29.0 移行直後の 1 回限りの transient**:
+          #   - **v0.31.x ← v0.32.0 移行直後の 1 回限りの transient**:
           #     check-version job は「直前リリース版バイナリ」を install して
-          #     dogfood する (= v0.28.0 を使う、本リリースを検証する用)。
-          #     v0.28.0 は `vcs tag latest` を知らず unknown sub-verb で
+          #     dogfood する (= v0.31.x を使う、本リリースを検証する用)。
+          #     v0.31.x は `vcs get latest-tag` を知らず unknown get key で
           #     exit 2 を返す → 同じ bootstrap 分岐に流れ、二重 release は
           #     下の `gh release view` チェックが防ぐ。次の release 以降は
-          #     v0.29.0+ が install されるため通常分岐に乗る。
+          #     v0.32.0+ が install されるため通常分岐に乗る。
           set +e
-          LATEST=$(bump-semver vcs tag latest --include-prerelease --vcs git 2>/dev/null)
+          LATEST=$(bump-semver vcs get latest-tag --include-prerelease --vcs git 2>/dev/null)
           LATEST_EXIT=$?
           set -e
           if [ "$LATEST_EXIT" -ne 0 ]; then
-            echo "vcs tag latest exited ${LATEST_EXIT} (no SemVer tags yet, or old binary; see workflow comment); assuming first release"
+            echo "vcs get latest-tag exited ${LATEST_EXIT} (no SemVer tags yet, or old binary; see workflow comment); assuming first release"
           else
             set +e
             bump-semver compare gt VERSION "$LATEST"

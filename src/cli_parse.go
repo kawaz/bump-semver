@@ -177,18 +177,14 @@ type vcsTagOpts struct {
 	SubVerb   string
 	Rev       *string
 	AllowMove bool
+}
 
-	// --- vcs tag latest flags (DR-0020 PR-Tag-Latest) --------------
-	// LatestSource is "tag" (default, git/jj-native) or "release" (gh CLI
-	// for GitHub Release objects). LatestRepository is the optional
-	// external repo target (owner/repo short / full URL). Both default
-	// to nil = "use the implicit fallback" (LatestSource → "tag";
-	// LatestRepository → cwd VCS). Raw and IncludePrerelease are bool
-	// toggles. --json reuses the shared outputOpts.JSON axis (output
-	// format toggle, parallel to --raw).
-	LatestSource     *string
+// vcsGetOpts captures flags for `vcs get latest-tag` / `vcs get latest-release`
+// (DR-0032). LatestRepository is the optional external repo (`owner/repo`
+// short / full URL); nil = cwd VCS. LatestIncludePre toggles SemVer
+// prerelease inclusion (default false = stable only).
+type vcsGetOpts struct {
 	LatestRepository *string
-	LatestRaw        bool
 	LatestIncludePre bool
 }
 
@@ -213,6 +209,7 @@ type cliArgs struct {
 	vcsCommit   vcsCommitOpts
 	vcsPush     vcsPushOpts
 	vcsTag      vcsTagOpts
+	vcsGet      vcsGetOpts
 	vcsOutdated vcsOutdatedOpts
 	glob        globOpts
 
@@ -428,12 +425,12 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			return cliArgs{kind: "helpAction", action: "vcs tag"}, nil
 		}
 		out.vcsTag.SubVerb = argv[2]
-		isKnownSub := out.vcsTag.SubVerb == "push" || out.vcsTag.SubVerb == "delete" || out.vcsTag.SubVerb == "latest"
-		// `latest` is a parameterless verb (no required positional /
-		// flag); a bare `vcs tag latest` is a valid dispatch (= use
-		// defaults). push/delete sub-verbs DO require args, so their
-		// 3-arg form remains help-routing.
-		if len(argv) == 3 && out.vcsTag.SubVerb != "latest" {
+		// DR-0032: `latest` sub-verb removed; the operation moved to
+		// `vcs get latest-tag` / `vcs get latest-release`. push/delete
+		// remain — their 3-arg form remains help-routing as they require
+		// further args.
+		isKnownSub := out.vcsTag.SubVerb == "push" || out.vcsTag.SubVerb == "delete"
+		if len(argv) == 3 {
 			if isKnownSub {
 				return cliArgs{
 					kind:   "helpAction",
@@ -445,9 +442,7 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			// help fallthrough).
 			return out, nil
 		}
-		// argv[3] check is only meaningful when there's actually an
-		// arg at index 3 (i.e. NOT the bare-`vcs tag latest` case).
-		if len(argv) > 3 && (argv[3] == "--help" || argv[3] == "-h") {
+		if argv[3] == "--help" || argv[3] == "-h" {
 			if isKnownSub {
 				return cliArgs{
 					kind:   "helpAction",
@@ -469,6 +464,14 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 				return cliArgs{kind: "helpAction", action: "vcs " + out.vcsVerb}, nil
 			}
 			return out, nil
+		}
+		// DR-0032: `vcs get latest-tag --help` / `vcs get latest-release --help`
+		// route to the per-key help. Other `vcs get <key>` keys (root/backend/
+		// current-branch) have no flags so this special-case is bounded.
+		if out.vcsVerb == "get" && len(argv) >= 4 && (argv[3] == "--help" || argv[3] == "-h") {
+			if argv[2] == "latest-tag" || argv[2] == "latest-release" {
+				return cliArgs{kind: "helpAction", action: "vcs get " + argv[2]}, nil
+			}
 		}
 	}
 	// Split flags from positional vcsArgs. The vcs branch supports a
@@ -626,57 +629,39 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			out.vcsTag.Rev = ptr(strings.TrimPrefix(a, "--rev="))
 		case a == "--allow-move" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "push":
 			out.vcsTag.AllowMove = true
-		// --- DR-0020 PR-Tag-Latest: vcs tag latest flags ------------
+		// --- DR-0032: vcs get latest-tag / latest-release flags --------
 		//
-		// --source <tag|release>: enum (default "tag", gh-free).
-		//                         "release" routes through `gh release`.
 		// --repository <repo>:    external owner/repo or URL. With
-		//                         --source tag it uses `git ls-remote`
-		//                         (no gh); with --source release it uses
+		//                         latest-tag it uses `git ls-remote --tags`
+		//                         (no gh); with latest-release it uses
 		//                         `gh release list -R <repo>`.
 		// --include-prerelease:   include `-rc.1` etc. (default false).
-		// --raw:                  emit the raw tag string (with prefix)
-		//                         instead of the bare SemVer form.
-		//                         Mutually exclusive with --json.
-		// --json reuses the shared outputOpts.JSON axis, gated on tag
-		// latest below so it doesn't leak to other vcs verbs.
-		case a == "--source" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			if out.vcsTag.LatestSource != nil {
-				return cliArgs{}, fmt.Errorf("--source specified twice")
-			}
-			if i+1 >= len(rest) {
-				return cliArgs{}, fmt.Errorf("--source requires a value (tag or release)")
-			}
-			out.vcsTag.LatestSource = ptr(rest[i+1])
-			i++
-		case strings.HasPrefix(a, "--source=") && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			if out.vcsTag.LatestSource != nil {
-				return cliArgs{}, fmt.Errorf("--source specified twice")
-			}
-			out.vcsTag.LatestSource = ptr(strings.TrimPrefix(a, "--source="))
-		case a == "--repository" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			if out.vcsTag.LatestRepository != nil {
+		// --json reuses the shared outputOpts.JSON axis; the dispatcher
+		// gates it to latest-tag / latest-release at runtime since other
+		// `vcs get` keys (root/backend/current-branch) are text-only.
+		//
+		// 注: positional key (latest-tag / latest-release) は flag より
+		// 後ろにも前にも書ける (= `vcs get --json latest-tag` も
+		// `vcs get latest-tag --json` も accept する) ため、flag 段階では
+		// `out.vcsVerb == "get"` でだけ gate し、key とのつき合わせは
+		// dispatcher 側で行う (key 不適合 + flag 指定は usage error)。
+		case a == "--repository" && out.vcsVerb == "get":
+			if out.vcsGet.LatestRepository != nil {
 				return cliArgs{}, fmt.Errorf("--repository specified twice")
 			}
 			if i+1 >= len(rest) {
 				return cliArgs{}, fmt.Errorf("--repository requires a value (owner/repo or URL)")
 			}
-			out.vcsTag.LatestRepository = ptr(rest[i+1])
+			out.vcsGet.LatestRepository = ptr(rest[i+1])
 			i++
-		case strings.HasPrefix(a, "--repository=") && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			if out.vcsTag.LatestRepository != nil {
+		case strings.HasPrefix(a, "--repository=") && out.vcsVerb == "get":
+			if out.vcsGet.LatestRepository != nil {
 				return cliArgs{}, fmt.Errorf("--repository specified twice")
 			}
-			out.vcsTag.LatestRepository = ptr(strings.TrimPrefix(a, "--repository="))
-		case a == "--include-prerelease" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			out.vcsTag.LatestIncludePre = true
-		case a == "--raw" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			out.vcsTag.LatestRaw = true
-		case a == "--json" && out.vcsVerb == "tag" && out.vcsTag.SubVerb == "latest":
-			// --json is only meaningful for `vcs tag latest` in the vcs
-			// branch (other verbs don't have structured output to render).
-			// Idempotent absorb on duplicate, same policy as the shared
-			// flag loop.
+			out.vcsGet.LatestRepository = ptr(strings.TrimPrefix(a, "--repository="))
+		case a == "--include-prerelease" && out.vcsVerb == "get":
+			out.vcsGet.LatestIncludePre = true
+		case a == "--json" && out.vcsVerb == "get":
 			out.output.JSON = true
 		case a == "--no-hint":
 			out.output.Verbosity.raise(outputNoHint)

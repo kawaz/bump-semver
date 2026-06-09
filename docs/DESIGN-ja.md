@@ -54,7 +54,12 @@ INPUT  = FILE | VER | -
 
 `vcs:REV[:FILE]` は jj/git の `<REV>` 時点の `<FILE>` 内容を取得する。VCS は以下の優先順で自動判定: `--vcs jj|git` フラグ (`auto` / 未指定は次へ) → `.jj` ディレクトリ存在 → `.git` ディレクトリ存在。`.jj` と `.git` が並存する (jj colocate モード、kawaz の git-bare + jj-workspace 構成) 場合は **jj が優先**。v0.13.0 までフラグと probe の間に環境変数による override が挟まる優先順 2 位があったが廃止されている (経緯は DR-0016)。
 
-> **v0.29.0 で `vcs:` 入力から latest-tag 取得が外れた** (DR-0020 PR-Tag-Latest)。旧 `vcs:latest-tag([REPO])` 関数入力は deprecation 期間を設けずに削除した (v0 では破壊的変更を許容する方針)。代替は `vcs tag latest` サブコマンド — 詳細は DR-0020 PR-Tag-Latest 参照 (より発見しやすく、`--source release` で GitHub Releases、`--json` の構造化出力、`--raw` の prefix 保持、旧 default 挙動への byte-identical 移行用 `--include-prerelease` を備える)。monorepo-style tag (`pkf-tasks@0.0.12`) の `@`-peel fallback と、第三者書き込み可能 remote に対する信頼境界 (DR-0019) は実装ごと新コマンドに引き継がれている — 詳細は当該 DR 参照。
+> **latest-tag / latest-release の取得** は v0.32.0+ で入力 record と subcommand の両経路を提供する (DR-0032):
+>
+> - 入力 record (`vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])`): スカラ返却、1-liner ergonomic 向け。prerelease は除外固定 (stable only)。`compare gt VERSION 'vcs:latest-tag()'` のような 1 行記述に最適。
+> - Subcommand (`vcs get latest-tag` / `vcs get latest-release`): richer option (`--include-prerelease`、`--json` で 12 field version schema、`--repository REPO`) を備える。CI / release workflow の shell pipeline 向け。
+>
+> source 軸 (tag list か GitHub Release か) は **verb 名に畳んで** flag にしない設計 (DR-0032)。v0.29.0 の `vcs tag latest [--source <tag|release>]` 形は本方針で再 supersede された。monorepo-style tag (`pkf-tasks@0.0.12`) の `@`-peel fallback と第三者書き込み可能 remote の信頼境界 (DR-0019) は両経路に引き継がれている。
 
 FILE 省略時は **位置順で最初の FILE 提供 sibling** から借用 (実 FILE 起源 or 他の `vcs:REV:FILE`)。借用源がない場合はエラー。
 

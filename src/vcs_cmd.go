@@ -36,7 +36,10 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 
 // vcsGetKeys lists the keys recognised by `vcs get`. Kept as a slice so
 // the order is preserved when we surface it in error messages.
-var vcsGetKeys = []string{"root", "backend", "current-branch"}
+//
+// DR-0032: latest-tag / latest-release replace the v0.29.0 `vcs tag latest
+// --source <tag|release>` (= source 軸を verb 名に畳む)。
+var vcsGetKeys = []string{"root", "backend", "current-branch", "latest-tag", "latest-release"}
 
 // runVcsCmdGet implements `vcs get <key>`.
 //
@@ -74,6 +77,37 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 	if !known {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("unknown vcs get key: %s (expected one of: %s)", key, strings.Join(vcsGetKeys, " / ")))
+	}
+
+	// DR-0032 flag gating: --repository / --include-prerelease / --json are
+	// only meaningful for latest-tag / latest-release. The flag parser
+	// accepts them on any `vcs get` invocation so the positional order is
+	// free (`vcs get --json latest-tag` and `vcs get latest-tag --json`
+	// both parse), then this dispatcher rejects them against unrelated keys.
+	isLatest := key == "latest-tag" || key == "latest-release"
+	if !isLatest {
+		if args.vcsGet.LatestRepository != nil {
+			return emitVcsUsage(stderr, args,
+				fmt.Errorf("--repository is only valid with vcs get latest-tag / latest-release"))
+		}
+		if args.vcsGet.LatestIncludePre {
+			return emitVcsUsage(stderr, args,
+				fmt.Errorf("--include-prerelease is only valid with vcs get latest-tag / latest-release"))
+		}
+		if args.output.JSON {
+			return emitVcsUsage(stderr, args,
+				fmt.Errorf("--json is only valid with vcs get latest-tag / latest-release"))
+		}
+	}
+
+	// latest-tag / latest-release dispatch — they have their own backend
+	// handling (cwd VCS via newVcsBackend for tag without --repository, or
+	// gh subprocess for release).
+	switch key {
+	case "latest-tag":
+		return runVcsCmdGetLatestTag(args, stdout, stderr)
+	case "latest-release":
+		return runVcsCmdGetLatestRelease(args, stdout, stderr)
 	}
 
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
@@ -572,10 +606,14 @@ func runVcsCmdTag(args cliArgs, stdout, stderr io.Writer) error {
 	case "delete":
 		return runVcsCmdTagDelete(args, stdout, stderr)
 	case "latest":
-		return runVcsCmdTagLatest(args, stdout, stderr)
+		// DR-0032: `vcs tag latest` was moved to `vcs get latest-tag`
+		// (= source 軸を verb 名に畳む再整理)。v0 break policy で alias
+		// は残さない、明示的な migration hint だけ返す。
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs tag latest was moved in v0.32.0; use `vcs get latest-tag` (or `vcs get latest-release` for GitHub Releases). See DR-0032"))
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs tag sub-verb: %q (expected: push / delete / latest)", args.vcsTag.SubVerb))
+			fmt.Errorf("unknown vcs tag sub-verb: %q (expected: push / delete)", args.vcsTag.SubVerb))
 	}
 }
 

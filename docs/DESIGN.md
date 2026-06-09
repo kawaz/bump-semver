@@ -54,7 +54,12 @@ When a filename collides with a valid semver string (e.g. a local file literally
 
 `vcs:REV[:FILE]` reads `<FILE>` at `<REV>` from jj or git. The VCS is detected in this priority order: `--vcs jj|git` flag (`auto` and the unset case fall through), `.jj` directory probe, `.git` directory probe. When both `.jj` and `.git` exist (jj's colocate mode, or kawaz's git-bare + jj-workspace layout), jj wins. See DR-0016 for the rationale behind removing the `BUMP_SEMVER_VCS` env var that used to sit between the flag and the probes.
 
-> **Latest-tag lookups moved out of `vcs:` input in v0.29.0** (DR-0020 PR-Tag-Latest). The previous `vcs:latest-tag([REPO])` function input was removed without a deprecation period (v0 policy: breaking changes allowed). The replacement is the `vcs tag latest` subcommand — see DR-0020 PR-Tag-Latest for the rationale (more discoverable, supports `--source release` for GitHub Releases, structured `--json` output, explicit `--raw` for prefix retention, and `--include-prerelease` for the byte-identical migration from the old default behaviour). The `@`-peel fallback for monorepo-style tags (`pkf-tasks@0.0.12`) and the trust-boundary caveat for third-party-writable remotes (DR-0019) both moved with the implementation; see the relevant DRs for historical context.
+> **Latest-tag / latest-release lookups** are available both as input records and as subcommands (DR-0032, v0.32.0+):
+>
+> - Input records (`vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])`): scalar return, 1-liner ergonomic. Prerelease excluded (stable only). Best for `compare gt VERSION 'vcs:latest-tag()'` style 1-liners.
+> - Subcommands (`vcs get latest-tag` / `vcs get latest-release`): richer option set (`--include-prerelease`, `--json` with the 12-field version schema, `--repository REPO`). Best for CI / release-workflow shell pipelines.
+>
+> The `source` axis (tag list vs GitHub Release) is encoded in the verb name (not a `--source` flag) so each verb has a single honest responsibility (DR-0032). The `vcs tag latest [--source <tag|release>]` form from v0.29.0 was re-superseded by this split. The `@`-peel fallback for monorepo-style tags (`pkf-tasks@0.0.12`) and the trust-boundary caveat for third-party-writable remotes (DR-0019) are preserved across both surfaces.
 
 When the FILE component is omitted, it is borrowed from the first FILE-providing sibling argument in **position order** (a real FILE-origin input, or another `vcs:REV:FILE`). Errors out when no sibling can supply a FILE.
 

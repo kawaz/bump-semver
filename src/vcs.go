@@ -196,22 +196,25 @@ func resolveVcsInput(spec string, otherFile string, backend vcsBackend) (resolve
 
 // resolveVcsFunc handles function-shaped specs (`vcs:<name>(<args>)`).
 //
-// DR-0020 PR-Tag-Latest (v0 breaking change, 2026-06-01): the previous
-// `vcs:latest-tag([REPO])` function input was removed. The same
-// capability is now exposed via the `vcs tag latest` subcommand, which
-// is both more discoverable and more flexible (--source / --raw /
-// --json / --repository / --include-prerelease). v0 allows immediate
-// replacement without a deprecation period; users migrate from
-// `bump-semver compare gt VERSION 'vcs:latest-tag()'` to a
-// capture-then-compare shape (`LATEST=$(bump-semver vcs tag latest);
-// bump-semver compare gt VERSION "$LATEST"`).
+// DR-0032 (v0.32.0): `vcs:latest-tag([REPO])` and `vcs:latest-release([REPO])`
+// are the supported function-mode inputs. Both return the bare SemVer
+// version of the largest stable tag / release (prerelease always excluded
+// — input record is a value-mode subset; richer options are exposed via
+// `vcs get latest-{tag,release}` subcommand instead).
 //
-// `_ = backend` keeps the signature stable in case future verbs
-// reintroduce backend-dependent functions; current dispatch only emits
-// the unknown-function error.
-func resolveVcsFunc(spec, name, _ string, backend vcsBackend) (resolvedInput, error) {
-	_ = backend
-	return resolvedInput{}, fmt.Errorf("%s: unknown vcs function: %s() (vcs:latest-tag was removed in v0.29.0; use `bump-semver vcs tag latest` instead)", spec, name)
+// 引数 `args` は `(args)` の中身 (= `(kawaz/pkf-tasks)` なら `args ==
+// "kawaz/pkf-tasks"`、`()` なら `args == ""`)。`expandRepoArg` で
+// owner/repo 短縮 → URL 展開を行う (= DR-0019 schema、`translateRev`
+// (DR-0031) とは別経路、DR-0032 原則 5)。
+func resolveVcsFunc(spec, name, args string, backend vcsBackend) (resolvedInput, error) {
+	switch name {
+	case "latest-tag":
+		return resolveLatestTag(spec, strings.TrimSpace(args), backend)
+	case "latest-release":
+		return resolveLatestRelease(spec, strings.TrimSpace(args), backend)
+	default:
+		return resolvedInput{}, fmt.Errorf("%s: unknown vcs function: %s() (supported: latest-tag, latest-release; richer option set in `vcs get latest-{tag,release}` subcommand)", spec, name)
+	}
 }
 
 // translateRev translates a user-supplied rev into a backend-native form

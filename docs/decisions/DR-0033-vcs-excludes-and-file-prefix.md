@@ -113,16 +113,16 @@ DR-0024 の `--glob-gitignored=true|false` family はそのまま、`file:LIST` 
 
 `vcs diff` / `vcs commit` 自体は tracked content snapshot 同士の比較なので、未追跡 file (= `node_modules` 等) は `.gitignore` の有無に関わらず diff に出ない (= 本 DR の責務外)。
 
-### 適用 verb (= phase 1 land 範囲)
+### 適用 verb (= 本 DR の land 範囲)
 
 | verb | `--excludes` | `file:` 位置引数 |
 |---|---|---|
 | `vcs diff` | **land** (= 本 DR の immediate need) | **land** |
-| `vcs commit` | follow-up (= 次 DR or 本 DR の phase 2) | follow-up |
+| `vcs commit` | follow-up (= 別 DR で land) | follow-up |
 | `vcs outdated` (TO 側) | follow-up (DR-0027 / DR-0028 の glob-backref spec との統合検証要) | follow-up |
 | `get` / bump 系 (= `glob:` 既対応) | 検討 (= 利用ケース次第) | follow-up |
 
-phase 1 は `vcs diff` のみ。release.yml dogfood の用途に対応できれば immediate need 解消。`vcs commit` / `vcs outdated` への展開は実需が顕在化したタイミングで follow-up。
+本 DR の land 対象は `vcs diff` のみ。release.yml dogfood の用途に対応できれば immediate need 解消。`vcs commit` / `vcs outdated` への展開は実需が顕在化したタイミングで follow-up。
 
 ### dogfood 移行
 
@@ -179,13 +179,14 @@ _check-version-bumped *target_paths:
 
 ## 影響範囲 / migration
 
-### 内部実装
+### 内部実装 (= v0.33.4 phase 2 v2 land 時点の最終形)
 
-- `src/glob.go`: `hasFilePrefix` / `parseFileSpec` / `expandFileSpec` 追加。`expandGlobInputs` を `expandInputs` (= glob + file 両対応) に拡張
-- `src/cli_parse.go`: `--excludes PATTERN` flag parser 追加 (= verb-local: `vcs diff` / `vcs commit` / `vcs outdated`、phase 1 では `vcs diff` のみ enable)、新 `vcsExcludes` field を `cliArgs` または各 verb opts に追加
-- `src/vcs_cmd.go` `runVcsCmdDiff`: include set 展開後、`--excludes` の各 pattern を expand して set difference
-- `src/help.go`: `vcs diff` help に `--excludes` 説明追加、入力モード表 (`vcs:` / `cmd:` / `glob:` 一覧) に `file:` 追加
-- `src/glob_test.go` / `src/cmd_vcs_diff_test.go`: test 追加
+- `src/file_input.go`: `hasFilePrefix` / `parseFileSpec` / `expandFileSpec` / `readPatternListFile` (= `--excludes file:` 用)。nested `file:` は両 helper で reject (= MVP scope-out、字面 check で循環防止)
+- `src/glob.go`: `expandGlobInputs` を glob:/file: 両対応に拡張、`dedupPreserveOrder` を出口に追加。旧 `excludeInputs` (set-subtraction) は test 用 helper として残置
+- `src/cli_parse.go`: `--excludes PATTERN` flag parser (= `vcs diff` verb-local)、`vcsDiffOpts.Excludes []string` field 追加
+- `src/vcs_backend.go`: `Diff` / `DiffNameStatus` signature に `excludes []string` 追加。`buildGitPathspec` / `buildJjPathspec` / `trimGlobPrefix` 新規
+- `src/vcs_cmd.go` `runVcsCmdDiff`: include は `expandGlobInputs` で literal pass、excludes は `flattenExcludePatterns` で `file:` を展開、backend に forward
+- `src/help.go`: `vcs diff` help に `--excludes` 説明、入力モード表 (`vcs:` / `cmd:` / `glob:` 一覧) に `file:` 追加
 
 ### test 追加範囲
 
@@ -223,21 +224,41 @@ _check-version-bumped *target_paths:
 6. VERSION bump v0.33.0
 7. push (= `just push` 経由) → CI watch → release workflow
 
-## 補足: phase 2 で land 済 (2026-06-10) — literal directory 透過対応
+## 補足: phase 2 で land 済 (2026-06-10) — literal directory 透過対応 + 削除 file 検知
 
-DR-0033 land の翌日 v0.33.2 で、literal directory selector に対する file-level exclude が動かない問題を是正した。
+DR-0033 land の翌日に、literal directory selector に対する file-level exclude が動かない問題、および削除 file が見逃される問題を是正した。
 
-**問題**: 当初実装では `expandGlobInputs` 後の path list で set-subtraction する設計だったため、literal `src/` (= 1 entry のまま) と file-level `glob:src/**/*_test.go` (= 個別 file path に展開) が overlap せず exclude が効かなかった。
+### v0.33.2 (= phase 2 v1、後に revert)
 
-**解決**: `expandVcsPathInputs` helper を新設、`vcs` verb の入力 path 処理に挿入。literal path が directory のとき:
+最初の試行: `expandVcsPathInputs` helper で literal directory を内部的に `glob:<dir>/**/*` 展開 (= dotfile 強制 on)、その後 set-subtraction で excludes を引く設計。
 
-- 内部的に `glob:<dir>/**/*` 扱いに upgrade (= file list に展開)
-- dotfile inclusion を **強制 on** (= 利用者が directory を明示指定 = dotfile も含意)
-- `--glob-gitignored` は caller の opts 継承 (= 既存 flag を尊重)
+`vcs diff src/ --excludes 'glob:src/**/*_test.go'` の include 期待通り動作するようになったが、**致命的 bug が露呈**:
 
-これにより `vcs diff src/ --excludes 'glob:src/**/*_test.go'` が利用者期待通りに動作する。include / exclude 両方に同じ upgrade を適用するので、`--excludes src/legacy/` のように directory 形式 exclude も透過対応。
+> `doublestar.FilepathGlob` は **現状の file system しか walk しない** ため、REV に存在し working copy で削除された file が include set に含まれず、`git diff` / `jj diff` の出力にも出ない (= 削除検知が消える)。
 
-**`get` / `bump` / `compare` 系は対象外**: これら verb は FILE *content* を読む責務、directory は本来 unsupported (= 明示エラーが正しい挙動)。`expandGlobInputs` 経路は維持し、`expandVcsPathInputs` は `vcs` verb のみが利用する。
+codex stop-time review が指摘。
+
+### v0.33.4 (= phase 2 v2、現実装)
+
+設計を **backend pathspec への forward** に転換:
+
+- `vcsBackend.Diff` / `DiffNameStatus` signature を `(rev, paths, excludes)` に拡張
+- **git**: exclude pattern を `:(exclude,glob)<pat>` magic pathspec 長形に変換して append (= `:!pat` 短縮形は `**` を解釈しないので不採用、実機検証済)
+- **jj**: fileset 言語の単一式 `(inc1 | inc2) ~ exc1 ~ exc2` に組み立てて 1 引数として渡す (= 別 args 渡しは jj が union 解釈で wrong、jj 0.41 で実機検証済)
+- `file:` 形式の excludes は dispatcher 側で flat pattern list に展開してから backend に渡す (backend は `file:` shape を知らない)
+- `expandVcsPathInputs` / 自前 set-subtraction は削除、include 側は `expandGlobInputs` (= glob: / file: 展開のみ) で backend に literal pass
+- `expandGlobInputs` 出口に `dedupPreserveOrder` を追加 (= include 重複排除)
+
+これにより:
+
+- **削除 file 透過**: backend (= git/jj) が REV と現状を比較するので、REV にあって working で削除された file も diff に出る
+- **literal directory 透過**: `vcs diff src/ --excludes 'glob:src/**/*_test.go'` で `src/` は backend pathspec として、test 除外も backend pathspec として両立
+- **argv scaling**: 自前で 1000-file 展開する必要なし (= include / exclude pathspec 個別 entry)
+- **backend native 表現力活用**: git / jj 自身の pathspec / fileset 機能 (= magic pathspec / 演算子) に乗れる
+
+### get / bump / compare 系の扱い
+
+`expandVcsPathInputs` は削除済 (= v0.33.4 で revert)。`expandGlobInputs` (= glob: / file: 展開のみ) は引き続き全 verb 共通の入口。`vcs diff` だけが backend pathspec forward を追加で行う。`get` / `bump` / `compare` 系は backend pathspec を介さない (= FILE content を直接読む) ので、本 DR の影響を受けない。
 
 ## Security: shell injection 不可能、pathspec syntax 衝突は UX issue として受容 (v0.33.4 で確認)
 
@@ -301,11 +322,11 @@ literal の `:`、`(`、`t`、`o`、`p`、`)` の連続 char で、何にも mat
 (= bump-semver 側でエスケープ層を追加するコストが高く、99% の利用者には不要)。
 レア case で問題が顕在化したら、`:(literal)` 風の明示エスケープを後出し追加可能。
 
-## 補足: phase 2 の方向性
+## 補足: 他 verb への将来展開 (= phase 3 候補)
 
-`vcs commit` / `vcs outdated` への `--excludes` / `file:` 適用は、本 DR の phase 1 land 後の実需観察で判断:
+`vcs commit` / `vcs outdated` への `--excludes` / `file:` 適用は、本 DR の land 後の実需観察で判断:
 
 - `vcs commit --staged PATH.. --excludes`: 「staged 全部からこれだけ除外して commit」は git/jj の標準 idiom にない (= staging area 操作で先に excluded すべき)、需要薄そう
 - `vcs outdated FROM TO[..] --excludes`: TO 側の探索結果から特定 path を除外したい用途は出てきうる、DR-0028 の glob-backref spec との統合は要検証
 
-phase 1 で `--excludes` のセマンティクスが「include ∖ exclude の post-filter」に固定されれば、phase 2 で他 verb に展開する際の interface は同じ shape で増設できる (= 認知負荷を増やさない)。
+`--excludes` のセマンティクスは「include ∖ exclude」の集合差分で固定されているので、他 verb に展開する際の interface は同じ shape で増設できる (= 認知負荷を増やさない)。phase 2 で確立した backend pathspec forward 方式 (= git `:(exclude,glob)pat` / jj fileset `(inc) ~ exc`) を他 verb の backend 実装でも再利用可能。

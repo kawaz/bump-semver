@@ -590,19 +590,21 @@ Options:
   -s, --name-status      Emit one '<CODE>\\t<path>' line per changed
                          file (M/A/D) instead of the raw patch.
                          Mirrors 'git diff --name-status'.
-  --excludes PATTERN     Post-filter the include set: any path matching
-                         a PATTERN is dropped from the final selector.
+  --excludes PATTERN     Drop paths matching PATTERN from the diff.
                          Repeatable (= append, each --excludes adds one
                          pattern). Order-independent: final set = include
                          ∖ ⋃(excludes). PATTERN accepts the same shape
                          as positional PATH (literal / glob: / file:).
                          Constraint: at least one positional PATH must
                          be given when --excludes is used.
-                         Literal directory selectors (e.g. 'src/') are
-                         internally expanded to 'glob:src/**/*' with
-                         dotfile inclusion forced on, so file-level
-                         exclude patterns (e.g. 'glob:**/*_test.go')
-                         filter inside that directory as users expect.
+                         Forwarded to the backend as native pathspec
+                         (git: ':(exclude,glob)<pat>' magic pathspec;
+                         jj: single fileset expression '(includes) ~ pat'),
+                         so literal directory includes (e.g. 'src/') and
+                         deletions (files present in REV but removed in
+                         the working copy) are handled by git/jj natively.
+                         'file:' excludes are expanded locally first into
+                         a flat list of patterns before forwarding.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)

@@ -155,6 +155,96 @@ func TestRun_VcsCmdGetLatestTag_JSON(t *testing.T) {
 	})
 }
 
+// monorepo-style tag (`<name>@<version>`) is peeled by pickLatestSemverTag's
+// `@`-peel fallback (DR-0019). The input record returns the version part
+// (`0.0.13` from `pkf-tasks@0.0.13`); subcommand --json surfaces the
+// prefix in `.name` (DR-0032 原則 3、12-field schema 統一の含意)。
+func TestRun_VcsInput_LatestTag_MonorepoStyle(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"pkf-tasks@0.0.13"}, "0.0.20")
+	withCwd(t, dir, func() {
+		// Working tree (0.0.20) > peeled tag version (0.0.13).
+		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("expected gt true after @-peel (0.0.20 > 0.0.13), got: %v", err)
+		}
+	})
+}
+
+// JSON output for a monorepo-style tag surfaces the prefix in `.name`
+// (= DR-0032 原則 3、12-field schema 統一の含意)。`.version` keeps the
+// raw tag form, `.semver` the bare canonical.
+func TestRun_VcsCmdGetLatestTag_JSON_Monorepo(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"pkf-tasks@0.0.13"}, "0.0.20")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "latest-tag", "--json"},
+			bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("expected success, got: %v", err)
+		}
+		out := stdout.String()
+		required := []string{
+			`"name":"pkf-tasks"`,           // monorepo prefix surfaced
+			`"version":"pkf-tasks@0.0.13"`, // raw tag form preserved
+			`"semver":"0.0.13"`,            // peeled canonical SemVer
+		}
+		for _, want := range required {
+			if !strings.Contains(out, want) {
+				t.Errorf("JSON missing %q; got: %s", want, out)
+			}
+		}
+	})
+}
+
+// Mixed semver + non-semver tags: pickLatestSemverTag silently drops the
+// non-SemVer entries (`my-build-2025-01-01`) so callers can mix release
+// tags with build-stamp tags without `vcs:latest-tag()` breaking.
+func TestRun_VcsInput_LatestTag_MixedTagTypes(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"v1.0.0", "build-2026-01-01", "checkpoint-A"}, "1.2.3")
+	withCwd(t, dir, func() {
+		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Errorf("expected gt true (non-semver tags dropped, v1.0.0 wins), got: %v", err)
+		}
+	})
+}
+
+// No SemVer-parseable tags at all → input record propagates the underlying
+// "no semver-compatible tags found" error (= exit 3 family, surfaced as
+// the resolve error with the spec label).
+func TestRun_VcsInput_LatestTag_NoTags(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, []string{"checkpoint-A", "build-2026-01-01"}, "1.2.3")
+	withCwd(t, dir, func() {
+		var stderr bytes.Buffer
+		err := run([]string{"compare", "gt", "VERSION", "vcs:latest-tag()"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+		if err == nil {
+			t.Fatal("expected error: no semver-compatible tags found")
+		}
+		if !strings.Contains(stderr.String(), "no semver-compatible tags") {
+			t.Errorf("stderr should mention the no-tags reason, got: %q", stderr.String())
+		}
+	})
+}
+
 // Old `vcs tag latest` is rejected with a migration hint to `vcs get
 // latest-tag` (DR-0032 v0 break policy: alias 残さず明示的 hint のみ).
 func TestRun_VcsTagLatest_Migrated(t *testing.T) {

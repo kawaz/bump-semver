@@ -2517,6 +2517,48 @@ func TestJjBackend_TagPush_NonColocated(t *testing.T) {
 	}
 }
 
+// TestJjBackend_TagPush_NonColocated_SecondaryWorkspace exercises a jj
+// secondary workspace (created via `jj workspace add`). In this layout
+// the secondary workspace's `.jj/repo` is a regular *file* containing an
+// indirection to the primary workspace's repo store — reading
+// `.jj/repo/store/git_target` directly fails with ENOTDIR. The fix routes
+// through `jj git root` so jj handles the indirection.
+//
+// Regression: bump-semver v0.31.1 and earlier crashed here with
+// "open .jj/repo/store/git_target: not a directory" (kawaz/bump-semver
+// docs/issue/2026-06-08-jj-secondary-workspace-git-target.md).
+func TestJjBackend_TagPush_NonColocated_SecondaryWorkspace(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	work, origin := setupJjRepoNonColocatedWithRemote(t, "1.0.0")
+	ws2 := filepath.Join(filepath.Dir(work), "ws2")
+	runIn(t, work, "jj", "workspace", "add", "--name", "ws2", ws2)
+	// Fixture invariant: secondary `.jj/repo` is a regular file holding the
+	// indirection. If jj ever flips this to a directory the regression
+	// target disappears and we want to know.
+	fi, err := os.Stat(filepath.Join(ws2, ".jj/repo"))
+	if err != nil {
+		t.Fatalf("stat ws2/.jj/repo: %v", err)
+	}
+	if fi.IsDir() {
+		t.Skip("secondary workspace .jj/repo is a directory; jj layout changed")
+	}
+	withCwd(t, ws2, func() {
+		b := &jjBackend{}
+		if err := b.TagPush(tagPushOpts{
+			Name: "v1.0.0", Rev: "@-", Remote: "origin",
+		}); err != nil {
+			t.Fatalf("TagPush(new, secondary workspace): %v", err)
+		}
+	})
+	want := jjResolveRev(t, work, "@-")
+	if got := tagOnBare(t, origin, "v1.0.0"); got != want {
+		t.Errorf("secondary-workspace origin v1.0.0 = %q, want %q", got, want)
+	}
+}
+
 // TestJjBackend_TagDelete_NonColocated: delete also routes through
 // `git -C <git_target> push origin :refs/tags/NAME` in the non-colocated
 // layout, so it gets a dedicated test for the same reason.

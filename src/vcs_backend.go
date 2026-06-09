@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -1518,48 +1517,38 @@ func formatPushError(tool, stderr, stdout string) string {
 //   - colocated:  `.git` is a real directory inside cwd. Push from cwd
 //     itself — pushing from inside `.git/` would lose the worktree
 //     context that pre-push hooks expect.
-//   - non-colocated: `.jj/repo/store/git_target` points to the backing
-//     bare repo (typically an absolute path under `~/.local/share/.../`).
+//   - non-colocated: ask `jj git root` for the backing git directory.
 //     Bare repos push fine without a worktree, so `git -C <bare>` is
 //     correct here.
+//
+// `jj git root` is the right interface because it transparently handles
+// secondary jj workspaces (where `.jj/repo` is a regular file pointing
+// to the primary workspace's repo store, which reading
+// `.jj/repo/store/git_target` directly cannot follow).
 //
 // Errors wrap as *exitErr{exitCodeVCSExec}.
 func jjGitPushDir() (string, error) {
 	// Colocated check: a `.git` entry in cwd that is a directory wins
-	// regardless of what git_target says. Saves us from "git_target's
-	// relative path resolved to the same .git but the bare config doesn't
-	// reach our hooks" cases.
+	// regardless of what jj says. Saves us from "jj git root resolved to
+	// the same .git but the bare config doesn't reach our hooks" cases.
 	if fi, err := os.Stat(".git"); err == nil && fi.IsDir() {
 		// Empty dir-arg means "use cwd" downstream — avoids special-casing
 		// the worktree/git-dir split.
 		return "", nil
 	}
-	const rel = ".jj/repo/store/git_target"
-	raw, err := os.ReadFile(rel)
+	out, err := runBackendCmd("jj", "git", "root")
 	if err != nil {
 		return "", &exitErr{
 			code: exitCodeVCSExec,
-			msg:  fmt.Sprintf("read .jj/repo/store/git_target: %v", err),
+			msg:  fmt.Sprintf("jj git root: %v", err),
 		}
 	}
-	target := strings.TrimSpace(string(raw))
+	target := strings.TrimSpace(string(out))
 	if target == "" {
 		return "", &exitErr{
 			code: exitCodeVCSExec,
-			msg:  ".jj/repo/store/git_target is empty",
+			msg:  "jj git root returned empty",
 		}
-	}
-	if !filepath.IsAbs(target) {
-		base := ".jj/repo/store"
-		joined := filepath.Join(base, target)
-		abs, absErr := filepath.Abs(joined)
-		if absErr != nil {
-			return "", &exitErr{
-				code: exitCodeVCSExec,
-				msg:  fmt.Sprintf("resolve %s: %v", joined, absErr),
-			}
-		}
-		return abs, nil
 	}
 	return target, nil
 }

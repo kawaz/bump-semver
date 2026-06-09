@@ -214,21 +214,68 @@ func resolveVcsFunc(spec, name, _ string, backend vcsBackend) (resolvedInput, er
 	return resolvedInput{}, fmt.Errorf("%s: unknown vcs function: %s() (vcs:latest-tag was removed in v0.29.0; use `bump-semver vcs tag latest` instead)", spec, name)
 }
 
-// altJjRev maps a git-style remote ref (`<remote>/<bookmark>`) to jj's
-// native `<bookmark>@<remote>` form. Returns ok=false when rev doesn't
-// have exactly one `/` (e.g. `HEAD~1`, `main`, `feature/x` are all
-// passed through unchanged by the caller).
+// translateRev translates a user-supplied rev into a backend-native form
+// so every `vcs` rev receptor (FetchFile / Diff / DiffNameStatus /
+// resolveJjRev / resolveGitRev / `vcs:` input mode) accepts either git or
+// jj syntax without callers having to branch on the backend (DR-0031).
 //
-// We accept only single-slash forms because `feature/foo/bar` is
-// ambiguous without knowing the remote name set, and jj users who
-// genuinely have a slash in a bookmark are better served by writing
-// the explicit `bookmark@remote` form themselves.
-func altJjRev(rev string) (string, bool) {
-	i := strings.IndexByte(rev, '/')
-	if i <= 0 || strings.Count(rev, "/") != 1 {
-		return "", false
+// Translation rules (v1, MVP):
+//
+//  1. `<remote>/<bookmark>` ⇔ `<bookmark>@<remote>` (single-slash / single-@,
+//     no other special chars). Direction depends on `kind`:
+//     - kind=jjBackendKind: git syntax `origin/main` → `main@origin`
+//     - kind=gitBackendKind: jj syntax `main@origin` → `origin/main`
+//  2. Multi-slash / multi-@ / anything with revset / revspec syntax
+//     (`^`, `~`, `..`, `::`, `@{...}`, etc) is passed through unchanged
+//     so the backend resolves its own native syntax.
+//  3. Empty input is passed through (callers should reject empty rev
+//     themselves; translation is best-effort).
+//
+// We translate only single-slash / single-@ forms because forms like
+// `feature/foo/bar` are ambiguous without knowing the remote name set,
+// and users with multi-segment bookmark names should write the explicit
+// `bookmark@remote` form themselves.
+//
+// translateRev never returns an error; resolution failure is the
+// downstream resolver's / backend cmd's concern (= they emit
+// exit-code-3 / exit-code-4 with native error messages).
+func translateRev(rev string, kind vcsKind) string {
+	if rev == "" {
+		return rev
 	}
-	return rev[i+1:] + "@" + rev[:i], true
+	// Bail out on anything that looks like a backend-native revspec /
+	// revset operator. Keep the set tight: only chars that unambiguously
+	// signal "this is already backend syntax".
+	if strings.ContainsAny(rev, ".~^:|&{}()") {
+		return rev
+	}
+	hasSlash := strings.Count(rev, "/") == 1
+	hasAt := strings.Count(rev, "@") == 1
+	// XOR: exactly one of slash-form or at-form is allowed.
+	if hasSlash == hasAt {
+		return rev
+	}
+	switch kind {
+	case vcsJj:
+		if !hasSlash {
+			return rev // already jj-native (or unrelated to this rule)
+		}
+		i := strings.IndexByte(rev, '/')
+		if i <= 0 || i == len(rev)-1 {
+			return rev // leading or trailing slash → not a remote/bookmark
+		}
+		return rev[i+1:] + "@" + rev[:i]
+	case vcsGit:
+		if !hasAt {
+			return rev // already git-native (or unrelated to this rule)
+		}
+		i := strings.IndexByte(rev, '@')
+		if i <= 0 || i == len(rev)-1 {
+			return rev // leading or trailing @ → not a bookmark@remote
+		}
+		return rev[i+1:] + "/" + rev[:i]
+	}
+	return rev
 }
 
 // latestTagFromRemote returns the SemVer-largest tag visible at the

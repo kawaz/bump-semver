@@ -531,7 +531,10 @@ func runBackendExitCode(name string, args ...string) (int, error) {
 // --- git: FetchFile / ListTags / LatestTag ---------------------------------
 
 // FetchFile returns `file` at `rev` via `git show <rev>:<file>`.
+// `rev` is translated up-front so jj-style refs (`main@origin`) reach
+// git as `origin/main` — see translateRev / DR-0031.
 func (g *gitBackend) FetchFile(rev, file string) ([]byte, error) {
+	rev = translateRev(rev, vcsGit)
 	return runBackendCmd("git", "show", rev+":"+file)
 }
 
@@ -589,22 +592,12 @@ func (g *gitBackend) IsClean() (bool, error) {
 
 // --- jj: FetchFile / ListTags / LatestTag ----------------------------------
 
-// FetchFile returns `file` at `rev` via `jj file show`. When `rev`
-// looks like `<remote>/<bookmark>` (a git-style remote ref) we
-// transparently retry as jj's native `<bookmark>@<remote>` form on
-// failure — git users habitually write `origin/main` and the fallback
-// keeps that ergonomic. See altJjRev for the mapping.
+// FetchFile returns `file` at `rev` via `jj file show`. `rev` is
+// translated up-front so git-style remote refs (`origin/main`) reach
+// jj as `main@origin` — see translateRev / DR-0031.
 func (j *jjBackend) FetchFile(rev, file string) ([]byte, error) {
-	out, err := runBackendCmd("jj", "file", "show", "-r", rev, file)
-	if err == nil {
-		return out, nil
-	}
-	if alt, ok := altJjRev(rev); ok {
-		if out2, err2 := runBackendCmd("jj", "file", "show", "-r", alt, file); err2 == nil {
-			return out2, nil
-		}
-	}
-	return nil, err
+	rev = translateRev(rev, vcsJj)
+	return runBackendCmd("jj", "file", "show", "-r", rev, file)
 }
 
 // ListTags returns every tag known to the local jj repo. The template
@@ -639,6 +632,7 @@ func (j *jjBackend) LatestTag(includePrerelease bool) (string, Version, error) {
 // without invoking git — calling `git diff REV --` with no paths would
 // widen back to the full diff.
 func (g *gitBackend) Diff(rev string, paths []string) ([]byte, error) {
+	rev = translateRev(rev, vcsGit)
 	args := []string{"diff", rev}
 	if len(paths) > 0 {
 		existing := filterExistingPaths(paths)
@@ -659,6 +653,7 @@ func (g *gitBackend) Diff(rev string, paths []string) ([]byte, error) {
 // declarative-convergence path filter as the git backend — see the
 // gitBackend.Diff comment for the contract.
 func (j *jjBackend) Diff(rev string, paths []string) ([]byte, error) {
+	rev = translateRev(rev, vcsJj)
 	args := []string{"diff", "--from", rev, "--to", "@"}
 	if len(paths) > 0 {
 		existing := filterExistingPaths(paths)
@@ -680,6 +675,7 @@ func (j *jjBackend) Diff(rev string, paths []string) ([]byte, error) {
 // normalization is needed. Same declarative-convergence path filtering as
 // Diff: all-filtered → empty bytes, no git invocation.
 func (g *gitBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
+	rev = translateRev(rev, vcsGit)
 	args := []string{"diff", "--name-status", rev}
 	if len(paths) > 0 {
 		existing := filterExistingPaths(paths)
@@ -710,6 +706,7 @@ func (g *gitBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) 
 // they render them, but M/A/D — the cases that matter for the kawaz
 // "version bumped?" check — are identical.
 func (j *jjBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
+	rev = translateRev(rev, vcsJj)
 	args := []string{"diff", "--summary", "--from", rev, "--to", "@"}
 	if len(paths) > 0 {
 		existing := filterExistingPaths(paths)
@@ -1560,6 +1557,7 @@ func jjGitPushDir() (string, error) {
 // commit (so comparing two refs that one is an annotated tag and the
 // other a rev-spec both land on the commit SHA, not the tag-object SHA).
 func resolveGitRev(rev string) (string, error) {
+	rev = translateRev(rev, vcsGit)
 	out, err := runBackendCmd("git", "rev-parse", "--verify", rev+"^{commit}")
 	if err != nil {
 		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
@@ -1590,6 +1588,7 @@ func existingGitTagSHA(name string) string {
 // SHA — same format `git rev-parse` returns so cross-backend SHA
 // comparisons stay trivial.
 func resolveJjRev(rev string) (string, error) {
+	rev = translateRev(rev, vcsJj)
 	out, err := runBackendCmd("jj", "log", "--no-graph", "-r", rev, "-T", `commit_id ++ "\n"`)
 	if err != nil {
 		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}

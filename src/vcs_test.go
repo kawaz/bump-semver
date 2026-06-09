@@ -109,32 +109,61 @@ func TestParseVcsOverride(t *testing.T) {
 	}
 }
 
-// TestAltJjRev pins the `origin/main` → `main@origin` fallback rule.
-// Pure jj-syntax (`main@origin`) has no `/` so it stays as-is; nested
-// slashes (`feature/foo/bar`) are explicitly NOT remapped because the
-// remote-name boundary is ambiguous.
-func TestAltJjRev(t *testing.T) {
+// TestTranslateRev pins DR-0031's translation rules — single-slash
+// `origin/main` ↔ single-@ `main@origin` swap, with every other shape
+// (multi-segment, revset/revspec syntax, empty) passing through unchanged.
+// Both directions are tested: vcsJj receives git syntax, vcsGit receives
+// jj syntax, and pre-native input on either side stays as-is.
+func TestTranslateRev(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		in      string
-		wantOut string
-		wantOk  bool
+		name string
+		in   string
+		kind vcsKind
+		want string
 	}{
-		{"origin/main", "main@origin", true},
-		{"upstream/feature", "feature@upstream", true},
-		{"main@origin", "", false},
-		{"HEAD~1", "", false},
-		{"main", "", false},
-		{"", "", false},
-		{"a/b/c", "", false}, // multiple slashes: ambiguous
-		{"/leading", "", false},
+		// vcsJj: git-style → jj-native swap.
+		{"jj/origin-main", "origin/main", vcsJj, "main@origin"},
+		{"jj/upstream-feature", "upstream/feature", vcsJj, "feature@upstream"},
+		// vcsJj: already jj-native or unrelated → pass-through.
+		{"jj/main-at-origin", "main@origin", vcsJj, "main@origin"},
+		{"jj/bare-name", "main", vcsJj, "main"},
+		{"jj/at", "@", vcsJj, "@"},
+		{"jj/at-minus", "@-", vcsJj, "@-"}, // dash isn't in the bail set; pass-through (DR-0031 §2)
+		// vcsGit: jj-style → git-native swap.
+		{"git/main-at-origin", "main@origin", vcsGit, "origin/main"},
+		{"git/feature-at-upstream", "feature@upstream", vcsGit, "upstream/feature"},
+		// vcsGit: already git-native or unrelated → pass-through.
+		{"git/origin-main", "origin/main", vcsGit, "origin/main"},
+		{"git/bare-head", "HEAD", vcsGit, "HEAD"},
+		{"git/head-caret", "HEAD^", vcsGit, "HEAD^"},
+		{"git/head-tilde", "HEAD~1", vcsGit, "HEAD~1"},
+		// Multi-segment / multi-slash / multi-@ → pass-through (ambiguous).
+		{"jj/multi-slash", "feature/foo/bar", vcsJj, "feature/foo/bar"},
+		{"git/multi-at", "a@b@c", vcsGit, "a@b@c"},
+		// Backend-native revset/revspec operators always pass through.
+		{"jj/revset-operator", "main..feature", vcsJj, "main..feature"},
+		{"jj/revset-or", "main|feature", vcsJj, "main|feature"},
+		{"git/upstream-marker", "@{u}", vcsGit, "@{u}"},
+		{"git/sha-with-colon", "main:VERSION", vcsGit, "main:VERSION"},
+		// Edge: empty / leading-slash / trailing-slash / leading-@ / trailing-@.
+		{"jj/empty", "", vcsJj, ""},
+		{"jj/leading-slash", "/leading", vcsJj, "/leading"},
+		{"jj/trailing-slash", "trailing/", vcsJj, "trailing/"},
+		{"git/leading-at", "@trailing", vcsGit, "@trailing"},
+		{"git/trailing-at", "leading@", vcsGit, "leading@"},
+		// vcsAuto: no translation table assigned → pass-through.
+		{"auto/origin-main", "origin/main", vcsAuto, "origin/main"},
 	}
 	for _, tc := range cases {
-		got, ok := altJjRev(tc.in)
-		if got != tc.wantOut || ok != tc.wantOk {
-			t.Errorf("altJjRev(%q) = (%q, %v), want (%q, %v)",
-				tc.in, got, ok, tc.wantOut, tc.wantOk)
-		}
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := translateRev(tc.in, tc.kind); got != tc.want {
+				t.Errorf("translateRev(%q, %s) = %q, want %q",
+					tc.in, tc.kind, got, tc.want)
+			}
+		})
 	}
 }
 

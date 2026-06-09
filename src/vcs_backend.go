@@ -89,7 +89,7 @@ type vcsBackend interface {
 	// Errors (VCS subprocess failure, bad REV) are returned as
 	// *exitErr{code: exitCodeVCSExec} so callers preserve the exit-code
 	// contract.
-	Diff(rev string, paths []string) ([]byte, error)
+	Diff(rev string, paths []string, excludes []string) ([]byte, error)
 
 	// DiffNameStatus returns one line per changed file between `rev` and
 	// the working copy, formatted as `<CODE>\t<path>\n` (git's native
@@ -109,7 +109,7 @@ type vcsBackend interface {
 	// Used by `vcs diff -s/--name-status` for display and by
 	// `vcs diff -q/--quiet` to derive presence (len > 0 → diff present).
 	// Returning a single shape lets both options share one code path.
-	DiffNameStatus(rev string, paths []string) ([]byte, error)
+	DiffNameStatus(rev string, paths []string, excludes []string) ([]byte, error)
 
 	// Fetch refreshes refs from the named remote (DR-0020 PR-5). Empty
 	// remote is a caller bug — the dispatcher always supplies a value
@@ -631,16 +631,16 @@ func (j *jjBackend) LatestTag(includePrerelease bool) (string, Version, error) {
 // and scope the diff to the survivors. All-filtered yields empty bytes
 // without invoking git — calling `git diff REV --` with no paths would
 // widen back to the full diff.
-func (g *gitBackend) Diff(rev string, paths []string) ([]byte, error) {
+func (g *gitBackend) Diff(rev string, paths []string, excludes []string) ([]byte, error) {
 	rev = translateRev(rev, vcsGit)
 	args := []string{"diff", rev}
-	if len(paths) > 0 {
-		existing := filterExistingPaths(paths)
-		if len(existing) == 0 {
+	if len(paths) > 0 || len(excludes) > 0 {
+		pathspec := buildGitPathspec(paths, excludes)
+		if pathspec == nil {
 			return nil, nil
 		}
 		args = append(args, "--")
-		args = append(args, existing...)
+		args = append(args, pathspec...)
 	}
 	out, err := runBackendCmd("git", args...)
 	if err != nil {
@@ -652,16 +652,16 @@ func (g *gitBackend) Diff(rev string, paths []string) ([]byte, error) {
 // Diff returns the patch between `rev` and `@` (jj's working copy). Same
 // declarative-convergence path filter as the git backend — see the
 // gitBackend.Diff comment for the contract.
-func (j *jjBackend) Diff(rev string, paths []string) ([]byte, error) {
+func (j *jjBackend) Diff(rev string, paths []string, excludes []string) ([]byte, error) {
 	rev = translateRev(rev, vcsJj)
 	args := []string{"diff", "--from", rev, "--to", "@"}
-	if len(paths) > 0 {
-		existing := filterExistingPaths(paths)
-		if len(existing) == 0 {
+	if len(paths) > 0 || len(excludes) > 0 {
+		pathspec := buildJjPathspec(paths, excludes)
+		if pathspec == nil {
 			return nil, nil
 		}
 		args = append(args, "--")
-		args = append(args, existing...)
+		args = append(args, pathspec...)
 	}
 	out, err := runBackendCmd("jj", args...)
 	if err != nil {
@@ -674,16 +674,16 @@ func (j *jjBackend) Diff(rev string, paths []string) ([]byte, error) {
 // git's output is already the contract format (`<CODE>\t<path>\n`), so no
 // normalization is needed. Same declarative-convergence path filtering as
 // Diff: all-filtered → empty bytes, no git invocation.
-func (g *gitBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
+func (g *gitBackend) DiffNameStatus(rev string, paths []string, excludes []string) ([]byte, error) {
 	rev = translateRev(rev, vcsGit)
 	args := []string{"diff", "--name-status", rev}
-	if len(paths) > 0 {
-		existing := filterExistingPaths(paths)
-		if len(existing) == 0 {
+	if len(paths) > 0 || len(excludes) > 0 {
+		pathspec := buildGitPathspec(paths, excludes)
+		if pathspec == nil {
 			return nil, nil
 		}
 		args = append(args, "--")
-		args = append(args, existing...)
+		args = append(args, pathspec...)
 	}
 	out, err := runBackendCmd("git", args...)
 	if err != nil {
@@ -705,16 +705,16 @@ func (g *gitBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) 
 // Rename / copy codes (R/C) are best-effort: jj and git may differ in how
 // they render them, but M/A/D — the cases that matter for the kawaz
 // "version bumped?" check — are identical.
-func (j *jjBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
+func (j *jjBackend) DiffNameStatus(rev string, paths []string, excludes []string) ([]byte, error) {
 	rev = translateRev(rev, vcsJj)
 	args := []string{"diff", "--summary", "--from", rev, "--to", "@"}
-	if len(paths) > 0 {
-		existing := filterExistingPaths(paths)
-		if len(existing) == 0 {
+	if len(paths) > 0 || len(excludes) > 0 {
+		pathspec := buildJjPathspec(paths, excludes)
+		if pathspec == nil {
 			return nil, nil
 		}
 		args = append(args, "--")
-		args = append(args, existing...)
+		args = append(args, pathspec...)
 	}
 	out, err := runBackendCmd("jj", args...)
 	if err != nil {
@@ -727,6 +727,104 @@ func (j *jjBackend) DiffNameStatus(rev string, paths []string) ([]byte, error) {
 // `<CODE>\t<path>\n` form. The first space on each line becomes a tab; the
 // rest of the line is left untouched so paths-with-spaces survive intact.
 // Trailing newlines are preserved.
+// buildGitPathspec converts (paths, excludes) into the `--` pathspec args
+// passed to `git diff` (DR-0033 phase 2 v2). git's magic pathspec syntax:
+//
+//   - Include: literal path, glob via :(glob), etc. We pass include patterns
+//     unchanged (literal directories, files, or already-prefixed `glob:` after
+//     prefix strip via trimGlobPrefix).
+//   - Exclude: `:(exclude,glob)<pat>` long form. The short `:!<pat>` does NOT
+//     interpret `**` (= fnmatch only); the long form with `glob` magic is
+//     required for `**/*_test.go` style patterns (empirically verified on
+//     git 2.x).
+//
+// Return value semantics:
+//
+//   - nil           = caller should NOT call git (= "all paths filtered" /
+//     declarative-convergence rule, mimics the old behavior
+//     of filterExistingPaths returning empty).
+//   - empty slice   = no pathspec → diff everything.
+//   - non-empty     = pass after `--`.
+func buildGitPathspec(paths, excludes []string) []string {
+	// Include: drop nonexistent literal paths (declarative-convergence).
+	var includes []string
+	if len(paths) > 0 {
+		includes = filterExistingPaths(paths)
+		if len(includes) == 0 {
+			return nil
+		}
+		// Strip glob: prefix → pass raw pattern (git pathspec accepts glob
+		// natively via :(glob,glob) — but for include we don't need an
+		// explicit `glob:` magic; the doublestar pre-expansion (= DR-0024)
+		// already converted glob: includes to file lists upstream).
+	}
+	out := make([]string, 0, len(includes)+len(excludes))
+	out = append(out, includes...)
+	for _, e := range excludes {
+		out = append(out, ":(exclude,glob)"+trimGlobPrefix(e))
+	}
+	return out
+}
+
+// buildJjPathspec converts (paths, excludes) into a single jj fileset
+// expression argv (or empty for "no pathspec"). jj fileset language:
+//
+//   - `path` / `glob:pat` — atom
+//   - `x | y` — union
+//   - `x ~ y` — difference
+//
+// When excludes are empty, we keep the old behavior of passing each include
+// as a separate pathspec arg (= jj unions them implicitly). This preserves
+// compatibility with paths-with-spaces and avoids quoting headaches in the
+// common case.
+//
+// When excludes are non-empty, we MUST combine into a single fileset
+// expression because separate pathspec args are unioned (= negation as a
+// separate arg has no exclude effect, empirically verified on jj 0.41).
+//
+// Return value semantics: same as buildGitPathspec.
+func buildJjPathspec(paths, excludes []string) []string {
+	var includes []string
+	if len(paths) > 0 {
+		includes = filterExistingPaths(paths)
+		if len(includes) == 0 {
+			return nil
+		}
+	}
+	if len(excludes) == 0 {
+		return includes
+	}
+	// Build a single fileset expression: (inc1 | inc2 | ...) ~ exc1 ~ exc2.
+	// Atoms: literal path or `glob:pat` (already in jj's vocabulary).
+	if len(includes) == 0 {
+		// 防御: dispatcher が positional 無しの --excludes を弾くはずだが、
+		// ここに来た場合は filter結果が空 = backend に投げない (nil)。
+		return nil
+	}
+	var sb strings.Builder
+	sb.WriteByte('(')
+	for i, p := range includes {
+		if i > 0 {
+			sb.WriteString(" | ")
+		}
+		sb.WriteString(p)
+	}
+	sb.WriteByte(')')
+	for _, e := range excludes {
+		sb.WriteString(" ~ ")
+		sb.WriteString(e)
+	}
+	return []string{sb.String()}
+}
+
+// trimGlobPrefix removes a leading `glob:` from the pattern (if present).
+// Used by buildGitPathspec when emitting `:(exclude,glob)<pat>` — the
+// `glob:` magic name is already implied by the `glob` magic word, so the
+// raw pattern is what we want.
+func trimGlobPrefix(s string) string {
+	return strings.TrimPrefix(s, "glob:")
+}
+
 func normalizeJjNameStatus(in []byte) []byte {
 	if len(in) == 0 {
 		return in

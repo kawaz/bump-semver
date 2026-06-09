@@ -271,35 +271,40 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	rev := args.vcsArgs[0]
 	rawPaths := args.vcsArgs[1:]
 
-	// DR-0024 + DR-0033: expand selectors with literal-directory upgrade.
-	// Literal `src/` becomes the file list under it (= internally `glob:src/**/*`
-	// with dotfile inclusion), so set subtraction with file-level excludes
-	// (e.g. `--excludes 'glob:**/*_test.go'`) works as users expect.
-	// selectorsGiven reflects whether the user supplied any positional selector;
-	// the declarative-convergence rule (= all-filtered yields empty, never
-	// widens to "all paths") is preserved by the dispatcher's existing
-	// short-circuit below.
-	paths, err := expandVcsPathInputs(rawPaths, args.glob)
+	// DR-0024: expand `glob:` / `file:` selectors. Literal paths pass through
+	// to the backend so that:
+	//   - directory literals (e.g. `src/`) keep their pathspec semantics
+	//     (= backend sees directory pathspec, handles deletions natively)
+	//   - file literals that were deleted in the working copy still surface
+	//     in the backend's diff (= they exist in REV, backend computes the
+	//     deletion entry)
+	//
+	// selectorsGiven reflects whether the user supplied any positional
+	// selector; the declarative-convergence rule (= "selectors given but
+	// all-nonexistent → diff nothing") is preserved by the backend's
+	// existing filterExistingPaths call.
+	paths, err := expandGlobInputs(rawPaths, args.glob)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
 	selectorsGiven := len(rawPaths) > 0
-	// DR-0033: --excludes is a post-filter on the expanded include set.
-	// Order-independent (= position of --excludes in argv doesn't matter).
-	// When no positional selectors were given (= "diff everything"),
-	// `--excludes` without an explicit include set has no anchor in our
-	// current model (= we don't enumerate "all tracked files" to subtract
-	// from). Reject that combination so the user types an explicit include.
+	// DR-0033: --excludes is forwarded to the backend as native pathspec
+	// (`:(exclude,glob)pat` for git, `(includes) ~ pat ~ ...` fileset for jj).
+	// This avoids the literal-directory-drops-deletions trap of pre-expanding
+	// to a file list (= phase 2 v2, supersedes the set-subtraction model).
+	// `file:` excludes are expanded locally first since the backend doesn't
+	// know our `file:` shape; the resulting flat list of patterns is then
+	// forwarded as separate excludes.
+	var excludes []string
 	if len(args.vcsDiff.Excludes) > 0 {
 		if !selectorsGiven {
 			return emitVcsUsage(stderr, args,
 				fmt.Errorf("vcs diff: --excludes requires at least one positional PATH (= explicit include set; bare 'diff everything' minus excludes is not supported)"))
 		}
-		filtered, ferr := excludeInputs(paths, args.vcsDiff.Excludes, args.glob)
-		if ferr != nil {
-			return emitVcsErr(stderr, args, ferr)
+		excludes, err = flattenExcludePatterns(args.vcsDiff.Excludes, args.glob)
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
 		}
-		paths = filtered
 	}
 
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
@@ -318,7 +323,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	// name-status output (cheap; same shape feeds -s display). Doing this
 	// before -s keeps `-q` strictly authoritative when both are set.
 	if args.output.Verbosity.ShouldSuppressStdout() {
-		ns, err := b.DiffNameStatus(rev, paths)
+		ns, err := b.DiffNameStatus(rev, paths, excludes)
 		if err != nil {
 			return emitVcsErr(stderr, args, err)
 		}
@@ -331,7 +336,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 
 	// -s: name-status display (no quiet → stdout gets the codes).
 	if args.vcsDiff.NameStatus {
-		out, err := b.DiffNameStatus(rev, paths)
+		out, err := b.DiffNameStatus(rev, paths, excludes)
 		if err != nil {
 			return emitVcsErr(stderr, args, err)
 		}
@@ -344,7 +349,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	}
 
 	// Default: raw patch.
-	out, err := b.Diff(rev, paths)
+	out, err := b.Diff(rev, paths, excludes)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
 	}

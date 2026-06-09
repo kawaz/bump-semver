@@ -36,6 +36,41 @@ func parseFileSpec(spec string) (string, error) {
 	return path, nil
 }
 
+// readPatternListFile reads `path` and returns the non-comment, non-blank
+// lines as a slice of patterns (= literal / `glob:` strings preserved
+// verbatim, no further expansion). Used by `flattenExcludePatterns` so
+// `--excludes file:LIST` resolves to a flat list of patterns that the
+// backend pathspec builder can consume.
+//
+// Nested `file:` references in the list are rejected (= same MVP scope
+// constraint as expandFileSpec).
+func readPatternListFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("file:%s: %w", path, err)
+	}
+	defer f.Close()
+
+	var out []string
+	scanner := bufio.NewScanner(f)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if hasFilePrefix(line) {
+			return nil, fmt.Errorf("file:%s:%d: nested file: is not supported (MVP scope, see DR-0033)", path, lineNo)
+		}
+		out = append(out, line)
+	}
+	if serr := scanner.Err(); serr != nil {
+		return nil, fmt.Errorf("file:%s: read: %w", path, serr)
+	}
+	return out, nil
+}
+
 // expandFileSpec reads the file at path and returns the list of expanded paths
 // (literal lines pass through verbatim; `glob:` lines are expanded via the
 // shared glob layer with the caller-provided opts). Comment lines (`#` prefix)

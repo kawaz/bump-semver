@@ -532,7 +532,7 @@ func TestGitBackend_Diff_NoPaths_HasDiff(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.Diff("HEAD~1", nil)
+		out, err := b.Diff("HEAD~1", nil, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -555,7 +555,7 @@ func TestGitBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.Diff("HEAD", nil)
+		out, err := b.Diff("HEAD", nil, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -579,7 +579,7 @@ func TestGitBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
 		b := &gitBackend{}
 		// VERSION exists, doesnotexist.txt does not. We expect the call
 		// to succeed and the diff to cover VERSION (vs HEAD~1).
-		out, err := b.Diff("HEAD~1", []string{"VERSION", "doesnotexist.txt"})
+		out, err := b.Diff("HEAD~1", []string{"VERSION", "doesnotexist.txt"}, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -601,7 +601,7 @@ func TestGitBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.Diff("HEAD~1", []string{"nope.txt", "alsonope.txt"})
+		out, err := b.Diff("HEAD~1", []string{"nope.txt", "alsonope.txt"}, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -621,7 +621,7 @@ func TestGitBackend_Diff_BadRev(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		_, err := b.Diff("doesnotexist", nil)
+		_, err := b.Diff("doesnotexist", nil, nil)
 		if err == nil {
 			t.Fatal("expected error for nonexistent rev")
 		}
@@ -641,7 +641,7 @@ func TestJjBackend_Diff_NoPaths_HasDiff(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.Diff("@--", nil)
+		out, err := b.Diff("@--", nil, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -664,7 +664,7 @@ func TestJjBackend_Diff_NoDiff_EmptyBytes(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.Diff("@", nil)
+		out, err := b.Diff("@", nil, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -685,7 +685,7 @@ func TestJjBackend_Diff_NonexistentPath_Ignored(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.Diff("@--", []string{"VERSION", "doesnotexist.txt"})
+		out, err := b.Diff("@--", []string{"VERSION", "doesnotexist.txt"}, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -706,7 +706,7 @@ func TestJjBackend_Diff_AllPathsNonexistent_EmptyVacuous(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.Diff("@--", []string{"nope.txt", "alsonope.txt"})
+		out, err := b.Diff("@--", []string{"nope.txt", "alsonope.txt"}, nil)
 		if err != nil {
 			t.Fatalf("Diff: %v", err)
 		}
@@ -726,7 +726,7 @@ func TestJjBackend_Diff_BadRev(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		_, err := b.Diff("doesnotexist", nil)
+		_, err := b.Diff("doesnotexist", nil, nil)
 		if err == nil {
 			t.Fatal("expected error for nonexistent rev")
 		}
@@ -748,7 +748,7 @@ func TestGitBackend_DiffNameStatus_HasChanges(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.DiffNameStatus("HEAD~1", nil)
+		out, err := b.DiffNameStatus("HEAD~1", nil, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -773,7 +773,7 @@ func TestGitBackend_DiffNameStatus_NoChanges(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.DiffNameStatus("HEAD", nil)
+		out, err := b.DiffNameStatus("HEAD", nil, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -793,7 +793,7 @@ func TestGitBackend_DiffNameStatus_PathFilter(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.DiffNameStatus("HEAD~1", []string{"VERSION", "nope.txt"})
+		out, err := b.DiffNameStatus("HEAD~1", []string{"VERSION", "nope.txt"}, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -813,7 +813,7 @@ func TestGitBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		out, err := b.DiffNameStatus("HEAD~1", []string{"nope.txt"})
+		out, err := b.DiffNameStatus("HEAD~1", []string{"nope.txt"}, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -832,7 +832,7 @@ func TestGitBackend_DiffNameStatus_BadRev(t *testing.T) {
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		_, err := b.DiffNameStatus("doesnotexist", nil)
+		_, err := b.DiffNameStatus("doesnotexist", nil, nil)
 		if err == nil {
 			t.Fatal("expected error for nonexistent rev")
 		}
@@ -853,7 +853,7 @@ func TestJjBackend_DiffNameStatus_HasChanges_TabNormalized(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.DiffNameStatus("@--", nil)
+		out, err := b.DiffNameStatus("@--", nil, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -877,7 +877,7 @@ func TestJjBackend_DiffNameStatus_NoChanges(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.DiffNameStatus("@", nil)
+		out, err := b.DiffNameStatus("@", nil, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -896,7 +896,7 @@ func TestJjBackend_DiffNameStatus_AllPathsNonexistent(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		out, err := b.DiffNameStatus("@--", []string{"nope.txt"})
+		out, err := b.DiffNameStatus("@--", []string{"nope.txt"}, nil)
 		if err != nil {
 			t.Fatalf("DiffNameStatus: %v", err)
 		}
@@ -915,7 +915,7 @@ func TestJjBackend_DiffNameStatus_BadRev(t *testing.T) {
 	dir := setupJjRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
 		b := &jjBackend{}
-		_, err := b.DiffNameStatus("doesnotexist", nil)
+		_, err := b.DiffNameStatus("doesnotexist", nil, nil)
 		if err == nil {
 			t.Fatal("expected error for nonexistent rev")
 		}

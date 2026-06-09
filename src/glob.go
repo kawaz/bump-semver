@@ -200,6 +200,61 @@ func anyGlob(inputs []string) bool {
 	return false
 }
 
+// expandVcsPathInputs is the entry point used by `vcs` verbs (diff / commit /
+// outdated) that delegates to expandGlobInputs after upgrading literal
+// directory selectors to file-level globs. DR-0033 phase 2 behavior:
+//
+//   - literal path that is an existing directory → `glob:<dir>/**/*`
+//     (expanded with dotfile inclusion forced on, since the user explicitly
+//     named the directory; gitignore filtering still respects `--glob-gitignored`).
+//   - literal path that is not a directory (= file or nonexistent) → pass through.
+//   - `glob:` / `file:` selectors → pass through to expandGlobInputs.
+//
+// The conversion makes `vcs diff src/ --excludes 'glob:**/*_test.go'` work as
+// users expect (= the literal `src/` becomes the file list under it, then
+// excludes set-subtract test files).
+//
+// For non-vcs verbs (`get` / `bump` / `compare`) we deliberately keep the old
+// expandGlobInputs entry point because they read FILE *content*, where a
+// directory is unsupported and should error visibly rather than silently
+// expand to many files.
+func expandVcsPathInputs(inputs []string, opts globOpts) ([]string, error) {
+	if len(inputs) == 0 {
+		return inputs, nil
+	}
+	// Dotfile inclusion is forced on for the auto-expanded directory case:
+	// the user explicitly named the directory, so they expect everything
+	// inside it (including `.config`, `.editorconfig`, etc). --glob-gitignored
+	// inherits from the caller's opts — the user can still --glob-gitignored=false
+	// to include tracked-but-gitignored files (rare; documented exception
+	// for "ghost tracked" cleanup workflows).
+	dirOpts := opts
+	dirOpts.Dotfile = true
+	upgraded := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		if hasGlobPrefix(in) || hasFilePrefix(in) {
+			upgraded = append(upgraded, in)
+			continue
+		}
+		info, err := os.Stat(in)
+		if err != nil || !info.IsDir() {
+			upgraded = append(upgraded, in)
+			continue
+		}
+		// Auto-expand directory literal into a recursive file glob, with
+		// dotfile-include forced on. We expand here (rather than emitting
+		// a synthetic "glob:" string) so the dotfile override applies
+		// without polluting the shared opts struct.
+		pat := filepath.Join(in, "**", "*")
+		matches, mErr := expandGlob(pat, dirOpts, defaultHomeFn)
+		if mErr != nil {
+			return nil, mErr
+		}
+		upgraded = append(upgraded, matches...)
+	}
+	return expandGlobInputs(upgraded, opts)
+}
+
 // expandGlobInputs walks inputs and expands `glob:<pat>` / `file:<path>`
 // selectors into the list of matched paths. Non-prefixed inputs pass through
 // unchanged. The resulting slice preserves position order (matches from each
@@ -266,9 +321,11 @@ func excludeInputs(includes []string, excludePatterns []string, opts globOpts) (
 		return includes, nil
 	}
 	// Expand the union of exclude patterns into a concrete path set.
+	// Use expandVcsPathInputs so literal directory excludes are upgraded
+	// (= `--excludes src/legacy/` covers everything under src/legacy/).
 	excludeSet := make(map[string]struct{})
 	for _, pat := range excludePatterns {
-		expanded, err := expandGlobInputs([]string{pat}, opts)
+		expanded, err := expandVcsPathInputs([]string{pat}, opts)
 		if err != nil {
 			return nil, fmt.Errorf("--excludes %s: %w", pat, err)
 		}

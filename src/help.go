@@ -596,23 +596,13 @@ Options:
                          pattern). Order-independent: final set = include
                          ∖ ⋃(excludes). PATTERN accepts the same shape
                          as positional PATH (literal / glob: / file:).
-                         Phase 1 constraint: at least one positional
-                         PATH must be given when --excludes is used (=
-                         bare 'diff everything' minus excludes is not
-                         supported in v0.33.0). DR-0033 で詳細。
-                         **Important** (phase 1 limitation): excludes
-                         act on the **expanded path list**, not on the
-                         backend pathspec. Literal directory selectors
-                         like 'src/' are passed to git/jj verbatim — a
-                         file-level exclude pattern (e.g. 'glob:**/*_test.go')
-                         won't filter inside that directory because the
-                         set subtraction never sees individual files.
-                         To exclude inside a subtree, write the include
-                         as a file-level glob: 'glob:src/**/*.go'
-                         --excludes 'glob:src/**/*_test.go'. Backend
-                         pathspec integration (= forward excludes to
-                         git pathspec ':!pat' / jj fileset '~glob:pat')
-                         is tracked as a phase 2 follow-up.
+                         Constraint: at least one positional PATH must
+                         be given when --excludes is used.
+                         Literal directory selectors (e.g. 'src/') are
+                         internally expanded to 'glob:src/**/*' with
+                         dotfile inclusion forced on, so file-level
+                         exclude patterns (e.g. 'glob:**/*_test.go')
+                         filter inside that directory as users expect.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)

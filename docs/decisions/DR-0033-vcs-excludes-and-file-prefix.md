@@ -223,34 +223,21 @@ _check-version-bumped *target_paths:
 6. VERSION bump v0.33.0
 7. push (= `just push` 経由) → CI watch → release workflow
 
-## Phase 1 既知の制約 (= 2026-06-10 land 時点)
+## 補足: phase 2 で land 済 (2026-06-10) — literal directory 透過対応
 
-`--excludes` は **expand 後の path list に対する set-subtraction** として実装されている (= `expandGlobInputs` 後の slice から `excludeInputs` で削る)。これにより以下の制約がある:
+DR-0033 land の翌日 v0.33.2 で、literal directory selector に対する file-level exclude が動かない問題を是正した。
 
-**literal directory selector に対する file-level exclude は効かない**
+**問題**: 当初実装では `expandGlobInputs` 後の path list で set-subtraction する設計だったため、literal `src/` (= 1 entry のまま) と file-level `glob:src/**/*_test.go` (= 個別 file path に展開) が overlap せず exclude が効かなかった。
 
-```bash
-# NG: src/ は単一 directory entry、glob:**/*_test.go と overlap しない
-bump-semver vcs diff REV src/ --excludes 'glob:src/**/*_test.go'
+**解決**: `expandVcsPathInputs` helper を新設、`vcs` verb の入力 path 処理に挿入。literal path が directory のとき:
 
-# OK: include 側も file-level に展開してから set-subtraction
-bump-semver vcs diff REV 'glob:src/**/*.go' --excludes 'glob:src/**/*_test.go'
-```
+- 内部的に `glob:<dir>/**/*` 扱いに upgrade (= file list に展開)
+- dotfile inclusion を **強制 on** (= 利用者が directory を明示指定 = dotfile も含意)
+- `--glob-gitignored` は caller の opts 継承 (= 既存 flag を尊重)
 
-理由: 現実装は `expandGlobInputs` 後の path list (= literal directory はそのまま、`glob:` は file 展開) で set 演算する。literal `src/` は 1 entry のまま、`src/main_test.go` 等の file path とは別の entry なので集合差分で削れない。
+これにより `vcs diff src/ --excludes 'glob:src/**/*_test.go'` が利用者期待通りに動作する。include / exclude 両方に同じ upgrade を適用するので、`--excludes src/legacy/` のように directory 形式 exclude も透過対応。
 
-**Phase 2 (= follow-up DR) で解決予定**
-
-正しい解は **backend pathspec への forwarding**:
-- git: `git diff REV -- src/ ':!src/**/*_test.go'`
-- jj: `jj diff --from REV --to @ -- 'src/' '~glob:src/**/*_test.go'`
-
-これにより:
-- literal directory + file-level exclude が透過的に動く
-- 大規模 subtree の全 file 列挙を Go 側で行わなくて済む (= 性能改善)
-- git / jj 自身の pathspec 表現力 (= さらに richer な exclude rule) も活用可
-
-Phase 2 land までは **include 側も `glob:` で file-level に揃える** ことで運用回避。本リポの `justfile` `check-version-bumped` も `glob:src/**/*.go` 形を採用 (= dogfood 例)。
+**`get` / `bump` / `compare` 系は対象外**: これら verb は FILE *content* を読む責務、directory は本来 unsupported (= 明示エラーが正しい挙動)。`expandGlobInputs` 経路は維持し、`expandVcsPathInputs` は `vcs` verb のみが利用する。
 
 ## 補足: phase 2 の方向性
 

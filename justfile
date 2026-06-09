@@ -63,13 +63,11 @@ ensure-clean:
 
 # fail if bump-trigger-paths changed since origin/main but VERSION was not bumped
 # (DR-0033 dogfood: test 専用の追加では VERSION bump を要求しない)
-# 注: include 側を `glob:src/**/*.go` で file-level に展開してから --excludes と
-# set-subtraction する必要がある (= literal `src/` は単一 directory entry として
-# 扱われ、file-level glob exclude と overlap しない、DR-0033 phase 1 の制約)
-check-version-bumped: (_check-version-bumped "glob:src/**/*.go" "go.mod" "go.sum")
+check-version-bumped: (_check-version-bumped "src/" "go.mod" "go.sum")
 
 # (helper) diff があれば VERSION が origin/main より上がっているか検証
 # `--excludes glob:src/**/*_test.go` で test 専用変更を bump-trigger から除外
+# (= DR-0033、literal `src/` は内部で glob:src/**/* 扱いになるので exclude が効く)
 [private]
 [script]
 _check-version-bumped *target_paths:

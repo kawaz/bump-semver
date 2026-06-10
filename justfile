@@ -95,7 +95,14 @@ bump-version level="patch": ensure-clean
 # push to origin/main with gates
 push: ci check-outdated-translations check-version-bumped
     bump-semver vcs push --branch main --jj-bookmark-auto-advance
-    @echo "[hint] gh-monitor:watch-workflow --sha $(bump-semver vcs is jj && jj log -r main --no-graph -T 'commit_id' || git rev-parse main) kawaz/bump-semver で Release 成功後、brew upgrade kawaz/tap/bump-semver"
+    @echo "[hint] gh-monitor:watch-workflow --sha $(bump-semver vcs is jj && jj log -r main --no-graph -T 'commit_id' || git rev-parse main) --on-success release.yml 'just on-success-release' kawaz/bump-semver"
+
+# release.yml workflow が success になった時に AI が実行する action
+# (watch-workflow の `--on-success release.yml 'just on-success-release'` 経由で
+# 通知 event に `[ACTION:release.yml] just on-success-release` が emit される)
+on-success-release:
+    brew upgrade kawaz/tap/bump-semver
+    bump-semver --version
 
 # ---------- utility ----------
 

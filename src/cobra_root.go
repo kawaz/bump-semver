@@ -115,12 +115,18 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	// --help-full: there is no native cobra concept for it, so it is a
-	// persistent bool flag that the root RunE / help wiring inspects.
+	// persistent bool flag that the root RunE / help wiring inspects. It is
+	// a root-only concept (the short/full help selector), so it is hidden
+	// from the auto-generated subcommand Global Options block — the root's
+	// own help (shortHelpText / fullHelpText) documents it by hand.
 	root.PersistentFlags().BoolVar(&helpFull, "help-full", false, "show the complete reference and exit")
-	// -V / --version: registered so `bump-semver --help` lists it; the
-	// actual handling happens in runCobra before cobra parsing (the
-	// flag value here is never read).
+	root.PersistentFlags().Lookup("help-full").Hidden = true
+	// -V / --version: registered so the root help can mention it; the
+	// actual handling happens in runCobra before cobra parsing (the flag
+	// value here is never read). Hidden from subcommand help for the same
+	// reason as --help-full (it only fires as a leading token).
 	root.PersistentFlags().BoolP("version", "V", false, "print version and exit")
+	root.PersistentFlags().Lookup("version").Hidden = true
 
 	root.SetFlagErrorFunc(flagErrorFunc)
 
@@ -132,11 +138,12 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 		root.AddCommand(c)
 	}
 
-	// Route `--help-full` (when it leads) and `--help` / `-h` /
-	// no-argument all to the existing help text. cobra's default help
-	// flow prints to cmd's out writer; point it at stdout and emit the
-	// short help.
-	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+	// Help wiring. The root keeps its bespoke short / full help (selected
+	// by --help-full); every subcommand renders through renderCommandHelp,
+	// whose Options / Global Options sections come from the live FlagSet
+	// (the cobra-migration single-source-of-truth goal). installHelp sets a
+	// single HelpFunc on the root that children inherit.
+	installHelp(root, stdout, func() {
 		if helpFull {
 			fmt.Fprint(stdout, fullHelpText)
 			return

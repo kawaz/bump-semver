@@ -57,13 +57,11 @@ func newBumpCmd(action string, stdin io.Reader, stdout, stderr io.Writer) *cobra
 
 	cmd.SetFlagErrorFunc(flagErrorFunc)
 
-	// cobra intercepts --help / -h before RunE; route it to the existing
-	// per-action help const on stdout (exit 0), matching the legacy
-	// `<action> --help` short-circuit.
-	helpKey := action
-	cmd.SetHelpFunc(func(*cobra.Command, []string) {
-		_ = printActionHelp(stdout, helpKey)
-	})
+	// Per-action help prose (Long / Exit codes / Examples). The Options /
+	// Global Options sections are generated from the FlagSet by the root's
+	// HelpFunc (installHelp → renderCommandHelp), so --help stays in sync
+	// with the flags registered above.
+	applyBumpHelp(cmd, action)
 
 	return cmd
 }

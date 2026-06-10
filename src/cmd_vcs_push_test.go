@@ -326,7 +326,7 @@ func TestRun_VcsPushHelp(t *testing.T) {
 // of the mutual-exclusion rule).
 func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
 	t.Parallel()
-	body := helpVcsPush
+	body := mustRun(t, "vcs", "push", "--help")
 	// Old verbose lines that PR-5.1 deletes.
 	for _, banned := range []string{
 		"--bookmark NAME  Alias of --branch",
@@ -336,14 +336,14 @@ func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
 		"mutually exclusive",
 	} {
 		if strings.Contains(body, banned) {
-			t.Errorf("PR-5.1 should remove %q from helpVcsPush, but it is still present", banned)
+			t.Errorf("PR-5.1 should remove %q from vcs push --help, but it is still present", banned)
 		}
 	}
 	// The terminology bridge must remain (in whatever exact wording the
 	// implementation picks — we just require "bookmark" appears, since
 	// jj users need to recognise the verbose).
 	if !strings.Contains(body, "bookmark") {
-		t.Errorf("helpVcsPush should still mention 'bookmark' for jj users, got: %q", body)
+		t.Errorf("vcs push --help should still mention 'bookmark' for jj users, got: %q", body)
 	}
 }
 
@@ -352,15 +352,15 @@ func TestHelpVcsPush_BookmarkIsBrief(t *testing.T) {
 // text honest about what bump-semver actually prints (= git/jj raw).
 func TestHelpVcsPush_NoEditorialHint(t *testing.T) {
 	t.Parallel()
-	body := helpVcsPush
+	body := mustRun(t, "vcs", "push", "--help")
 	if strings.Contains(body, "remote has diverged") {
-		t.Errorf("helpVcsPush should not promise a hint that PR-5.1 removed, got: %q", body)
+		t.Errorf("vcs push --help should not promise a hint that PR-5.1 removed, got: %q", body)
 	}
 	// Help should now point users at the underlying tool's message
 	// instead. We assert the user-facing concept rather than a fixed
 	// phrasing (the implementer picks the exact wording).
 	if !strings.Contains(body, "git/jj") && !strings.Contains(body, "underlying") {
-		t.Errorf("helpVcsPush should redirect non-ff users to the underlying tool's stderr, got: %q", body)
+		t.Errorf("vcs push --help should redirect non-ff users to the underlying tool's stderr, got: %q", body)
 	}
 }
 

@@ -189,11 +189,11 @@ func (v *verbosityRaiseValue) String() string   { return "" }
 // before parsing.
 func addVerbosityFlags(fs *pflag.FlagSet, v *outputVerbosity) {
 	quiet := &verbosityRaiseValue{slot: v, level: outputQuiet}
-	fs.VarP(quiet, "quiet", "q", "suppress stdout + hints")
+	fs.VarP(quiet, "quiet", "q", "suppress stdout and hints")
 	fs.Lookup("quiet").NoOptDefVal = "x"
 
 	quietAll := &verbosityRaiseValue{slot: v, level: outputQuietAll}
-	fs.Var(quietAll, "quiet-all", "suppress stdout + hints + errors")
+	fs.Var(quietAll, "quiet-all", "suppress stdout, hints, and errors (use with caution)")
 	fs.Lookup("quiet-all").NoOptDefVal = "x"
 
 	noHint := &verbosityRaiseValue{slot: v, level: outputNoHint}
@@ -370,19 +370,27 @@ func addSharedBumpFlags(cmd *cobra.Command, args *cliArgs) *sharedBumpFlags {
 	// (legacy "<flag> specified twice"); --json / --no-hint are idempotent
 	// (silently absorbed). onceBoolValue needs NoOptDefVal so the bare form
 	// consumes no argument.
-	addOnceBool(f, newOnceBool("--write", &args.write), "write", "write the new version back to its source")
-	f.Var(newOnceString("--pre", &args.bump.Pre), "pre", "set the pre-release identifier")
+	addOnceBool(f, newOnceBool("--write", &args.write), "write", "write the new version back to each FILE input")
+	f.Var(newOnceString("--pre", &args.bump.Pre), "pre", "set pre-release identifiers `PRE` (e.g. rc.0)")
 	addOnceBool(f, newOnceBool("--no-pre", &args.bump.NoPre), "no-pre", "strip the pre-release identifier")
-	f.Var(newOnceString("--build-metadata", &args.bump.BuildMetadata), "build-metadata", "set the build metadata")
+	f.Var(newOnceString("--build-metadata", &args.bump.BuildMetadata), "build-metadata", "set build metadata `META` (e.g. sha.abc)")
 	addOnceBool(f, newOnceBool("--no-build-metadata", &args.bump.NoBuildMetadata), "no-build-metadata", "strip the build metadata")
 	f.BoolVar(&args.output.JSON, "json", false, "structured JSON output")
-	f.Var(newOnceString("--vcs", &args.vcsBase.Override), "vcs", "force backend: jj | git | auto")
+	f.Var(newOnceString("--vcs", &args.vcsBase.Override), "vcs", "force backend for vcs: inputs (`jj|git|auto`)")
 
 	addVerbosityFlags(f, &args.output.Verbosity)
 	addGlobFlags(cmd, &args.glob)
 
+	ruleUsages := map[string]string{
+		"--define-rule":   "open a custom rule for sources matching `PATTERN` (path / basename / glob:)",
+		"--format":        "rule body: source `FMT` (text|json|yaml|toml|xml)",
+		"--version-path":  "rule body: version `DOTPATH` for json/yaml/toml/xml",
+		"--version-regex": "rule body: version `REGEX` (text; one capture group)",
+		"--name-path":     "rule body: optional package-name `DOTPATH`",
+		"--name-regex":    "rule body: optional package-name `REGEX`",
+	}
 	for _, name := range []string{"--define-rule", "--format", "--version-path", "--version-regex", "--name-path", "--name-regex"} {
-		f.Var(&ruleFlagValue{rec: &st.rules, flag: name}, strings.TrimPrefix(name, "--"), "DR-0029 rule definition")
+		f.Var(&ruleFlagValue{rec: &st.rules, flag: name}, strings.TrimPrefix(name, "--"), ruleUsages[name])
 	}
 
 	return st
@@ -421,12 +429,12 @@ func addGlobFlags(cmd *cobra.Command, glob *globOpts) {
 	gitignored := &globBoolValue{name: "--glob-gitignored", bareIsErr: true, apply: func(b bool) { glob.Gitignored = ptr(b) }}
 	ignorecase := &globBoolValue{name: "--glob-ignorecase", bareIsErr: false, apply: func(b bool) { glob.IgnoreCase = b }}
 
-	cmd.Flags().Var(dotfile, "glob-dotfile", "include dotfiles (=true|=false, required)")
+	cmd.Flags().Var(dotfile, "glob-dotfile", "glob: include dotfiles (=true|=false required)")
 	cmd.Flags().Lookup("glob-dotfile").NoOptDefVal = bareGlobSentinel
 
-	cmd.Flags().Var(gitignored, "glob-gitignored", "respect .gitignore (=true|=false, required)")
+	cmd.Flags().Var(gitignored, "glob-gitignored", "glob: respect .gitignore (=true|=false required)")
 	cmd.Flags().Lookup("glob-gitignored").NoOptDefVal = bareGlobSentinel
 
-	cmd.Flags().Var(ignorecase, "glob-ignorecase", "case-insensitive match (bare = true)")
+	cmd.Flags().Var(ignorecase, "glob-ignorecase", "glob: case-insensitive match (bare = true)")
 	cmd.Flags().Lookup("glob-ignorecase").NoOptDefVal = "true"
 }

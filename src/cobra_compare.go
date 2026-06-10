@@ -40,13 +40,11 @@ func newCompareCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.SetFlagErrorFunc(flagErrorFunc)
 
-	// cobra intercepts --help / -h before RunE; route both the bare
-	// `compare --help` and the `compare <op> --help` form to the existing
-	// per-action help const on stdout (exit 0). The operator, if present,
-	// is ignored — matching the legacy short-circuit.
-	cmd.SetHelpFunc(func(*cobra.Command, []string) {
-		_ = printActionHelp(stdout, "compare")
-	})
+	// Help prose (Long / Exit codes / Examples). The `compare <op> --help`
+	// form also lands here: the operator positional is ignored, and the
+	// root's HelpFunc renders the same screen. Options come from the
+	// FlagSet (renderCommandHelp).
+	applyCompareHelp(cmd)
 
 	return cmd
 }

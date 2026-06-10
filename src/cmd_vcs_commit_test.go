@@ -370,7 +370,7 @@ func TestRun_VcsCommit_NotARepo(t *testing.T) {
 // just above it.
 func TestHelpVcsCommit_BareAmendIsBackendSplit(t *testing.T) {
 	t.Parallel()
-	body := helpVcsCommit
+	body := mustRun(t, "vcs", "commit", "--help")
 	if strings.Contains(body, "fold ALL current changes") {
 		t.Errorf("PR-5.1 replaces 'fold ALL current changes' with backend-split phrasing, "+
 			"but the old wording is still present: %q", body)
@@ -378,7 +378,7 @@ func TestHelpVcsCommit_BareAmendIsBackendSplit(t *testing.T) {
 	// The new wording should explicitly call out git's index scope (the
 	// kawaz/advisor correctness fix) and jj's @-snapshot scope.
 	if !strings.Contains(body, "git: ") || !strings.Contains(body, "jj: ") {
-		t.Errorf("helpVcsCommit bare-amend block should split into git/jj rows like --staged, got: %q", body)
+		t.Errorf("vcs commit --help bare-amend block should split into git/jj rows like --staged, got: %q", body)
 	}
 }
 

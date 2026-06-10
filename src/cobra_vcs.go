@@ -21,30 +21,6 @@ import (
 // routes to the dispatcher, which emits the per-verb usage error
 // (exit 2) when a required positional is missing.
 
-// vcsHelpKey maps a cobra command's path to its actionHelpTexts key.
-// "bump-semver vcs tag push" → "vcs tag push". Unknown paths fall back
-// to "vcs" (the parent help).
-func vcsHelpKey(cmd *cobra.Command) string {
-	if key, ok := strings.CutPrefix(cmd.CommandPath(), "bump-semver "); ok {
-		if _, found := actionHelpTexts[key]; found {
-			return key
-		}
-	}
-	return "vcs"
-}
-
-// printActionHelp writes the per-action help const to stdout (exit 0).
-// key is an actionHelpTexts key ("vcs get", "vcs tag push", ...).
-func printActionHelp(stdout io.Writer, key string) error {
-	text, ok := actionHelpTexts[key]
-	if !ok {
-		fmt.Fprint(stdout, shortHelpText)
-		return nil
-	}
-	fmt.Fprint(stdout, text)
-	return nil
-}
-
 // bareVerb reports whether the command was invoked with no positional
 // args and no flags — the "show per-verb help" trigger that mirrors the
 // legacy `len(argv) == N` bare-verb check.
@@ -96,7 +72,7 @@ func buildVcsCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *cl
 		// usage error (cobra calls this when no child matches).
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if len(posArgs) == 0 {
-				return printActionHelp(stdout, "vcs")
+				return cmd.Help()
 			}
 			args.vcsVerb = posArgs[0]
 			return runVcsCmd(args, stdin, stdout, stderr)
@@ -104,27 +80,7 @@ func buildVcsCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *cl
 	}
 	addVcsPersistentFlags(vcsCmd, &args)
 	vcsCmd.SetFlagErrorFunc(flagErrorFunc)
-
-	// cobra intercepts --help / -h before RunE, so per-command help has
-	// to be wired through SetHelpFunc rather than the RunE bareVerb path.
-	// The help func is set on the parent; children inherit it. It maps
-	// the command path ("bump-semver vcs tag push") to the matching
-	// actionHelpTexts key ("vcs tag push") and prints the existing const.
-	vcsCmd.SetHelpFunc(func(cmd *cobra.Command, helpArgs []string) {
-		key := vcsHelpKey(cmd)
-		// DR-0032: `vcs get latest-tag --help` / `latest-release --help`
-		// route to the per-key help. The key is the positional arg cobra
-		// left before the --help flag.
-		if key == "vcs get" {
-			for _, a := range helpArgs {
-				if a == "latest-tag" || a == "latest-release" {
-					key = "vcs get " + a
-					break
-				}
-			}
-		}
-		_ = printActionHelp(stdout, key)
-	})
+	applyVcsHelp(vcsCmd)
 
 	vcsCmd.AddCommand(
 		newVcsGetCmd(&args, stdout, stderr),
@@ -146,7 +102,7 @@ func buildVcsCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *cl
 // parses (see normalizeQuietAll / runCobra).
 func addVcsPersistentFlags(cmd *cobra.Command, args *cliArgs) {
 	pf := cmd.PersistentFlags()
-	pf.Var(newOnceString("--vcs", &args.vcsBase.Override), "vcs", "force backend: jj | git | auto")
+	pf.Var(newOnceString("--vcs", &args.vcsBase.Override), "vcs", "force backend (`jj|git|auto`, default auto)")
 
 	addVerbosityFlags(pf, &args.output.Verbosity)
 }
@@ -162,7 +118,7 @@ func newVcsGetCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		ValidArgs:     vcsGetKeys,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs get")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -173,10 +129,11 @@ func newVcsGetCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.Var(newOnceString("--repository", &args.vcsGet.LatestRepository), "repository", "external owner/repo or URL (latest-tag / latest-release)")
+	f.Var(newOnceString("--repository", &args.vcsGet.LatestRepository), "repository", "external `REPO` (owner/repo or URL) for latest-tag / latest-release")
 	f.BoolVar(&args.vcsGet.LatestIncludePre, "include-prerelease", false, "include prereleases (latest-tag / latest-release)")
-	f.Var(newOnceString("--rev", &args.vcsGet.Rev), "rev", "target revision (commit-id)")
+	f.Var(newOnceString("--rev", &args.vcsGet.Rev), "rev", "target `REV` for commit-id (default: @ / HEAD)")
 	f.BoolVar(&args.output.JSON, "json", false, "structured JSON output (latest-tag / latest-release)")
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 
@@ -191,7 +148,7 @@ func newVcsIsCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		ValidArgs:     vcsIsPreds,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs is")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -201,6 +158,7 @@ func newVcsIsCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 			return runVcsCmdIs(*args, stdout, stderr)
 		},
 	}
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 
@@ -214,7 +172,7 @@ func newVcsDiffCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs diff")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -226,8 +184,9 @@ func newVcsDiffCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVarP(&args.vcsDiff.NameStatus, "name-status", "s", false, "emit <CODE>\\t<path> lines instead of a patch")
-	f.Var(&excludesValue{slot: &args.vcsDiff.Excludes}, "excludes", "exclude paths (literal / glob: / file:); repeatable")
+	f.Var(&excludesValue{slot: &args.vcsDiff.Excludes}, "excludes", "exclude `PATTERN` (literal / glob: / file:); repeatable")
 	addGlobFlags(cmd, &args.glob)
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 
@@ -241,7 +200,7 @@ func newVcsCommitCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs commit")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -252,10 +211,11 @@ func newVcsCommitCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.VarP(newOnceString("-m", &args.vcsCommit.Message), "message", "m", "commit message")
-	f.BoolVar(&args.vcsCommit.Staged, "staged", false, "commit only staged changes")
-	f.BoolVar(&args.vcsCommit.Amend, "amend", false, "amend the current commit")
-	f.BoolVarP(&args.vcsCommit.DashA, "all", "a", false, "(rejected: use --staged)")
+	f.VarP(newOnceString("-m", &args.vcsCommit.Message), "message", "m", "commit `MSG` (required unless --amend)")
+	f.BoolVar(&args.vcsCommit.Staged, "staged", false, "commit all staged/dirty changes at once")
+	f.BoolVar(&args.vcsCommit.Amend, "amend", false, "fold the change into the previous commit")
+	f.BoolVarP(&args.vcsCommit.DashA, "all", "a", false, "rejected by design: use --staged")
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 
@@ -269,7 +229,7 @@ func newVcsFetchCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs fetch")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -279,7 +239,8 @@ func newVcsFetchCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 			return runVcsCmdFetch(*args, stdout, stderr)
 		},
 	}
-	cmd.Flags().Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote name (default: origin)")
+	cmd.Flags().Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote `NAME` (default: origin)")
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 
@@ -293,7 +254,7 @@ func newVcsPushCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs push")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -308,10 +269,11 @@ func newVcsPushCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 	// onceStringValue is shared so "both spellings supplied" is the same
 	// "specified twice" error.
 	name := newOnceString("--branch/--bookmark", &args.vcsPush.Name)
-	f.Var(name, "branch", "branch/bookmark to push")
-	f.Var(name, "bookmark", "branch/bookmark to push (jj alias of --branch)")
-	f.Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote name (default: origin)")
+	f.Var(name, "branch", "branch `NAME` to push (required; jj: bookmark)")
+	f.Var(name, "bookmark", "bookmark `NAME` to push (jj spelling of --branch)")
+	f.Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote `NAME` (default: origin)")
 	f.BoolVar(&args.vcsPush.JjBookmarkAutoAdvance, "jj-bookmark-auto-advance", false, "jj-only: advance bookmark before push")
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 
@@ -328,7 +290,7 @@ func newVcsTagCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		// the "unknown sub-verb" usage error otherwise).
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if len(posArgs) == 0 {
-				return printActionHelp(stdout, "vcs tag")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -339,6 +301,7 @@ func newVcsTagCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 			return runVcsCmdTag(*args, stdout, stderr)
 		},
 	}
+	setHelp(cmd, vcsTagLong, vcsTagExitCodes, "")
 	cmd.AddCommand(
 		newVcsTagPushCmd(args, stdout, stderr),
 		newVcsTagDeleteCmd(args, stdout, stderr),
@@ -354,7 +317,7 @@ func newVcsTagPushCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs tag push")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -366,9 +329,10 @@ func newVcsTagPushCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.Var(newOnceString("--rev", &args.vcsTag.Rev), "rev", "target revision")
-	f.Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote name (default: origin)")
-	f.BoolVar(&args.vcsTag.AllowMove, "allow-move", false, "move an existing tag")
+	f.Var(newOnceString("--rev", &args.vcsTag.Rev), "rev", "target `REV` (required)")
+	f.Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote `NAME` (default: origin)")
+	f.BoolVar(&args.vcsTag.AllowMove, "allow-move", false, "permit moving an existing tag to a different REV")
+	setHelp(cmd, vcsTagPushLong, vcsTagPushExitCodes, vcsTagPushExamples)
 	return cmd
 }
 
@@ -380,7 +344,7 @@ func newVcsTagDeleteCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command 
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
 			if bareVerb(cmd, posArgs) {
-				return printActionHelp(stdout, "vcs tag delete")
+				return cmd.Help()
 			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
@@ -391,7 +355,8 @@ func newVcsTagDeleteCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command 
 			return runVcsCmdTagDelete(*args, stdout, stderr)
 		},
 	}
-	cmd.Flags().Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote name (default: origin)")
+	cmd.Flags().Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote `NAME` (default: origin)")
+	setHelp(cmd, vcsTagDeleteLong, vcsTagDeleteExitCodes, vcsTagDeleteExamples)
 	return cmd
 }
 
@@ -407,7 +372,7 @@ func newVcsTagDeleteCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command 
 // parseVcsArgs outdated branch (keeping `--` as a literal in vcsArgs so
 // splitOutdatedPairs keeps working unchanged).
 func newVcsOutdatedCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:                "outdated",
 		Short:              "check whether derived files are stale vs a source",
 		SilenceErrors:      true,
@@ -426,11 +391,13 @@ func newVcsOutdatedCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 			}
 			if oargs == nil {
 				// help short-circuit (bare verb / --help)
-				return printActionHelp(stdout, "vcs outdated")
+				return cmd.Help()
 			}
 			return runVcsCmdOutdated(*oargs, stdout, stderr)
 		},
 	}
+	applyVcsVerbHelp(cmd)
+	return cmd
 }
 
 // parseOutdatedTokens re-tokenises the raw `vcs outdated` token stream

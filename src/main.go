@@ -38,7 +38,11 @@
 //     runVcsCmd{Get,Is,Diff,Commit,Fetch,Push,Tag*}
 //   - emitVcsUsage / emitVcsErr + validTagName)
 //   - compare.go      — `compare` verb (predicate-only)
-//   - help.go         — help / usage text
+//   - help.go         — root short / full help text (--help / --help-full)
+//   - cobra_help.go   — per-command help renderer; Options sections are
+//     generated from the live FlagSet (single source of truth)
+//   - cobra_help_text.go — per-command help prose (Long / Exit codes /
+//     Examples) wired onto each cobra command
 package main
 
 import (

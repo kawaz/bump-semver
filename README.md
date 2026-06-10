@@ -34,13 +34,15 @@ bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]
 bump-semver vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]
 bump-semver vcs get latest-release [--include-prerelease] [--repository REPO] [--json]
+bump-semver vcs outdated FROM TO[..]
+bump-semver completion <bash|zsh|fish|powershell>
 bump-semver --version [--json]
 bump-semver --help | --help-full
 ```
 
 `<INPUT>` is either a **FILE path**, a **raw VER string**, **`-` (read VER from stdin, single line)**, **`vcs:REV[:FILE]` / `vcs:<func>(...)`** (read from the VCS, see [vcs: input](#vcs-input)), or **`cmd:<shell-command>`** (read from a shell command, see [cmd: input](#cmd-input)). Multiple inputs of mixed kinds may be given.
 
-Help comes in three tiers (v0.13.0+):
+Help comes in three tiers:
 
 - `bump-semver --help` / `-h`: short overview (actions + main navigation) fitting in one screen
 - `bump-semver --help-full`: complete reference (supported file formats / full Examples / exit codes / etc.)
@@ -108,7 +110,7 @@ bump-semver vcs outdated [--explain] FROM TO[..]       # diagnostic table (alway
 bump-semver vcs outdated [--strict] FROM TO[..]        # literal-FROM-not-found → exit 1
 ```
 
-A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)). PR-1 shipped `vcs get` (read-only); PR-2 adds `vcs is` (predicate); PR-3 adds `vcs diff` (patch printer); PR-3.1 extends `vcs diff` with `-s/--name-status` (M/A/D summary) and `-q/--quiet` (exit-code reflects diff presence, mirroring `git diff --quiet`); PR-4 adds `vcs commit` (path-required commit with safety defaults); PR-5 adds `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5); PR-6 adds `vcs tag push` / `vcs tag delete` (atomic create+push / idempotent delete, with `--allow-move` as the precise opt-in for tag relocation and exit 4 surfacing different-rev integrity violations); **v0.29.0** added `vcs tag latest [--source <tag|release>]`, then **v0.32.0** ([DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)) re-organised that into `vcs get latest-tag` / `vcs get latest-release` (source axis folded into the verb name) and revived the `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` input records for 1-liner ergonomic — both surfaces are now supported in parallel. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
+A small family of git/jj-agnostic helpers ([DR-0020](./docs/decisions/DR-0020-vcs-subcommands.md)): `vcs get` (read-only facts), `vcs is` (predicate), `vcs diff` (patch printer, with `-s/--name-status` M/A/D summary and `-q/--quiet` exit-code mode mirroring `git diff --quiet`), `vcs commit` (path-required commit with safety defaults), `vcs fetch` / `vcs push` (the network counterparts, with `--force` intentionally absent and non-ff detection mapped to exit 5), and `vcs tag push` / `vcs tag delete` (atomic create+push / idempotent delete, with `--allow-move` as the precise opt-in for tag relocation and exit 4 surfacing different-rev integrity violations). Latest-version lookups live under `vcs get latest-tag` / `vcs get latest-release` ([DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md), source axis folded into the verb name), with the `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` input records as the 1-liner ergonomic counterpart. The motivation is the recurring `Taskfile / justfile` pain of branching on git vs jj — `bump-semver` already abstracts version reads via `vcs:`, so the `vcs` verb is the natural place for these helpers.
 
 **`vcs get <key>`** — emit a value on stdout:
 
@@ -198,7 +200,7 @@ REMOTE may be passed as a positional or via `--remote NAME` — supplying both a
 | Idempotency | "Remote already has it" → exit 0; git/jj's own `Everything up-to-date` / `Nothing changed` line is forwarded to stderr so the user can confirm the convergence happened. DR-0020's 0-targets-no-op rule applies |
 | Non-fast-forward | Remote rejected the push → **exit 5**; the underlying git/jj stderr is passed through verbatim (no editorial `remote has diverged` paraphrase). Recovery is the user's call — `git fetch` + reconcile, or `git push --force-with-lease` directly if you genuinely mean to rewrite remote history. `--force` is intentionally not exposed (exits 2) |
 | `--force` / `--tags` | Not provided. Force push rewrites remote history (out of scope for a SemVer helper); tag pushing belongs to release automation (`gh release create`), not to this verb |
-| `--jj-bookmark-auto-advance` | **jj-only opt-in (PR-5.2)**. Before pushing, move the bookmark to the publishable commit: clean `@` (empty working copy) → bookmark to `@-`; dirty `@` (non-empty, typically described) → bookmark to `@`. The bookmark must exist (otherwise the normal push reports it) AND must be in `ancestors(@)` — sideways/divergent positioning → exit 3 with a hint, no move. The move itself is forward-only (no `--allow-backwards`). Running this on a git repo is a silent no-op (the `--jj-` prefix structurally tells the user it's jj-only). **Requires jj 0.39+** — DR-0026 delegates the bookmark move to jj's official `jj bookmark advance` (introduced in jj 0.39.0), while keeping bump-semver's clean/dirty target selection and DR-0025 description check around it. Why the flag: jj 慣習 places bookmarks on confirmed commits (`@-`), not on the throw-away working copy (`@`). Manually running `jj bookmark move` every bump is friction — this flag automates the move while keeping the safety checks explicit |
+| `--jj-bookmark-auto-advance` | **jj-only opt-in**. Before pushing, move the bookmark to the publishable commit: clean `@` (empty working copy) → bookmark to `@-`; dirty `@` (non-empty, typically described) → bookmark to `@`. The bookmark must exist (otherwise the normal push reports it) AND must be in `ancestors(@)` — sideways/divergent positioning → exit 3 with a hint, no move. The move itself is forward-only (no `--allow-backwards`). Running this on a git repo is a silent no-op (the `--jj-` prefix structurally tells the user it's jj-only). **Requires jj 0.39+** — DR-0026 delegates the bookmark move to jj's official `jj bookmark advance` (introduced in jj 0.39.0), while keeping bump-semver's clean/dirty target selection and DR-0025 description check around it. Why the flag: jj 慣習 places bookmarks on confirmed commits (`@-`), not on the throw-away working copy (`@`). Manually running `jj bookmark move` every bump is friction — this flag automates the move while keeping the safety checks explicit |
 
 ```bash
 bump-semver vcs fetch                      # fetch origin
@@ -248,7 +250,7 @@ bump-semver vcs tag delete v0.9.0               # remove from local + origin (id
 
 Exit codes for `vcs tag push`: `0` success (incl. idempotent same-rev re-push); `2` usage (NAME / `--rev` missing, NAME with bad shape, `--force` passed, extra positional); `3` VCS subprocess error (bad REV, unknown remote, network); `4` integrity violation (existing tag at different REV without `--allow-move`). For `vcs tag delete`: `0` success or already-absent; `2` usage; `3` VCS error.
 
-**`vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]`** and **`vcs get latest-release [--include-prerelease] [--repository REPO] [--json]`** (v0.32.0+, [DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)) — print the SemVer-largest tag / GitHub Release. The source axis (tag list vs Release object) is folded into the verb name; each verb has a single, honest responsibility. The 1-liner ergonomic counterpart `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` is available as input records (see [vcs: input](#vcs-input)).
+**`vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]`** and **`vcs get latest-release [--include-prerelease] [--repository REPO] [--json]`** ([DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)) — print the SemVer-largest tag / GitHub Release. The source axis (tag list vs Release object) is folded into the verb name; each verb has a single, honest responsibility. The 1-liner ergonomic counterpart `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` is available as input records (see [vcs: input](#vcs-input)).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -266,7 +268,7 @@ bump-semver vcs get latest-release                   # cwd repo: largest GitHub 
 bump-semver vcs get latest-release --repository kawaz/bump-semver --json
                                                      # external GitHub Release, structured output
 
-# 1-liner via input record (revived in v0.32.0 per DR-0032):
+# 1-liner via input record (DR-0032):
 bump-semver compare gt VERSION 'vcs:latest-tag()'    # ready to release?
 bump-semver get 'vcs:latest-release(kawaz/pkf-tasks)' # latest release of an external repo
 ```
@@ -328,9 +330,18 @@ Exit codes for `vcs outdated`: `0` every derived is fresh (or `--explain` mode r
 | `--no-build-metadata`  | Remove build metadata identifiers |
 | `--write`              | Write the bumped version back to each FILE input (`major` / `minor` / `patch` / `pre` only) |
 | `--vcs jj\|git\|auto`    | Force VCS detection for `vcs:` inputs (default: `auto`) |
+| `--define-rule PATTERN` | Open a custom extraction rule for SOURCES matching `PATTERN` (absolute / relative path, basename, or `glob:<pattern>`). See [Custom rules](#custom-rules---define-rule) |
+| `--format FMT`         | Rule body: source format `text\|json\|yaml\|toml\|xml` |
+| `--version-path DOTPATH` | Rule body: version field path for `json\|yaml\|toml\|xml` (e.g. `$.version`) |
+| `--version-regex REGEX` | Rule body: version regex for `text` (exactly one capture group) |
+| `--name-path DOTPATH`  | Rule body: optional package-name path |
+| `--name-regex REGEX`   | Rule body: optional package-name regex |
+| `--glob-dotfile`       | `glob:` includes dotfiles (`=true` / `=false` required) |
+| `--glob-gitignored`    | `glob:` respects `.gitignore` (`=true` / `=false` required; default true) |
+| `--glob-ignorecase`    | `glob:` matches case-insensitively (bare = true) |
 | `--no-hint`            | Suppress all `hint:` lines (fallback match / unsupported file / "files not modified") |
 | `-q`, `--quiet`        | Suppress stdout (and all `hint:` lines) |
-| `-qq`, `--quiet-all`   | Suppress stdout, hints, and error output (use with caution when debugging) |
+| `--quiet-all`          | Suppress stdout, hints, and error output (use with caution when debugging; `-qq` works as stacked `-q`) |
 | `--json`               | Output structured JSON for `get` / `major` / `minor` / `patch` / `pre` (rejected with `compare`) |
 | `--version`, `-V`      | Print the binary version |
 | `--help`, `-h`         | Short help (one screen) |
@@ -359,9 +370,9 @@ Mutual exclusivity: `--pre` and `--no-pre` cannot both be given; same for the bu
 | `vcs:REV[:FILE]` | Read FILE at `<REV>` from jj or git (auto-detected, see [vcs: input](#vcs-input)) |
 | `cmd:<shell-command>` | Run `<shell-command>` via `bash -c`, take the first non-empty stdout line as VER (read-only, see [cmd: input](#cmd-input)) |
 | `glob:<pattern>` | Expand to matching paths via doublestar globbing ([DR-0024](./docs/decisions/DR-0024-glob-prefix.md), accepted on `vcs diff` / `vcs commit` / `vcs outdated`) |
-| `file:<path>` | Read newline-separated path list from `<path>`; `#` comments and blank lines skipped, each line accepts literal or `glob:` shape ([DR-0033](./docs/decisions/DR-0033-vcs-excludes-and-file-prefix.md), accepted on `vcs diff` in v0.33.0+) |
+| `file:<path>` | Read newline-separated path list from `<path>`; `#` comments and blank lines skipped, each line accepts literal or `glob:` shape ([DR-0033](./docs/decisions/DR-0033-vcs-excludes-and-file-prefix.md), accepted on `vcs diff`) |
 
-> **Latest-tag / latest-release lookups** (v0.32.0+, [DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)): both input records and subcommands are supported. Input records `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` give 1-liner ergonomic (`compare gt VERSION 'vcs:latest-tag()'`) with stable-only filtering. Subcommands [`vcs get latest-tag`](#vcs-subcommands) / [`vcs get latest-release`](#vcs-subcommands) expose the richer option set (`--include-prerelease`, `--json` with the 12-field version schema, `--repository REPO`). Historical: v0.29.0 introduced `vcs tag latest [--source <tag|release>]`, v0.32.0 split that into the two `vcs get latest-*` verbs (source axis folded into the verb name).
+> **Latest-tag / latest-release lookups** ([DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)): both input records and subcommands are supported. Input records `vcs:latest-tag([REPO])` / `vcs:latest-release([REPO])` give 1-liner ergonomic (`compare gt VERSION 'vcs:latest-tag()'`) with stable-only filtering. Subcommands [`vcs get latest-tag`](#vcs-subcommands) / [`vcs get latest-release`](#vcs-subcommands) expose the richer option set (`--include-prerelease`, `--json` with the 12-field version schema, `--repository REPO`).
 
 If a local file is literally named `1.2.3` and you mean the file, write `./1.2.3` (Unix convention).
 
@@ -473,6 +484,27 @@ The suffix hint shares the existing `hint:` prefix and is suppressed by `--no-hi
 
 For npm `package-lock.json` specifically, lockfile v1 (npm 5/6) is rejected with `unsupported lockfileVersion: 1, please regenerate with npm 7+`. Dependency entries (`$.packages["node_modules/..."]`) are never rewritten even if their version happens to equal the project's own.
 
+### Custom rules (`--define-rule`)
+
+When a SOURCE isn't in the built-in table, define an extraction rule on the command line ([DR-0029](./docs/decisions/DR-0029-cli-user-defined-rule-phase1.md)). `--define-rule <PATTERN>` opens a rule block; the following rule-body flags belong to that block until the next `--define-rule`:
+
+| Flag | Meaning |
+|---|---|
+| `--format <FMT>` | `text` / `json` / `yaml` / `toml` / `xml`. `xml` resolves the final path segment against both a child element and an attribute (same value = ok, differing = ambiguous) |
+| `--version-path <DOTPATH>` | For `json` / `yaml` / `toml` / `xml`: where the version field lives (e.g. `$.version`, `plugin.version`, `deps[0].version`) |
+| `--version-regex <PATTERN>` | For `text`: a regex with exactly one capture group (0 or 2+ matches is an error) |
+| `--name-path` / `--name-regex` | Optional package-name extraction (symmetric to the version variants) |
+
+`PATTERN` is an absolute path, a relative path, a basename, or `glob:<pattern>`; match strength is scored (absolute 5 / relative 3 / basename 2 / glob 1) so the most specific rule wins. Rule-body flags placed **before** the first `--define-rule` act as the global default for every SOURCE not covered by a named block. CLI rules always override built-in rules, and an extraction failure on a CLI rule is a hard error (no silent fall-through). Available for `get`, `compare`, and the bump verbs (including `--write`).
+
+```bash
+# Read the version out of a tool-specific JSON field
+bump-semver get plugin.json --define-rule plugin.json --format json --version-path '$.meta.version'
+
+# A text file whose version sits behind a custom prefix
+bump-semver patch app.conf --write --define-rule app.conf --format text --version-regex 'VERSION=([0-9.]+)'
+```
+
 ### Multiple INPUTs: cross-input consistency
 
 Pass multiple INPUTs to operate on them as a single unit. Versions across all INPUTs must already agree; otherwise a `version mismatch:` (or `name mismatch:` when package names diverge) listing of every origin and value (column-aligned) is printed and the command fails. For `get` that failure is exit 1 with the listing on stderr (predicate-false semantics, [DR-0023](./docs/decisions/DR-0023-n-arg-extension.md)) — both version and name mismatches share this exit code under `get`; for bump actions (`major` / `minor` / `patch` / `pre`) it is exit 2 because the input set is internally inconsistent. Detected package names are cross-checked alongside versions to guard against accidentally bumping files from a different project together; names are never written back.
@@ -574,7 +606,7 @@ bump-semver compare ge 0.0.13 'vcs:latest-tag(kawaz/pkf-tasks)'  # current pin u
 | `vcs:latest-tag([REPO])` | Largest stable SemVer-parseable tag of cwd VCS (`REPO` empty) or external repo (`owner/repo` short / full URL). Prerelease excluded (= input record subset). For prerelease inclusion or JSON output, use [`vcs get latest-tag`](#vcs-subcommands) subcommand |
 | `vcs:latest-release([REPO])` | Largest stable GitHub Release (drafts dropped). gh CLI required. Same subset constraints as `vcs:latest-tag()` |
 
-> v0.32.0 ([DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)) re-organised latest-tag / latest-release into the symmetric pair above: scalar-returning input records for 1-liner ergonomic + [`vcs get latest-{tag,release}`](#vcs-subcommands) subcommands for the richer option set. This re-supersedes the v0.29.0 `vcs tag latest [--source <tag|release>]` form (source axis folded into the verb name).
+> latest-tag / latest-release come in the symmetric pair above ([DR-0032](./docs/decisions/DR-0032-vcs-get-latest-by-source-verb.md)): scalar-returning input records for 1-liner ergonomic + [`vcs get latest-{tag,release}`](#vcs-subcommands) subcommands for the richer option set (source axis folded into the verb name).
 
 **VCS detection** (in priority order):
 
@@ -595,7 +627,7 @@ For CI scripts that need to be VCS-agnostic, prefer revisions that work in both 
 
 ### cmd: input
 
-`cmd:<shell-command>` runs `<shell-command>` via `bash -c` and takes the first non-empty stdout line as VER (read-only, v0.16.0+). A leading `v` is stripped, and the value is parsed as SemVer 2.0.0.
+`cmd:<shell-command>` runs `<shell-command>` via `bash -c` and takes the first non-empty stdout line as VER (read-only). A leading `v` is stripped, and the value is parsed as SemVer 2.0.0.
 
 ```bash
 # Does the built binary's --version match the VERSION file?
@@ -657,9 +689,26 @@ Origin labels: `<file>:<path>` (FILE origin) / `<argv>` or `<argv:N>` (positiona
 - `4` — ambiguous answer (`vcs` subcommands only: detached HEAD, multiple bookmarks at the same head)
 - `5` — non-fast-forward push (`vcs push` only; remote has diverged — fetch + reconcile, then retry)
 
-## Status
+## Shell completion
 
-v0.16.1 hardens the `cmd:` input mode — `--write` + `cmd:` is now rejected by the implementation (the README already documented this, but v0.16.0 only enforced the rule for `vcs:` and silently let `cmd:` slip through), plus a 30-second hard timeout on the child process and 64 KiB / 4 KiB output caps on stdout / stderr to defend against runaway commands. Whitespace-only commands (`cmd:   `) are now rejected by the same non-empty check as `cmd:`. v0.16.0 adds the `cmd:<shell-command>` input mode — a read-only input that runs the command via `bash -c`, takes its first non-empty stdout line, strips a leading `v`, and parses the rest as SemVer. The primary use case is gating releases on agreement between version files and the built binary's `--version` output (e.g. `compare eq VERSION 'cmd:./bin/mytool --version'`). It also underpins kawaz/pkf-tasks v3.0's `semver/versions.pkl`. v0.14.0 adds JVM / .NET / Maven / Haskell / RPM support and a new `xml-element` format (DR-0018) — `pom.xml`, `*.csproj` / `*.fsproj` / `*.vbproj`, `build.gradle` / `build.gradle.kts`, `*.cabal`, `*.spec` all become recognised. `pom.xml` uses slash-rooted XML path lookup (`/project/version`) that correctly skips `<parent>/<version>`. v0.13.0 brings three changes: the help system is restructured into three tiers (`--help` short / `--help-full` complete reference / `bump-semver <action> --help` action-specific), the `BUMP_SEMVER_VCS` env var is removed in favour of `--vcs jj|git|auto` (DR-0016, BREAKING), and `compare` gains 15 precision-suffix operators (`eq-major` / `lt-minor` / `eq-patch` etc., DR-0017) for a 5×4 = 20 total. v0.12.0 added two Xcode-specific path-pinned rules — `project.pbxproj` (multi-match `MARKETING_VERSION` synced across build configurations) and `Info.plist` (XML plist with byte-range value rewriting) — together with `pbxproj` and `xml` formats (DR-0015). v0.11.0 generalised the TOML rewriter into a reusable section-scoped helper and added `pyproject.toml` (PEP 621 with Poetry-legacy fallback) and `mojoproject.toml` (DR-0014). v0.10.0 added the suffix-stripped fallback for backup-style filenames (DR-0013). v0.9.0 introduced the `regex` format with eight new file types (`*.xcconfig`, `*.podspec`, `*.nimble`, `v.mod`, `build.zig.zon`, `*.gemspec`, `mix.exs`, `build.sbt`) (DR-0012). v0.8.0 added `*.yaml` / `*.yml` / `*.toml` confidence-1 fallback (DR-0011). v0.7.0 added the `vcs:` input mode — `vcs:REV[:FILE]` and `vcs:latest-tag()` resolve through jj or git automatically (DR-0008). Earlier: v0.6.0 added `--json` output (DR-0007); v0.5.0 introduced pre-release / build metadata support, the `compare` subcommand, the `pre` action, and the unified FILE/VER positional input (DR-0006). Future formats are added one handler at a time (DR-0001). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
+```bash
+bump-semver completion <bash|zsh|fish|powershell>
+```
+
+Generates a completion script for the chosen shell (run `bump-semver completion <shell> --help` for the install snippet). For example, `bump-semver completion zsh > "${fpath[1]}/_bump-semver"`.
+
+## Features
+
+Current capabilities at a glance:
+
+- **Bump / read / compare**: `major` / `minor` / `patch` / `pre` / `get`, plus `compare` with a 5 × 4 = 20-operator precision grid.
+- **Format auto-detection** by basename across TOML / JSON / YAML / XML manifests and many text+regex formats (Cargo, npm, PEP 621, Maven, Gradle, .NET, Xcode, and more), with backup-suffix fallback.
+- **Custom rules** via `--define-rule` for SOURCES outside the built-in table.
+- **Flexible inputs**: FILE / raw VER / `-` (stdin) / `vcs:` (read from jj or git) / `cmd:` (read from a shell command) / `glob:` / `file:`.
+- **`vcs` subcommands**: a git/jj-agnostic helper subtree (`get` / `is` / `diff` / `commit` / `fetch` / `push` / `tag` / `get latest-tag` / `get latest-release` / `outdated`).
+- **Structured output** with `--json` and shell completion for bash / zsh / fish / powershell.
+
+The full version-by-version history lives in [CHANGELOG.md](./CHANGELOG.md). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## License
 

@@ -19,7 +19,7 @@ Usage:
   bump-semver --help | --help-full
 
 Commands:
-  <major|minor|patch|pre>   Bump version (FILE / VER 入力、pre は counter advance / set / remove)
+  <major|minor|patch|pre>   Bump version (FILE / VER input; pre = counter advance / set / remove)
   get                       Read the current version
   compare                   Compare SemVer values via <eq|lt|le|gt|ge|...>
   vcs                       VCS helpers (git/jj-agnostic; sub-tree: vcs --help)
@@ -30,7 +30,7 @@ or 'bump-semver --help-full' for the complete reference.
 Inputs are positional: FILE / VER / - / vcs:REV[:FILE] / cmd:CMD.
 (Latest tag / release lookups also available as 'vcs:latest-tag([REPO])'
 / 'vcs:latest-release([REPO])' input records or 'vcs get latest-{tag,release}'
-subcommands. See DR-0032.)
+subcommands.)
 Files are auto-detected by basename (Cargo.toml, package.json,
 pyproject.toml, VERSION, ...). See --help-full for the table.
 `
@@ -54,13 +54,13 @@ Commands (bump/read):
   pre     Pre-release counter advance / set / remove (see --pre / --no-pre)
   get     Print the current version (with optional --no-pre / --no-build-metadata)
 
-Compare (nested subcommand, DR-0023: BASE plus one or more OTHERS):
+Compare (nested subcommand, BASE plus one or more OTHERS):
   compare eq  BASE OTHER...   true if BASE equals every OTHER (SemVer 2.0.0 ordering, build metadata ignored)
   compare lt  BASE OTHER...   true if BASE <  every OTHER
   compare le  BASE OTHER...   true if BASE <= every OTHER
   compare gt  BASE OTHER...   true if BASE >  every OTHER
   compare ge  BASE OTHER...   true if BASE >= every OTHER
-  Optional -major / -minor / -patch suffix (DR-0017) truncates the comparison
+  Optional -major / -minor / -patch suffix truncates the comparison
   (e.g. eq-major 1.2.3 1.9.7 -> true). See: bump-semver compare --help
 
 Inputs:
@@ -72,7 +72,7 @@ Inputs:
                              (read-only, strips a leading 'v'; e.g. cmd:mytool --version)
   vcs:latest-tag([REPO])     largest stable SemVer tag (cwd or external repo)
   vcs:latest-release([REPO]) largest stable GitHub Release (gh CLI required)
-                             (= revived in v0.32.0 per DR-0032; richer option
+                             (= revived in v0.32.0; richer option
                               set in 'vcs get latest-{tag,release}' subcommands)
 
 Options:
@@ -93,22 +93,22 @@ Global Options:
   --help-full            Show this full reference
 
 Supported file formats (auto-detected by basename):
-  Cargo.toml         TOML, [package].version (try) -> [workspace.package].version (fallback) [DR-0021]
-  pyproject.toml     TOML, [project].version (try) -> [tool.poetry].version (fallback) [DR-0014]
-  mojoproject.toml   TOML, [workspace].version (and [workspace].name) [DR-0014]
+  Cargo.toml         TOML, [package].version (try) -> [workspace.package].version (fallback)
+  pyproject.toml     TOML, [project].version (try) -> [tool.poetry].version (fallback)
+  mojoproject.toml   TOML, [workspace].version (and [workspace].name)
   package-lock.json  npm 7+ lockfile, $.version + $.packages[""].version (deps untouched)
-  pom.xml            XML element, /project/version (and /project/artifactId) [DR-0018]
+  pom.xml            XML element, /project/version (and /project/artifactId)
   *.json             JSON, $.version (and optional $.name)
-  *.yaml / *.yml     YAML, top-level .version (and optional .name) [DR-0011 fallback]
-  *.toml             TOML, top-level version  (and optional name)  [DR-0011 fallback]
-  v.mod / build.zig.zon / mix.exs / build.sbt        text + regex (basename) [DR-0012 / DR-0030]
-  build.gradle / build.gradle.kts                    text + regex (basename) [DR-0018 / DR-0030]
-  *.xcconfig / *.podspec / *.nimble / *.gemspec      text + regex (fallback) [DR-0012 / DR-0030]
-  *.cabal / *.spec                                   text + regex (fallback) [DR-0018 / DR-0030]
-  *.csproj / *.fsproj / *.vbproj                     XML element, /Project/PropertyGroup/Version [DR-0018]
+  *.yaml / *.yml     YAML, top-level .version (and optional .name)
+  *.toml             TOML, top-level version  (and optional name) 
+  v.mod / build.zig.zon / mix.exs / build.sbt        text + regex (basename)
+  build.gradle / build.gradle.kts                    text + regex (basename)
+  *.xcconfig / *.podspec / *.nimble / *.gemspec      text + regex (fallback)
+  *.cabal / *.spec                                   text + regex (fallback)
+  *.csproj / *.fsproj / *.vbproj                     XML element, /Project/PropertyGroup/Version
   VERSION            text (whole file = version, no regex)
 
-  Backup-style suffix fallback (DR-0013): Cargo.toml.bak / package.json.20260510 /
+  Backup-style suffix fallback: Cargo.toml.bak / package.json.20260510 /
   Chart.yaml~ etc. strip one trailing suffix and retry against the table above.
   Suffixes: .bak / .backup / .orig / .tmp / .old / .YYYYMMDD / .YYYYMMDD_HHMMSS / ~
 
@@ -117,7 +117,7 @@ versions must agree; otherwise a "version mismatch:" error lists each origin
 and value. With --write, only FILE-origin inputs are written back (vcs: and
 cmd: are read-only).
 
-Not in the table? Define your own rule with --define-rule (DR-0029):
+Not in the table? Define your own rule with --define-rule:
 
   --define-rule <PATTERN>    Open a rule block for SOURCES matching <PATTERN>
                              (= absolute path, relative path, basename, or
@@ -138,7 +138,7 @@ Not in the table? Define your own rule with --define-rule (DR-0029):
   CLI rules always override builtin rules; an extraction failure on a CLI
   rule is a hard error (no silent fall-through to builtin).
 
-VCS helpers (DR-0020):
+VCS helpers:
   vcs get root              Print the repository root
   vcs get backend           Print "git" or "jj"
   vcs get current-branch    Print the unambiguous branch (git) / bookmark (jj)
@@ -196,7 +196,7 @@ Action semantics:
   minor       Bump the y in x.Y.0 (reset Z to 0; x preserved)
   patch       Bump the z in x.y.Z  (x, y preserved)
 
-  Pre-release and build-metadata are dropped by default (DR-0006). Use
+  Pre-release and build-metadata are dropped by default. Use
   --pre / --build-metadata to re-attach explicit identifiers; --no-pre
   / --no-build-metadata to assert removal (errors if the user later
   also passes the matching set form).
@@ -286,12 +286,12 @@ Usage:
 When multiple INPUTs are given, all sources are treated as equal
 peers and must agree; otherwise a "version mismatch:" (or
 "name mismatch:" when package names diverge) listing is printed to
-stderr and the process exits 1 (DR-0023). exit 0 + single-line
+stderr and the process exits 1. exit 0 + single-line
 stdout on agreement makes the command safe to pipe.
 
 A file-omitted vcs:REV expands across every distinct sibling FILE
 path. 'get a b vcs:main' therefore reads four sources: a, b, the
-snapshot of a at main, and the snapshot of b at main (DR-0008).
+snapshot of a at main, and the snapshot of b at main.
 
 Inputs (multiple, must agree):
   FILE                       supported file (basename auto-detected)
@@ -304,7 +304,7 @@ Inputs (multiple, must agree):
                              (strips a leading 'v'; e.g. cmd:./bin/mytool --version)
   vcs:latest-tag([REPO])     largest stable SemVer tag (cwd or external repo)
   vcs:latest-release([REPO]) largest stable GitHub Release (gh CLI required)
-                             (= revived in v0.32.0 per DR-0032; richer option
+                             (= revived in v0.32.0; richer option
                               set in 'vcs get latest-{tag,release}' subcommands)
 
 Options:
@@ -344,7 +344,7 @@ BASE (the first input) is the reference; every OTHER is compared as
 "BASE OP OTHER". The legacy two-input form is the N=1 case. Each
 OTHER is evaluated independently — failures are listed on stderr
 without short-circuit, so a single invocation surfaces every failing
-relation (DR-0023).
+relation.
 
 Operators (5 base × 4 precision = 20 total):
                 full       -major       -minor       -patch
@@ -355,7 +355,7 @@ Operators (5 base × 4 precision = 20 total):
   ge            ge         ge-major     ge-minor     ge-patch
 
   base    {eq, lt, le, gt, ge}: pass/fail mapping of the comparison result
-  suffix  -major / -minor / -patch (DR-0017): truncate the comparison.
+  suffix  -major / -minor / -patch: truncate the comparison.
           -major   compares X only
           -minor   compares X.Y (Z and pre-release ignored)
           -patch   compares X.Y.Z (pre-release ignored)
@@ -372,16 +372,16 @@ Inputs (BASE plus one or more OTHERS):
   cmd:CMD                    run CMD via bash -c, take first non-empty stdout line as VER
   vcs:latest-tag([REPO])     largest stable SemVer tag (cwd or external repo)
   vcs:latest-release([REPO]) largest stable GitHub Release (gh CLI required)
-                             (= revived in v0.32.0 per DR-0032)
+                             (= revived in v0.32.0)
 
   When an OTHER's vcs: spec has no explicit FILE component, it
-  borrows BASE's path (DR-0008 / DR-0023). 'compare gt VERSION
+  borrows BASE's path. 'compare gt VERSION
   vcs:main vcs:v1.0.0' therefore reads vcs:main:VERSION and
   vcs:v1.0.0:VERSION.
 
 Options:
   --vcs jj|git|auto          Force VCS detection for vcs: inputs (default: auto)
-  -q / --no-hint             Suppress DR-0010 hints (per-OTHER failure list is preserved)
+  -q / --no-hint             Suppress hints (per-OTHER failure list is preserved)
   -qq                        Also suppress the per-OTHER failure list
 
   --write / --json / --pre / --build-metadata: rejected (compare is
@@ -415,7 +415,7 @@ Examples:
 // kawaz CLI design preferences: sections in order (subcommand list,
 // options, global options, env), long options only, --help is the
 // no-args default.
-const helpVcs = `bump-semver vcs — VCS helpers (git/jj-agnostic) [DR-0020]
+const helpVcs = `bump-semver vcs — VCS helpers (git/jj-agnostic)
 
 Usage:
   bump-semver vcs <command> [args...]
@@ -430,7 +430,7 @@ Commands:
   fetch      Fetch refs from a remote
   push       Push a branch / bookmark to a remote
   tag        Manage tags atomically (push / delete / latest)
-  outdated   Derived-sync check via FROM→TO mapping (DR-0027 / DR-0028)
+  outdated   Derived-sync check via FROM→TO mapping
 
 See 'bump-semver vcs <command> --help' for arguments, options, and examples.
 
@@ -457,7 +457,7 @@ Exit codes:
 // belongs in a dedicated verb (e.g. tag listing in a future `vcs tag
 // list`). Keep the set tight so callers can rely on every key being
 // equally cheap and equally well-defined.
-const helpVcsGet = `bump-semver vcs get — read a value from the VCS [DR-0020 / DR-0032]
+const helpVcsGet = `bump-semver vcs get — read a value from the VCS
 
 Usage:
   bump-semver vcs get <key> [key-specific options...]
@@ -471,12 +471,12 @@ Keys:
                          Zero / multiple bookmarks at the head → exit 4.
   commit-id        40-char git commit SHA of --rev (default: @ for jj / HEAD
                    for git). Accepts any backend-native rev (bookmark, tag,
-                   change-id, sha, HEAD~3, etc); translateRev (DR-0031)
+                   change-id, sha, HEAD~3, etc); translateRev
                    normalizes cross-backend forms like origin/main ↔ main@origin.
   latest-tag       Largest SemVer-parseable tag (cwd VCS or via --repository).
-                   See 'vcs get latest-tag --help' for options (DR-0032).
+                   See 'vcs get latest-tag --help' for options.
   latest-release   Largest SemVer-parseable GitHub Release (gh CLI required).
-                   See 'vcs get latest-release --help' for options (DR-0032).
+                   See 'vcs get latest-release --help' for options.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -512,7 +512,7 @@ Examples:
 // Future predicates (`ahead` / `behind` / …) plug in here as the
 // design rolls out; backend-specific concepts (e.g. jj's empty `@`)
 // are intentionally excluded for portability.
-const helpVcsIs = `bump-semver vcs is — test a VCS predicate [DR-0020]
+const helpVcsIs = `bump-semver vcs is — test a VCS predicate
 
 Usage:
   bump-semver vcs is <pred>
@@ -563,7 +563,7 @@ Examples:
 // silently dropped (kawaz's design decision). When every supplied path
 // is filtered out the command exits 0 with empty stdout — it explicitly
 // does NOT widen back to "diff everything".
-const helpVcsDiff = `bump-semver vcs diff — print the patch between REV and the working copy [DR-0020 / DR-0033]
+const helpVcsDiff = `bump-semver vcs diff — print the patch between REV and the working copy
 
 Usage:
   bump-semver vcs diff [-s|--name-status] [-q|--quiet] REV [PATH..] [--excludes PATTERN]...
@@ -572,8 +572,8 @@ Arguments:
   REV          The revision to compare against (git: any rev-spec like
                HEAD~1, origin/main, <sha>; jj: any revset like @-, main@origin).
   PATH..       Optional path filter (= include set). Each entry is a
-               literal path, 'glob:<pattern>' (DR-0024), or
-               'file:<path>' (DR-0033 — read newline-separated path list
+               literal path, 'glob:<pattern>', or
+               'file:<path>' (read newline-separated path list
                from <path>; '#' comments and blank lines skipped, lines
                accept literal or 'glob:' shapes). Nonexistent paths are
                silently ignored (declarative convergence). When every
@@ -640,7 +640,7 @@ Examples:
   bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
                                                 # exit 0 ⇔ no diff in VERSION
   bump-semver vcs diff -q HEAD~1 src/ --excludes 'glob:src/**/*_test.go'
-                                                # is non-test src/ unchanged? (DR-0033)
+                                                # is non-test src/ unchanged?
   bump-semver vcs diff HEAD~1 file:.bump-targets --excludes file:.bump-excludes
                                                 # include / exclude via external lists
 `
@@ -657,7 +657,7 @@ Examples:
 // commit. This makes `vcs commit -m "..." VERSION Cargo.toml
 // package.json` a useful "commit whatever bumped" snippet across
 // languages without needing per-project presets.
-const helpVcsCommit = `bump-semver vcs commit — record changes safely (git/jj-agnostic) [DR-0020]
+const helpVcsCommit = `bump-semver vcs commit — record changes safely (git/jj-agnostic)
 
 Usage:
   bump-semver vcs commit -m MSG PATH..
@@ -703,8 +703,8 @@ Arguments:
   -m, --message MSG    Commit message. Required UNLESS --amend.
 
 Not provided by design:
-  -a / --all           Use --staged (avoids unstaged-grab accidents — see
-                       DR-0020). For jj users the equivalent is naming the
+  -a / --all           Use --staged (avoids unstaged-grab accidents).
+                       For jj users the equivalent is naming the
                        PATH list explicitly.
 
 Global Options:
@@ -742,7 +742,7 @@ Examples:
 // scoping, prune flags, and tag controls intentionally pass through the
 // underlying tool unchanged (= use plain `git fetch ...` / `jj git fetch
 // ...` for those).
-const helpVcsFetch = `bump-semver vcs fetch — refresh refs from a remote (git/jj-agnostic) [DR-0020]
+const helpVcsFetch = `bump-semver vcs fetch — refresh refs from a remote (git/jj-agnostic)
 
 Usage:
   bump-semver vcs fetch [REMOTE]
@@ -794,7 +794,7 @@ Examples:
 // already used by `vcs get current-branch`). --bookmark is an alias for
 // jj users who think in bookmarks; the flags are interchangeable but
 // supplying both at once is a usage error.
-const helpVcsPush = `bump-semver vcs push — upload refs to a remote (git/jj-agnostic) [DR-0020]
+const helpVcsPush = `bump-semver vcs push — upload refs to a remote (git/jj-agnostic)
 
 Usage:
   bump-semver vcs push --branch NAME [--remote REMOTE]
@@ -822,7 +822,7 @@ jj-specific options (silent no-op on git — backend-prefix general rule):
                                      backwards/sideways moves and we do
                                      NOT pass --allow-backwards.
 
-                               Why: jj 慣習 places bookmarks on the
+                               Why: jj convention places bookmarks on the
                                confirmed parent commit (@-), not on the
                                throw-away working copy (@). Manually
                                running 'jj bookmark move' every bump
@@ -887,7 +887,7 @@ Examples:
 // just enumerates the sub-verbs and points at their dedicated help.
 // Per kawaz CLI design preferences: sections in order (sub-verb list,
 // global options, exit codes), long options only.
-const helpVcsTag = `bump-semver vcs tag — manage tags atomically (create+push / delete) [DR-0020]
+const helpVcsTag = `bump-semver vcs tag — manage tags atomically (create+push / delete)
 
 Usage:
   bump-semver vcs tag <command> [args...]
@@ -899,14 +899,13 @@ Commands:
 
 See 'bump-semver vcs tag <command> --help' for arguments and options.
 For reading the latest tag/release, use 'vcs get latest-tag' / 'vcs get
-latest-release' or input records 'vcs:latest-tag()' / 'vcs:latest-release()'
-(DR-0032).
+latest-release' or input records 'vcs:latest-tag()' / 'vcs:latest-release()'.
 
 Notes:
   - 'tag push' is intentionally NOT separable into "tag locally then push later".
     The verb's contract is "the tag points to REV on the remote when this returns";
     the local create is the means, not the deliverable. This keeps tags
-    1-1 with their remote presence (DR-0020 design — no orphan local tags
+    1-1 with their remote presence (no orphan local tags
     that didn't make it out).
   - 'tag delete' removes both halves (local + remote) — pair with 'tag push'
     so the lifecycle stays symmetric. Either half being missing is fine
@@ -932,7 +931,7 @@ Exit codes:
 
 // helpVcsTagPush documents `vcs tag push --rev REV NAME [--remote REMOTE]
 // [--allow-move]` (DR-0020 PR-6).
-const helpVcsTagPush = `bump-semver vcs tag push — create or move a tag and push it [DR-0020]
+const helpVcsTagPush = `bump-semver vcs tag push — create or move a tag and push it
 
 Usage:
   bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
@@ -952,7 +951,7 @@ Options:
 Behaviour:
   - absent local tag           → create at REV, push to remote
   - local tag at same REV      → skip local create, still push
-                                 (片落ちリカバリ: remote may be missing it
+                                 (one-sided recovery: remote may be missing it
                                  even when local has it; the push is a
                                  clean no-op if remote also matches)
   - local tag at different REV → exit 4 (no side-effect), unless
@@ -965,7 +964,7 @@ Not provided by design:
   --force / --force-with-lease   Use --allow-move. Force is too broad —
                                  it conflates "same-rev idempotent push"
                                  with "different-rev rewrite"; --allow-move
-                                 is the precise opt-in (DR-0020 line 71/91).
+                                 is the precise opt-in.
   --tags / --all                 Bulk operations are out of scope.
 
 Global Options:
@@ -993,7 +992,7 @@ Examples:
 
 // helpVcsTagDelete documents `vcs tag delete NAME [--remote REMOTE]`
 // (DR-0020 PR-6).
-const helpVcsTagDelete = `bump-semver vcs tag delete — remove a tag locally and on a remote [DR-0020]
+const helpVcsTagDelete = `bump-semver vcs tag delete — remove a tag locally and on a remote
 
 Usage:
   bump-semver vcs tag delete NAME [--remote REMOTE]
@@ -1013,7 +1012,7 @@ Behaviour:
 
 Not provided by design:
   --allow-missing  Delete is natively idempotent; the flag would be no-op
-                   in every case (DR-0020 line 74 / 92).
+                   in every case.
 
 Global Options:
   --vcs jj|git|auto      Force VCS detection (default: auto, .jj wins over .git)
@@ -1035,7 +1034,7 @@ Examples:
 // successors to `vcs tag latest` (DR-0032). The source axis (tag vs
 // release) is folded into the verb name so each verb has a single,
 // honest responsibility.
-const helpVcsGetLatestTag = `bump-semver vcs get latest-tag — print the SemVer-largest tag [DR-0032]
+const helpVcsGetLatestTag = `bump-semver vcs get latest-tag — print the SemVer-largest tag
 
 Usage:
   bump-semver vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]
@@ -1075,10 +1074,10 @@ Examples:
   bump-semver vcs get latest-tag --repository kawaz/pkf-tasks
                                                      # remote (git ls-remote --tags)
   bump-semver get 'vcs:latest-tag()'                 # input record (= 1-liner ergonomic)
-  bump-semver compare gt VERSION 'vcs:latest-tag()'  # 1-liner CI 比較
+  bump-semver compare gt VERSION 'vcs:latest-tag()'  # 1-liner CI comparison
 `
 
-const helpVcsGetLatestRelease = `bump-semver vcs get latest-release — print the SemVer-largest GitHub Release [DR-0032]
+const helpVcsGetLatestRelease = `bump-semver vcs get latest-release — print the SemVer-largest GitHub Release
 
 Usage:
   bump-semver vcs get latest-release [--include-prerelease] [--repository REPO] [--json]
@@ -1125,7 +1124,7 @@ Examples:
 `
 
 // helpVcsOutdated — see DR-0027 / DR-0028 + `docs/specs/glob-backref-v0.1.0.md`.
-const helpVcsOutdated = `bump-semver vcs outdated — derived-sync check via FROM→TO mapping [DR-0027 / DR-0028]
+const helpVcsOutdated = `bump-semver vcs outdated — derived-sync check via FROM→TO mapping
 
 Usage:
   bump-semver vcs outdated FROM TO[..]

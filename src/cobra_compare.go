@@ -63,10 +63,34 @@ func buildCompareCmd() (*cobra.Command, *cliArgs, *sharedBumpFlags) {
 		Short:         "compare a base value to one or more others (exit-code-driven)",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		// Complete the operator only at the first positional; the
+		// remaining inputs (BASE / OTHERS) are files or raw versions, so
+		// fall back to default file completion there.
+		ValidArgsFunction: func(cmd *cobra.Command, posArgs []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(posArgs) == 0 {
+				return compareOpList, cobra.ShellCompDirectiveNoFileComp
+			}
+			return nil, cobra.ShellCompDirectiveDefault
+		},
 	}
 	shared := addSharedBumpFlags(cmd, args)
 	return cmd, args, shared
 }
+
+// compareOpList is the completion-facing ordering of the 20 compare
+// operators (5 bases × {full, -major, -minor, -patch}). It drives
+// `compare <TAB>`; the authoritative grammar stays in parseCompareOp.
+var compareOpList = func() []string {
+	bases := []string{"eq", "lt", "le", "gt", "ge"}
+	precisions := []string{"", "-major", "-minor", "-patch"}
+	ops := make([]string, 0, len(bases)*len(precisions))
+	for _, b := range bases {
+		for _, p := range precisions {
+			ops = append(ops, b+p)
+		}
+	}
+	return ops
+}()
 
 // buildCompareArgs assembles the compare cliArgs from the parsed flags and
 // positional args, reproducing the legacy parseCompareArgs sequencing:

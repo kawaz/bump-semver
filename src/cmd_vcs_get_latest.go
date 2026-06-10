@@ -42,7 +42,10 @@ func fetchLatestTag(repo string, includePre bool, vcsOverride vcsKind) (string, 
 		}
 		return b.LatestTag(includePre)
 	}
-	url := expandRepoArg(repo)
+	url, err := expandRepoArg(repo)
+	if err != nil {
+		return "", Version{}, err
+	}
 	if url == "" {
 		return "", Version{}, fmt.Errorf("--repository value must not be empty")
 	}
@@ -52,6 +55,12 @@ func fetchLatestTag(repo string, includePre bool, vcsOverride vcsKind) (string, 
 // fetchLatestRelease resolves the latest semver-parseable GitHub Release
 // (drafts dropped, prereleases dropped unless includePre). Requires gh.
 func fetchLatestRelease(repo string, includePre bool) (string, Version, error) {
+	// 引数インジェクション対策 (C-1): `gh -R <repo>` takes owner/repo (not a
+	// URL); a leading-`-` / malformed value would reach gh as a flag. Validate
+	// before ensureGhAvailable so a bad arg is rejected even without gh present.
+	if err := validateGhRepo(repo); err != nil {
+		return "", Version{}, err
+	}
 	if err := ensureGhAvailable(); err != nil {
 		return "", Version{}, err
 	}

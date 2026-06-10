@@ -37,6 +37,13 @@ func runVcsCmdGetLatestTag(args cliArgs, stdout, stderr io.Writer) error {
 	if args.vcsGet.LatestRepository != nil {
 		repo = *args.vcsGet.LatestRepository
 	}
+	// 引数インジェクション対策 (C-1): a leading-`-` --repository would reach
+	// `git ls-remote --tags <repo>` as a flag. Reject at the usage layer
+	// (exit 2) before resolving the backend. expandRepoArg re-checks as
+	// defense-in-depth for the `vcs:latest-tag(REPO)` input-mode path.
+	if _, err := expandRepoArg(repo); err != nil {
+		return emitVcsUsage(stderr, args, err)
+	}
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, ""))
 	raw, v, err := fetchLatestTag(repo, includePre, vcsOverride)
 	if err != nil {

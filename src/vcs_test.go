@@ -72,7 +72,10 @@ func TestExpandRepoArg(t *testing.T) {
 		tc := tc
 		t.Run(tc.in, func(t *testing.T) {
 			t.Parallel()
-			got := expandRepoArg(tc.in)
+			got, err := expandRepoArg(tc.in)
+			if err != nil {
+				t.Fatalf("expandRepoArg(%q): unexpected error: %v", tc.in, err)
+			}
 			if got != tc.want {
 				t.Errorf("expandRepoArg(%q) = %q, want %q", tc.in, got, tc.want)
 			}

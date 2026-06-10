@@ -35,6 +35,13 @@ func runVcsCmdGetLatestRelease(args cliArgs, stdout, stderr io.Writer) error {
 	if args.vcsGet.LatestRepository != nil {
 		repo = *args.vcsGet.LatestRepository
 	}
+	// 引数インジェクション対策 (C-1): `gh -R <repo>` takes owner/repo; reject a
+	// leading-`-` / malformed value at the usage layer (exit 2) before gh is
+	// invoked. fetchLatestRelease re-checks as defense-in-depth for the
+	// `vcs:latest-release(REPO)` input-mode path.
+	if err := validateGhRepo(repo); err != nil {
+		return emitVcsUsage(stderr, args, err)
+	}
 	raw, v, err := fetchLatestRelease(repo, includePre)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)

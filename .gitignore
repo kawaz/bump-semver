@@ -5,3 +5,4 @@
 .DS_Store
 # stray `src` binary if someone runs `go build ./src` outside the Justfile
 /src/src
+.cache/

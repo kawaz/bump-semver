@@ -172,6 +172,13 @@ func resolveVcsInput(spec string, otherFile string, backend vcsBackend) (resolve
 		}
 		file = otherFile
 	}
+	// 引数インジェクション対策 (C-1): the `vcs:REV` input mode does not pass
+	// through the CLI flag parser, so its leading-`-` rejection is bypassed.
+	// Validate here so e.g. `vcs:--output=<path>:FILE` cannot reach
+	// `git show <rev>:<file>` / `git diff` with a flag-shaped rev.
+	if err := validateUserRev(rev); err != nil {
+		return resolvedInput{}, fmt.Errorf("%s: %w", spec, err)
+	}
 	content, err := backend.FetchFile(rev, file)
 	if err != nil {
 		return resolvedInput{}, err
@@ -345,6 +352,70 @@ func splitAndDedup(s string) []string {
 	return out
 }
 
+// validateUserRev rejects a user-supplied rev that would be parsed by
+// git/jj as an option flag (引数インジェクション対策, C-1). Any non-empty
+// rev whose first byte is `-` is rejected with an exit-2 usage error,
+// because `git diff <rev>` / `git rev-parse <rev>` / `jj log -r <rev>`
+// etc. treat a leading-`-` value as a flag (e.g. `--output=<path>` makes
+// `git diff` write to an arbitrary file).
+//
+// Legitimate revs never start with `-`: `HEAD~3`, `@-` (= leading `@`),
+// `main@origin`, `origin/main`, tag names, shas all pass. Empty is a
+// no-op (callers reject empty separately so we avoid a double error).
+//
+// Validation runs *before* translateRev (DR-0031): translation only swaps
+// slash/@ segments and never produces a leading `-`, so checking the raw
+// user input is sufficient. translateRev stays error-free (DR-0031) — the
+// guard lives in this separate function so the two responsibilities
+// (translate vs validate) don't entangle.
+func validateUserRev(rev string) error {
+	if rev != "" && strings.HasPrefix(rev, "-") {
+		return fmt.Errorf("rev %q must not start with '-' (would be parsed as a git/jj option)", rev)
+	}
+	return nil
+}
+
+// validateRemote rejects an empty / leading-`-` / whitespace-bearing
+// remote name (引数インジェクション対策, C-1). A leading-`-` remote would be
+// parsed by `git fetch <remote>` / `git push <remote>` as a flag; embedded
+// whitespace is never a valid remote name. The default remote ("origin")
+// and ordinary names ("upstream", "my-remote") pass.
+func validateRemote(remote string) error {
+	if remote == "" {
+		return fmt.Errorf("remote name must not be empty")
+	}
+	if strings.HasPrefix(remote, "-") {
+		return fmt.Errorf("remote %q must not start with '-' (would be parsed as a git/jj option)", remote)
+	}
+	if strings.ContainsAny(remote, " \t\n\r") {
+		return fmt.Errorf("remote %q contains whitespace (not a valid remote name)", remote)
+	}
+	return nil
+}
+
+// validateGhRepo enforces the `owner/repo` shape required by `gh -R <repo>`
+// (引数インジェクション対策, C-1). Empty is allowed (= gh auto-detects the
+// cwd repo). A non-empty value must be exactly one `/` with non-empty
+// owner/repo segments, no leading `-`, and no whitespace. `gh` takes
+// `owner/repo` (not a URL), so expandRepoArg's URL handling is the wrong
+// tool here — this is a separate validator.
+func validateGhRepo(repo string) error {
+	if repo == "" {
+		return nil // gh auto-detects cwd repo
+	}
+	if strings.HasPrefix(repo, "-") {
+		return fmt.Errorf("repository %q must not start with '-' (would be parsed as a gh option)", repo)
+	}
+	if strings.ContainsAny(repo, " \t\n\r") {
+		return fmt.Errorf("repository %q contains whitespace (expected owner/repo)", repo)
+	}
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return fmt.Errorf("repository %q must be in owner/repo form", repo)
+	}
+	return nil
+}
+
 // expandRepoArg normalises a `<arg>` portion of `vcs:latest-tag(<arg>)`
 // into a URL/spec that `git ls-remote --tags` accepts.
 //
@@ -352,27 +423,37 @@ func splitAndDedup(s string) []string {
 //   - HTTP(S) / SSH (`git@...` / `ssh://`) URLs pass through unchanged.
 //   - `<owner>/<repo>` (exactly one `/`, no whitespace) is expanded to
 //     `https://github.com/<owner>/<repo>` (GitHub-default convention).
-//   - Anything else passes through verbatim; `git ls-remote` will report
-//     the parse error which is more accurate than anything we could say.
+//   - A leading-`-` value is rejected (引数インジェクション対策, C-1): it
+//     would otherwise reach `git ls-remote --tags <arg>` as a flag
+//     (e.g. `--upload-pack=...`). This is the minimal injection guard;
+//     a full URL-scheme allowlist is deliberately *not* added here so the
+//     existing "let git ls-remote report the parse error" design
+//     (DR-0019/DR-0032) is preserved for non-dash inputs.
+//   - Anything else (non-dash) passes through verbatim; `git ls-remote`
+//     reports the parse error which is more accurate than anything we
+//     could say.
 //
 // Whitespace around the input is trimmed so `vcs:latest-tag( foo/bar )`
 // behaves the same as `vcs:latest-tag(foo/bar)`.
-func expandRepoArg(arg string) string {
+func expandRepoArg(arg string) (string, error) {
 	s := strings.TrimSpace(arg)
 	if s == "" {
-		return ""
+		return "", nil
+	}
+	if strings.HasPrefix(s, "-") {
+		return "", fmt.Errorf("repository %q must not start with '-' (would be parsed as a git option)", s)
 	}
 	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
-		return s
+		return s, nil
 	}
 	if strings.HasPrefix(s, "git@") || strings.HasPrefix(s, "ssh://") {
-		return s
+		return s, nil
 	}
 	// owner/repo: exactly one `/`, no embedded whitespace.
 	if strings.Count(s, "/") == 1 && !strings.ContainsAny(s, " \t") {
-		return "https://github.com/" + s
+		return "https://github.com/" + s, nil
 	}
-	return s
+	return s, nil
 }
 
 // pickLatestSemverTag returns the SemVer-largest entry from `tags`,

@@ -148,6 +148,11 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 		return nil
 	case "commit-id":
 		rev := derefOr(args.vcsGet.Rev, "")
+		// 引数インジェクション対策 (C-1): leading-`-` rev would reach
+		// `git rev-parse <rev>` / `jj log -r <rev>` as a flag.
+		if err := validateUserRev(rev); err != nil {
+			return emitVcsUsage(stderr, args, err)
+		}
 		sha, err := b.CommitID(rev)
 		if err != nil {
 			return emitVcsErr(stderr, args, err)
@@ -281,6 +286,13 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 			fmt.Errorf("vcs diff requires a REV (usage: vcs diff REV [PATH..])"))
 	}
 	rev := args.vcsArgs[0]
+	// 引数インジェクション対策 (C-1): a leading-`-` rev reaches `git diff <rev>`
+	// as a flag (e.g. `--output=<path>` writes an arbitrary file). The `--`
+	// arg separator lets such a value into vcsArgs[0], bypassing the parser's
+	// own leading-`-` flag rejection, so we re-check here at the dispatch layer.
+	if err := validateUserRev(rev); err != nil {
+		return emitVcsUsage(stderr, args, err)
+	}
 	rawPaths := args.vcsArgs[1:]
 
 	// DR-0024: expand `glob:` / `file:` selectors. Literal paths pass through
@@ -522,6 +534,11 @@ func runVcsCmdFetch(args cliArgs, stdout, stderr io.Writer) error {
 		}
 		remote = args.vcsArgs[0]
 	}
+	// 引数インジェクション対策 (C-1): leading-`-` remote would reach
+	// `git fetch <remote>` as a flag.
+	if err := validateRemote(remote); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs fetch: %w", err))
+	}
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
@@ -571,6 +588,11 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	remote := "origin"
 	if args.vcsPush.Remote != nil {
 		remote = *args.vcsPush.Remote
+	}
+	// 引数インジェクション対策 (C-1): leading-`-` remote would reach
+	// `git push <remote> <refspec>` as a flag.
+	if err := validateRemote(remote); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs push: %w", err))
 	}
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
 	b, err := newVcsBackend(vcsOverride)
@@ -675,6 +697,12 @@ func validTagName(name string) error {
 	if strings.HasPrefix(name, "refs/") {
 		return fmt.Errorf("NAME %q must not start with refs/ (the tag-ref prefix is added automatically)", name)
 	}
+	// 引数インジェクション対策 (C-1): a leading-`-` NAME would be parsed by
+	// `git tag [-f] <name>` / `git tag -d <name>` as a flag (e.g. NAME=`-d`
+	// turns a create into a delete). Reject it explicitly.
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("NAME %q must not start with '-' (would be parsed as a git/jj option)", name)
+	}
 	return nil
 }
 
@@ -710,6 +738,11 @@ func runVcsCmdTagPush(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs tag push: --rev value must not be empty"))
 	}
+	// 引数インジェクション対策 (C-1): leading-`-` rev would reach
+	// `git tag <name> <rev>` resolution as a flag.
+	if err := validateUserRev(*args.vcsTag.Rev); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag push: %w", err))
+	}
 	name := args.vcsArgs[0]
 	if err := validTagName(name); err != nil {
 		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag push: %w", err))
@@ -717,6 +750,9 @@ func runVcsCmdTagPush(args cliArgs, stdout, stderr io.Writer) error {
 	remote := "origin"
 	if args.vcsPush.Remote != nil {
 		remote = *args.vcsPush.Remote
+	}
+	if err := validateRemote(remote); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag push: %w", err))
 	}
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, ""))
 	b, err := newVcsBackend(vcsOverride)
@@ -767,6 +803,9 @@ func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
 	remote := "origin"
 	if args.vcsPush.Remote != nil {
 		remote = *args.vcsPush.Remote
+	}
+	if err := validateRemote(remote); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs tag delete: %w", err))
 	}
 	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, ""))
 	b, err := newVcsBackend(vcsOverride)

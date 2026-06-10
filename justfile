@@ -101,7 +101,8 @@ push: ci check-outdated-translations check-version-bumped
 # (watch-workflow の `--on-success release.yml 'just on-success-release'` 経由で
 # 通知 event に `[ACTION:release.yml] just on-success-release` が emit される)
 on-success-release:
-    brew update
+    # tap repo を直接 git pull (= `brew update` 全 tap 巡回より速い)
+    git -C "$(brew --repository)/Library/Taps/kawaz/homebrew-tap" pull --ff-only
     brew upgrade kawaz/tap/bump-semver
     bump-semver --version
 

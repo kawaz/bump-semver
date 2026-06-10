@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -88,6 +89,42 @@ func emitFallbackHints(stderr io.Writer, args cliArgs, resolved []resolvedInput)
 		}
 		fmt.Fprintf(stderr, "hint: %s matched as %s fallback. Open issue if explicit support is needed.\n", ri.file, glob)
 	}
+}
+
+// emitCargoWorkspaceHint adds a one-line `hint:` after a name-mismatch
+// error when at least one of the mismatched inputs is a Cargo.toml. The
+// name-mismatch check itself stays (it guards against mixing unrelated
+// files), but member crates of a Rust workspace legitimately have
+// different package names, so the hint steers the user to the canonical
+// single-file layout: keep the version in the root Cargo.toml's
+// [workspace.package] and let members inherit it. Suppressed by
+// `--no-hint` / `-q` / `-qq` like every other hint.
+//
+// The Rust-specific phrasing is gated on Cargo.toml so a package.json /
+// pyproject.toml mismatch never gets an irrelevant Rust suggestion.
+func emitCargoWorkspaceHint(stderr io.Writer, args cliArgs, resolved []resolvedInput) {
+	if args.output.Verbosity.ShouldSuppressHint() {
+		return
+	}
+	if !anyCargoToml(resolved) {
+		return
+	}
+	fmt.Fprintln(stderr, "hint: for a Rust workspace, put [workspace.package] version in the root Cargo.toml and let members inherit via version.workspace = true, then bump only the root file")
+}
+
+// anyCargoToml reports whether any FILE-origin resolved input is a
+// Cargo.toml. It checks both the literal basename and the DR-0013
+// suffix-stripped basename (so e.g. `Cargo.toml.bak` still counts).
+func anyCargoToml(resolved []resolvedInput) bool {
+	for _, ri := range resolved {
+		if ri.file == "" {
+			continue
+		}
+		if filepath.Base(ri.file) == "Cargo.toml" || ri.insp.MatchedStrippedBasename == "Cargo.toml" {
+			return true
+		}
+	}
+	return false
 }
 
 func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -195,10 +232,15 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		if args.action == "get" {
 			if !args.output.Verbosity.ShouldSuppressError() {
 				fmt.Fprintln(stderr, formatMismatchError("name", allNames).Error())
+				emitCargoWorkspaceHint(stderr, args, resolved)
 			}
 			return &exitErr{code: exitCodeFalse}
 		}
-		return emitErr(stderr, args, formatMismatchError("name", allNames))
+		nameErr := emitErr(stderr, args, formatMismatchError("name", allNames))
+		if !args.output.Verbosity.ShouldSuppressError() {
+			emitCargoWorkspaceHint(stderr, args, resolved)
+		}
+		return nameErr
 	}
 
 	// Use the first contributing field as the origin source for parse

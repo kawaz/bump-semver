@@ -150,6 +150,7 @@ func renderSubcommands(cmd *cobra.Command) string {
 func renderFlagBlock(fs *pflag.FlagSet) string {
 	type entry struct {
 		head  string // "  -m, --message MSG" / "      --json"
+		name  string // long name, the sort key
 		usage string
 	}
 	var entries []entry
@@ -173,13 +174,13 @@ func renderFlagBlock(fs *pflag.FlagSet) string {
 		if len(h) > maxHead {
 			maxHead = len(h)
 		}
-		entries = append(entries, entry{head: h, usage: usage})
+		entries = append(entries, entry{head: h, name: f.Name, usage: usage})
 	})
 
 	if len(entries) == 0 {
 		return ""
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].head < entries[j].head })
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 
 	var b strings.Builder
 	for _, e := range entries {

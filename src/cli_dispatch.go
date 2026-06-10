@@ -237,11 +237,18 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "hint: %d %s not modified; use --write to update or --no-hint to suppress\n", n, suffix)
 	}
 
-	// stdout output (suppressed by -q/-qq). With --json the bumped/get
-	// version is rendered as a single-line JSON object (DR-0007); the
-	// `name` field is populated from the cross-input-validated set of
-	// FILE-origin names (which DR-0004 already collapses to one value).
-	if !args.output.Verbosity.ShouldSuppressStdout() {
+	// stdout output. With --json the bumped/get version is rendered as a
+	// single-line JSON object (DR-0007); the `name` field is populated
+	// from the cross-input-validated set of FILE-origin names (which
+	// DR-0004 already collapses to one value).
+	//
+	// Design rationale: -q/-qq suppress stdout for bump verbs (the value
+	// is a side effect of the write), but get is exempt — its stdout
+	// value IS the primary deliverable, so -q only silences hints and
+	// -qq additionally silences errors, never the value. This keeps the
+	// machine-use idiom `ref=$(bump-semver get ... -qq 2>/dev/null)`
+	// working instead of returning an empty string.
+	if args.action == "get" || !args.output.Verbosity.ShouldSuppressStdout() {
 		if args.output.JSON {
 			var name *string
 			if len(allNames) > 0 {

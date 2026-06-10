@@ -837,8 +837,10 @@ func TestRun_QuietAll_LongFlag(t *testing.T) {
 	}
 }
 
-// -q with `get` suppresses stdout — the documented batch-validation use
-// case (exit code is meaningful, value is not).
+// -q with `get` keeps the version value on stdout — for get the value
+// IS the primary deliverable, so -q only silences hints. This is the
+// machine-use case `ref=$(bump-semver get FILE -q)` where the value
+// must survive.
 func TestRun_GetQuiet_BatchValidation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -850,8 +852,8 @@ func TestRun_GetQuiet_BatchValidation(t *testing.T) {
 	if err := run([]string{"get", path, "-q"}, bytes.NewReader(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("run error: %v", err)
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("get -q must suppress stdout, got: %q", stdout.String())
+	if got := strings.TrimSpace(stdout.String()); got != "1.2.3" {
+		t.Errorf("get -q must keep the value on stdout, got: %q", stdout.String())
 	}
 }
 

@@ -189,11 +189,11 @@ func (v *verbosityRaiseValue) String() string   { return "" }
 // before parsing.
 func addVerbosityFlags(fs *pflag.FlagSet, v *outputVerbosity) {
 	quiet := &verbosityRaiseValue{slot: v, level: outputQuiet}
-	fs.VarP(quiet, "quiet", "q", "suppress stdout and hints")
+	fs.VarP(quiet, "quiet", "q", "suppress stdout and hints (get keeps its value)")
 	fs.Lookup("quiet").NoOptDefVal = "x"
 
 	quietAll := &verbosityRaiseValue{slot: v, level: outputQuietAll}
-	fs.Var(quietAll, "quiet-all", "suppress stdout, hints, and errors (use with caution)")
+	fs.Var(quietAll, "quiet-all", "suppress stdout, hints, and errors (get keeps its value; use with caution)")
 	fs.Lookup("quiet-all").NoOptDefVal = "x"
 
 	noHint := &verbosityRaiseValue{slot: v, level: outputNoHint}

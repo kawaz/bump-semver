@@ -96,6 +96,11 @@ snapshot of a at main, and the snapshot of b at main.
 Note: get is read-only; --write / --pre / --build-metadata are
 rejected (use --no-pre / --no-build-metadata to strip on output).
 
+Quiet flags never hide get's value: the version is the deliverable,
+so -q silences hints only and -qq also silences errors, but the
+value is always printed. This keeps 'ref=$(bump-semver get FILE -qq
+2>/dev/null)' working instead of capturing an empty string.
+
 Inputs (multiple, must agree):
   FILE                       supported file (basename auto-detected)
   VER                        raw semver string

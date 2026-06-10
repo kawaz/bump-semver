@@ -469,6 +469,10 @@ Keys:
                    git:  HEAD's symbolic-ref short name. Detached HEAD → exit 4.
                    jj:   The single bookmark naming heads(::@ & bookmarks()).
                          Zero / multiple bookmarks at the head → exit 4.
+  commit-id        40-char git commit SHA of --rev (default: @ for jj / HEAD
+                   for git). Accepts any backend-native rev (bookmark, tag,
+                   change-id, sha, HEAD~3, etc); translateRev (DR-0031)
+                   normalizes cross-backend forms like origin/main ↔ main@origin.
   latest-tag       Largest SemVer-parseable tag (cwd VCS or via --repository).
                    See 'vcs get latest-tag --help' for options (DR-0032).
   latest-release   Largest SemVer-parseable GitHub Release (gh CLI required).
@@ -489,6 +493,9 @@ Examples:
   bump-semver vcs get root                    # /path/to/repo
   bump-semver vcs get backend                 # git  (or jj)
   bump-semver vcs get current-branch          # main
+  bump-semver vcs get commit-id               # SHA of @ (jj) / HEAD (git)
+  bump-semver vcs get commit-id --rev main    # SHA of main
+  bump-semver vcs get commit-id --rev origin/main   # cross-backend rev OK
   bump-semver vcs get latest-tag              # largest stable SemVer tag
   bump-semver vcs get latest-release          # largest stable GH Release
   ROOT=$(bump-semver vcs get root) || exit    # capture for further use

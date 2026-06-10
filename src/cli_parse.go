@@ -185,13 +185,14 @@ type vcsTagOpts struct {
 	AllowMove bool
 }
 
-// vcsGetOpts captures flags for `vcs get latest-tag` / `vcs get latest-release`
-// (DR-0032). LatestRepository is the optional external repo (`owner/repo`
-// short / full URL); nil = cwd VCS. LatestIncludePre toggles SemVer
-// prerelease inclusion (default false = stable only).
+// vcsGetOpts captures flags for `vcs get`:
+//   - LatestRepository / LatestIncludePre — `vcs get latest-{tag,release}` (DR-0032)
+//   - Rev — `vcs get commit-id` target rev (nil = backend default: `@` for jj /
+//     `HEAD` for git). translateRev (DR-0031) normalizes cross-backend forms.
 type vcsGetOpts struct {
 	LatestRepository *string
 	LatestIncludePre bool
+	Rev              *string
 }
 
 // cliArgs is the parsed command-line.
@@ -687,6 +688,20 @@ func parseVcsArgs(argv []string) (cliArgs, error) {
 			out.vcsGet.LatestRepository = ptr(strings.TrimPrefix(a, "--repository="))
 		case a == "--include-prerelease" && out.vcsVerb == "get":
 			out.vcsGet.LatestIncludePre = true
+		case a == "--rev" && out.vcsVerb == "get":
+			if out.vcsGet.Rev != nil {
+				return cliArgs{}, fmt.Errorf("--rev specified twice")
+			}
+			if i+1 >= len(rest) {
+				return cliArgs{}, fmt.Errorf("--rev requires a value (REV)")
+			}
+			out.vcsGet.Rev = ptr(rest[i+1])
+			i++
+		case strings.HasPrefix(a, "--rev=") && out.vcsVerb == "get":
+			if out.vcsGet.Rev != nil {
+				return cliArgs{}, fmt.Errorf("--rev specified twice")
+			}
+			out.vcsGet.Rev = ptr(strings.TrimPrefix(a, "--rev="))
 		case a == "--json" && out.vcsVerb == "get":
 			out.output.JSON = true
 		case a == "--no-hint":

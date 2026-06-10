@@ -39,7 +39,7 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 //
 // DR-0032: latest-tag / latest-release replace the v0.29.0 `vcs tag latest
 // --source <tag|release>` (= source 軸を verb 名に畳む)。
-var vcsGetKeys = []string{"root", "backend", "current-branch", "latest-tag", "latest-release"}
+var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release"}
 
 // runVcsCmdGet implements `vcs get <key>`.
 //
@@ -99,6 +99,10 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 				fmt.Errorf("--json is only valid with vcs get latest-tag / latest-release"))
 		}
 	}
+	if key != "commit-id" && args.vcsGet.Rev != nil {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("--rev is only valid with vcs get commit-id"))
+	}
 
 	// latest-tag / latest-release dispatch — they have their own backend
 	// handling (cwd VCS via newVcsBackend for tag without --repository, or
@@ -141,6 +145,14 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 			return emitVcsErr(stderr, args, err)
 		}
 		emit(name)
+		return nil
+	case "commit-id":
+		rev := derefOr(args.vcsGet.Rev, "")
+		sha, err := b.CommitID(rev)
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		emit(sha)
 		return nil
 	}
 	// Unreachable: key was validated against vcsGetKeys above.

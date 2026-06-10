@@ -38,6 +38,15 @@ type vcsBackend interface {
 	// so callers can preserve the exit-code contract.
 	CurrentBranch() (string, error)
 
+	// CommitID resolves `rev` to the canonical 40-char git commit SHA.
+	// `rev` accepts any backend-native form (jj revset / git rev-spec)
+	// and is normalized via translateRev (DR-0031), so cross-backend
+	// forms (e.g. `origin/main` ↔ `main@origin`) work uniformly.
+	//
+	// Ambiguous resolution (revset matching multiple commits / unresolvable
+	// rev) returns *exitErr{exitCodeVCSExec}.
+	CommitID(rev string) (string, error)
+
 	// FetchFile reads the contents of `file` at revision `rev` from
 	// the underlying VCS. Replaces the free function vcsFetchFile.
 	FetchFile(rev, file string) ([]byte, error)
@@ -390,6 +399,16 @@ type gitBackend struct{}
 
 func (g *gitBackend) Kind() string { return "git" }
 
+// CommitID resolves rev to its 40-char SHA via git rev-parse, with the
+// DR-0031 translateRev applied so jj-style `bookmark@remote` works too.
+// Default rev when empty: "HEAD".
+func (g *gitBackend) CommitID(rev string) (string, error) {
+	if rev == "" {
+		rev = "HEAD"
+	}
+	return resolveGitRev(rev)
+}
+
 // Root returns the absolute path to the top-level working tree
 // directory via `git rev-parse --show-toplevel`.
 func (g *gitBackend) Root() (string, error) {
@@ -427,6 +446,16 @@ func (g *gitBackend) CurrentBranch() (string, error) {
 type jjBackend struct{}
 
 func (j *jjBackend) Kind() string { return "jj" }
+
+// CommitID resolves rev to its 40-char commit SHA via
+// `jj log -r REV -T commit_id`, with the DR-0031 translateRev applied
+// so git-style `remote/bookmark` works too. Default rev when empty: "@".
+func (j *jjBackend) CommitID(rev string) (string, error) {
+	if rev == "" {
+		rev = "@"
+	}
+	return resolveJjRev(rev)
+}
 
 // Root returns the absolute path to the jj working copy via `jj root`.
 func (j *jjBackend) Root() (string, error) {

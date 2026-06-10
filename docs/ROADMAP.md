@@ -29,7 +29,7 @@ DR-0005 の path-aware confidence ranked テーブルにより、新フォーマ
 
 ### 未対応フォーマット候補
 
-現状の `format=json/toml/yaml/plain/regex/pbxproj/xml/xml-element` 8 つに加えて、実需順の追加候補:
+現状の `format=text/json/yaml/toml/xml/xml-element/pbxproj` 7 つに加えて、実需順の追加候補:
 
 - **jsonc** (JSON with comments / trailing commas): Bun bun.lock / VS Code 系 settings.json 等
 - **`CFBundleVersion` (Xcode build number)**: SemVer ではなく整数 / build hash / commit count なので bump-semver スコープ外。CI で別途埋めるのが慣例

@@ -2,7 +2,7 @@
 
 > English | [日本語](./README-ja.md)
 
-A focused CLI for reading, bumping, and comparing the semver string in version-tracking files. Detects the file format by basename (no `--pattern` regex flag), supports five flat actions (`major` / `minor` / `patch` / `pre` / `get`) plus one nested subcommand (`compare`). The new version is always written to stdout so it composes well in shell pipelines.
+A focused CLI for reading, bumping, and comparing the semver string in version-tracking files. Detects the file format by basename (no `--pattern` regex flag), supports five flat actions (`major` / `minor` / `patch` / `pre` / `get`) plus three nested namespaces (`compare`, `vcs`, `completion`). The new version is always written to stdout so it composes well in shell pipelines.
 
 ## Why
 
@@ -256,7 +256,7 @@ Exit codes for `vcs tag push`: `0` success (incl. idempotent same-rev re-push); 
 |---|---|---|
 | `--repository REPO` | cwd VCS / repo | External target: `owner/repo` (GitHub short, expanded to `https://github.com/...`) or full HTTPS/SSH URL. For `latest-tag` uses `git ls-remote --tags` (no gh); for `latest-release` uses `gh release list -R` (gh required) |
 | `--include-prerelease` | excluded | Include pre-release tags (`v1.2.3-rc.1` etc.) |
-| `--json` | bare SemVer | Same 12-field schema as `get --json`: `{"name":..., "version":..., "semver":..., "major":..., ...}`. `.version` preserves the raw tag string (= old `--raw` info), `.semver` is the canonical bare form, `.name` surfaces the monorepo prefix from `pkf-tasks@0.0.13` style tags |
+| `--json` | bare SemVer | Same 12-field schema as `get --json`: `{"name":..., "version":..., "semver":..., "major":..., ...}`. `.version` preserves the raw tag string, `.semver` is the canonical bare form, `.name` surfaces the monorepo prefix from `pkf-tasks@0.0.13` style tags |
 
 ```bash
 bump-semver vcs get latest-tag                       # cwd: 1.2.3 (bare SemVer)
@@ -457,7 +457,7 @@ The `pyproject.toml` rule (DR-0014) tries PEP 621's `[project].version` first an
 
 The `Cargo.toml` rule (DR-0021) uses the same try-fallback shape: a single-crate manifest's `[package].version` is tried first, and a workspace-root manifest (no `[package]`) falls back to `[workspace.package].version` — the value member crates inherit via `version.workspace = true`. When a member crate declares both, its own `[package].version` wins. The matched path (`[package].version` or `[workspace.package].version`) is shown in `get` / `--json` output so you always see which version you are bumping.
 
-The `text + regex` rules (originally introduced as the DR-0012 `regex` format, unified into `text + VersionRegex` by [DR-0030](./docs/decisions/DR-0030-format-regex-to-text-unification.md)) cover eight+ language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt / build.gradle / build.gradle.kts / cabal / spec). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim.
+The `text + VersionRegex` rules ([DR-0030](./docs/decisions/DR-0030-format-regex-to-text-unification.md)) cover eight+ language manifests whose version is a single line of source code (xcconfig / podspec / nimble / v.mod / build.zig.zon / gemspec / mix.exs / build.sbt / build.gradle / build.gradle.kts / cabal / spec). Only the **first match** is read or rewritten; quote style and trailing comments on the version line are preserved verbatim.
 
 The DR-0015 rules add the two Xcode-specific files where multiple version strings need synchronised updates: `project.pbxproj` (Xcode iOS / macOS project bundle, OpenStep plist) reads / rewrites **every** `MARKETING_VERSION = ...;` line at once and verifies they agree (a mismatched file surfaces a column-aligned `version mismatch:` block with `<file>:line:N` labels), and `Info.plist` (XML plist) reads / rewrites the `<key>CFBundleShortVersionString</key><string>...</string>` pair while preserving DOCTYPE, indentation, attribute order, and sibling keys byte-for-byte. Files using the Xcode 11+ `<string>$(MARKETING_VERSION)</string>` placeholder produce an `unsupported file:` outcome — the placeholder isn't a parseable version, which is the cue to add `project.pbxproj` to the invocation where the real value lives. `CFBundleVersion` (build number) is intentionally out of scope (build numbers aren't SemVer; CI typically writes them).
 

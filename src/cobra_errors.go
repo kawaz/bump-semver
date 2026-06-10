@@ -117,14 +117,22 @@ func isVcsSubtree(cmd *cobra.Command) bool {
 // wording. Flags whose wording depends on the command (currently only
 // --rev) are resolved in requiresValueText.
 var requiresValueMsg = map[string]string{
-	"--vcs":        "--vcs requires a value (jj, git, or auto)",
-	"--excludes":   "--excludes requires a value (literal path / glob: / file:)",
-	"-m":           "-m requires a value (commit message)",
-	"--message":    "--message requires a value",
-	"--repository": "--repository requires a value (owner/repo or URL)",
-	"--remote":     "--remote requires a value",
-	"--branch":     "--branch requires a value (the branch/bookmark name)",
-	"--bookmark":   "--bookmark requires a value (the branch/bookmark name)",
+	"--vcs":            "--vcs requires a value (jj, git, or auto)",
+	"--excludes":       "--excludes requires a value (literal path / glob: / file:)",
+	"-m":               "-m requires a value (commit message)",
+	"--message":        "--message requires a value",
+	"--repository":     "--repository requires a value (owner/repo or URL)",
+	"--remote":         "--remote requires a value",
+	"--branch":         "--branch requires a value (the branch/bookmark name)",
+	"--bookmark":       "--bookmark requires a value (the branch/bookmark name)",
+	"--pre":            "--pre requires a value",
+	"--build-metadata": "--build-metadata requires a value",
+	"--define-rule":    "--define-rule requires a value (the PATTERN to match sources)",
+	"--format":         "--format requires a value (text|json|yaml|toml)",
+	"--version-path":   "--version-path requires a value (a dot-path like $.version)",
+	"--version-regex":  "--version-regex requires a value (a regex with one capture group)",
+	"--name-path":      "--name-path requires a value (a dot-path like $.name)",
+	"--name-regex":     "--name-regex requires a value (a regex with one capture group)",
 }
 
 // requiresValueText resolves the legacy "requires a value" wording for a

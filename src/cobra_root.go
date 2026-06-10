@@ -25,7 +25,7 @@ func useCobra(argv []string) bool {
 		return true
 	}
 	switch argv[0] {
-	case "--version", "-V", "--help", "-h", "--help-full", "vcs":
+	case "--version", "-V", "--help", "-h", "--help-full", "vcs", "compare":
 		return true
 	}
 	return false
@@ -51,10 +51,11 @@ func runCobra(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	// pflag cannot represent `-qq` as a single shorthand (it tokenises
 	// it as `-q -q` = quiet, not quiet-all). Rewrite the literal token
-	// to --quiet-all before cobra parses the vcs subtree. The rewrite is
-	// scoped to vcs because the other (legacy) verbs are still parsed by
-	// the hand-rolled loop where `-qq` matches as a whole token.
-	if len(argv) > 0 && argv[0] == "vcs" {
+	// to --quiet-all before cobra parses the migrated verbs that accept
+	// the verbosity flags (vcs subtree, compare). The rewrite is scoped to
+	// these because the remaining legacy verbs are still parsed by the
+	// hand-rolled loop where `-qq` matches as a whole token.
+	if len(argv) > 0 && (argv[0] == "vcs" || argv[0] == "compare") {
 		argv = normalizeQuietAll(argv)
 	}
 
@@ -123,8 +124,9 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 
 	root.SetFlagErrorFunc(flagErrorFunc)
 
-	// Migrated subcommand trees (plan §2). Stage 2: vcs.
+	// Migrated subcommand trees (plan §2). Stage 2: vcs. Stage 3: compare.
 	root.AddCommand(newVcsCmd(stdin, stdout, stderr))
+	root.AddCommand(newCompareCmd(stdin, stdout, stderr))
 
 	// Route `--help-full` (when it leads) and `--help` / `-h` /
 	// no-argument all to the existing help text. cobra's default help

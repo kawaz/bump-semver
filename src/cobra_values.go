@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -178,6 +179,143 @@ func normalizeQuietAll(argv []string) []string {
 		out = append(out, a)
 	}
 	return out
+}
+
+// ruleEvent records one rule-related flag occurrence (--define-rule or a
+// rule-definition flag) together with its value. DR-0029's block model is
+// argv-order-dependent, and pflag does not preserve the relative order of
+// different flags — but a custom pflag.Value's Set() IS called in argv
+// order, so ruleFlagValue appends to a shared recorder to reconstruct it.
+type ruleEvent struct {
+	flag  string // "--define-rule" / "--format" / "--version-path" / ...
+	value string
+}
+
+// ruleRecorder collects ruleEvents in argv order across all rule flags.
+type ruleRecorder struct {
+	events []ruleEvent
+}
+
+// ruleFlagValue is the custom pflag.Value backing one rule-related flag.
+// Several of them (one per flag name) share a single recorder so the
+// combined Set() call sequence reflects the argv order of the whole rule
+// flag family. Validation is deferred to buildRuleBlocks (replayed in
+// order) so the legacy assignRuleFlag / --define-rule wording is reused
+// verbatim.
+type ruleFlagValue struct {
+	rec  *ruleRecorder
+	flag string
+}
+
+func (v *ruleFlagValue) Set(s string) error {
+	v.rec.events = append(v.rec.events, ruleEvent{flag: v.flag, value: s})
+	return nil
+}
+
+func (v *ruleFlagValue) Type() string   { return "string" }
+func (v *ruleFlagValue) String() string { return "" }
+
+// buildRuleBlocks replays the recorded rule events in argv order, driving
+// the unchanged ensureRuleBlocks / assignRuleFlag logic so every DR-0029
+// error message (empty PATTERN, duplicate in block, invalid format, the
+// 0a 補強 rule) stays byte-identical to the legacy parser. ruleBlocks
+// stays nil (lazy init) when no rule flag was given.
+func buildRuleBlocks(rec *ruleRecorder) (blocks []ruleBlock, hasDefineRule bool, err error) {
+	var out cliArgs
+	for _, ev := range rec.events {
+		switch ev.flag {
+		case "--define-rule":
+			if ev.value == "" {
+				return nil, false, fmt.Errorf("--define-rule PATTERN cannot be empty")
+			}
+			ensureRuleBlocks(&out)
+			out.ruleBlocks = append(out.ruleBlocks, ruleBlock{Pattern: ev.value})
+			out.hasDefineRule = true
+		case "--format":
+			if err := assignRuleFlag(&out, "--format", "Format", ev.value); err != nil {
+				return nil, false, err
+			}
+		case "--version-path":
+			if err := assignRuleFlag(&out, "--version-path", "VersionPath", ev.value); err != nil {
+				return nil, false, err
+			}
+		case "--version-regex":
+			if err := assignRuleFlag(&out, "--version-regex", "VersionRegex", ev.value); err != nil {
+				return nil, false, err
+			}
+		case "--name-path":
+			if err := assignRuleFlag(&out, "--name-path", "NamePath", ev.value); err != nil {
+				return nil, false, err
+			}
+		case "--name-regex":
+			if err := assignRuleFlag(&out, "--name-regex", "NameRegex", ev.value); err != nil {
+				return nil, false, err
+			}
+		}
+	}
+	return out.ruleBlocks, out.hasDefineRule, nil
+}
+
+// sharedBumpFlags carries the per-invocation state for the bump/compare
+// shared flag group: the bool slots cobra writes directly, plus the rule
+// recorder whose events are replayed in buildRuleBlocks. The string /
+// once-string flags write straight into the cliArgs sub-structs.
+type sharedBumpFlags struct {
+	rules ruleRecorder
+}
+
+// addSharedBumpFlags registers the flag group shared by `compare` and the
+// bump/get actions (plan §2 Stage 3 item 2): --write, --pre / --no-pre,
+// --build-metadata / --no-build-metadata, --json, --vcs, the verbosity
+// flags, the --glob-* family and the DR-0029 rule flags. Every value-
+// taking flag reuses the legacy wording via a custom Value or the
+// FlagErrorFunc requiresValueMsg table. Returns the shared state whose
+// rule recorder the caller replays in its RunE.
+func addSharedBumpFlags(cmd *cobra.Command, args *cliArgs) *sharedBumpFlags {
+	st := &sharedBumpFlags{}
+	f := cmd.Flags()
+
+	f.BoolVar(&args.write, "write", false, "write the new version back to its source")
+	f.Var(newOnceString("--pre", &args.bump.Pre), "pre", "set the pre-release identifier")
+	f.BoolVar(&args.bump.NoPre, "no-pre", false, "strip the pre-release identifier")
+	f.Var(newOnceString("--build-metadata", &args.bump.BuildMetadata), "build-metadata", "set the build metadata")
+	f.BoolVar(&args.bump.NoBuildMetadata, "no-build-metadata", false, "strip the build metadata")
+	f.BoolVar(&args.output.JSON, "json", false, "structured JSON output")
+	f.Var(newOnceString("--vcs", &args.vcsBase.Override), "vcs", "force backend: jj | git | auto")
+
+	addVerbosityFlags(f, &args.output.Verbosity)
+	addGlobFlags(cmd, &args.glob)
+
+	for _, name := range []string{"--define-rule", "--format", "--version-path", "--version-regex", "--name-path", "--name-regex"} {
+		f.Var(&ruleFlagValue{rec: &st.rules, flag: name}, strings.TrimPrefix(name, "--"), "DR-0029 rule definition")
+	}
+
+	return st
+}
+
+// applySharedTail runs the bump/compare shared exclusivity, empty-value
+// and --vcs validation checks at the end of flag assembly, mirroring the
+// tail of the legacy parseSharedFlags so both verbs inherit them
+// identically (and in the same order).
+func applySharedTail(args *cliArgs) error {
+	if args.bump.Pre != nil && args.bump.NoPre {
+		return fmt.Errorf("--pre and --no-pre are mutually exclusive")
+	}
+	if args.bump.BuildMetadata != nil && args.bump.NoBuildMetadata {
+		return fmt.Errorf("--build-metadata and --no-build-metadata are mutually exclusive")
+	}
+	if args.bump.Pre != nil && *args.bump.Pre == "" {
+		return fmt.Errorf("--pre value cannot be empty, use --no-pre to remove")
+	}
+	if args.bump.BuildMetadata != nil && *args.bump.BuildMetadata == "" {
+		return fmt.Errorf("--build-metadata value cannot be empty, use --no-build-metadata to remove")
+	}
+	if args.vcsBase.Override != nil {
+		if _, err := parseVcsOverride(*args.vcsBase.Override); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // addGlobFlags registers the --glob-* family on cmd, wiring each into the

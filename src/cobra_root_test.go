@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestUseCobra_Stage2Routing pins the Stage 2 co-existence router: the
+// TestUseCobra_Stage3Routing pins the Stage 3 co-existence router: the
 // global short-circuit forms (--version / -V / --help / -h /
-// --help-full), the no-argument case AND the whole `vcs` subtree are
-// routed to cobra; the remaining real verbs (bump / compare) still flow
+// --help-full), the no-argument case, the whole `vcs` subtree AND
+// `compare` are routed to cobra; the remaining bump/get verbs still flow
 // through the legacy parser.
-func TestUseCobra_Stage2Routing(t *testing.T) {
+func TestUseCobra_Stage3Routing(t *testing.T) {
 	t.Parallel()
 	cobraCases := [][]string{
 		{},
@@ -23,6 +23,7 @@ func TestUseCobra_Stage2Routing(t *testing.T) {
 		{"--help-full"},
 		{"vcs"},
 		{"vcs", "get", "root"},
+		{"compare", "eq", "1.0.0", "1.0.0"},
 	}
 	for _, argv := range cobraCases {
 		if !useCobra(argv) {
@@ -33,7 +34,6 @@ func TestUseCobra_Stage2Routing(t *testing.T) {
 		{"major"},
 		{"minor", "1.2.3"},
 		{"get"},
-		{"compare", "eq", "1.0.0", "1.0.0"},
 	}
 	for _, argv := range legacyCases {
 		if useCobra(argv) {

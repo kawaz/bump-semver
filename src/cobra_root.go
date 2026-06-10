@@ -16,16 +16,16 @@ import (
 // is on cobra the router is removed entirely and run() always delegates
 // to runCobra.
 //
-// Stage 1 scope: only the global short-circuit forms (--version / -V /
-// --help / -h / --help-full) and the no-argument case (which maps to the
-// short help). Every real verb (major, vcs, compare, ...) still flows
-// through the legacy parseArgs path.
+// Stage 2 scope: the global short-circuit forms (--version / -V /
+// --help / -h / --help-full), the no-argument case (short help) and the
+// whole `vcs` subtree. The remaining real verbs (major, compare, ...)
+// still flow through the legacy parseArgs path.
 func useCobra(argv []string) bool {
 	if len(argv) == 0 {
 		return true
 	}
 	switch argv[0] {
-	case "--version", "-V", "--help", "-h", "--help-full":
+	case "--version", "-V", "--help", "-h", "--help-full", "vcs":
 		return true
 	}
 	return false
@@ -47,6 +47,15 @@ func runCobra(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// legacy argv[0] semantics). Handle it up-front.
 	if len(argv) > 0 && (argv[0] == "--version" || argv[0] == "-V") {
 		return handleVersion(argv[1:], stdout, stderr)
+	}
+
+	// pflag cannot represent `-qq` as a single shorthand (it tokenises
+	// it as `-q -q` = quiet, not quiet-all). Rewrite the literal token
+	// to --quiet-all before cobra parses the vcs subtree. The rewrite is
+	// scoped to vcs because the other (legacy) verbs are still parsed by
+	// the hand-rolled loop where `-qq` matches as a whole token.
+	if len(argv) > 0 && argv[0] == "vcs" {
+		argv = normalizeQuietAll(argv)
 	}
 
 	root := newRootCmd(stdin, stdout, stderr)
@@ -113,6 +122,9 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolP("version", "V", false, "print version and exit")
 
 	root.SetFlagErrorFunc(flagErrorFunc)
+
+	// Migrated subcommand trees (plan §2). Stage 2: vcs.
+	root.AddCommand(newVcsCmd(stdin, stdout, stderr))
 
 	// Route `--help-full` (when it leads) and `--help` / `-h` /
 	// no-argument all to the existing help text. cobra's default help

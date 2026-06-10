@@ -15,20 +15,23 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # Install pkl directly instead of pkl-community/setup-pkl@v0 — that action
-      # still runs on Node.js 20 (PR pkl-community/setup-pkl#74 to bump to node24 is
-      # open since 2025-11 but unmerged), and GitHub Actions enforces the Node.js 20
-      # deprecation on 2026-09-16. Direct binary install also drops a third-party
-      # dependency for a single linux-amd64 runner.
-      - name: Install pkl (needed by lint-pkl)
+      # Install jj so the jj VCS backend tests (DR-0020 / DR-0026 / DR-0027 /
+      # DR-0028) actually run; without jj they t.Skip("git+jj fixture requires
+      # both binaries") and the backend stays unverified. Direct binary install
+      # from GitHub releases (pinned version) avoids a third-party action. The
+      # musl build is statically linked so it runs on ubuntu-latest as-is. The
+      # release asset is a tar.gz whose root holds ./jj (plus LICENSE/README),
+      # so extract only ./jj.
+      - name: Install jj (exercises the jj VCS backend tests)
         run: |
           set -euo pipefail
-          PKL_VERSION="0.31.1"
+          JJ_VERSION="0.41.0"
           curl -fsSL --retry 5 --retry-delay 2 --max-time 60 \
-            "https://github.com/apple/pkl/releases/download/${PKL_VERSION}/pkl-linux-amd64" \
-            -o /usr/local/bin/pkl
-          chmod +x /usr/local/bin/pkl
-          pkl --version
+            "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            -o /tmp/jj.tar.gz
+          tar -xzf /tmp/jj.tar.gz -C /usr/local/bin ./jj
+          chmod +x /usr/local/bin/jj
+          jj --version
       - name: Install just
         uses: extractions/setup-just@v4
       - run: just ci

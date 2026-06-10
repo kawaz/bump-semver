@@ -23,11 +23,12 @@ list:
 
 # ---------- atomic (lint / test / build) ----------
 
-# gofmt + go vet
+# gofmt + go vet + go.mod/go.sum tidy check
 [private]
 lint-go:
     gofmt -w .
     go vet ./...
+    go mod tidy -diff
 
 # just --fmt (justfile self-format check)
 [private]

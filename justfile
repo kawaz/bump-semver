@@ -101,6 +101,7 @@ push: ci check-outdated-translations check-version-bumped
 # (watch-workflow の `--on-success release.yml 'just on-success-release'` 経由で
 # 通知 event に `[ACTION:release.yml] just on-success-release` が emit される)
 on-success-release:
+    brew update
     brew upgrade kawaz/tap/bump-semver
     bump-semver --version
 

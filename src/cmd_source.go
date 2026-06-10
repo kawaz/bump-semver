@@ -72,6 +72,23 @@ func resolveCmdInput(arg string) (resolvedInput, error) {
 	defer cancel()
 
 	c := exec.CommandContext(ctx, "bash", "-c", cmdStr)
+	// Put the child in its own process group and, on ctx expiry, kill the
+	// whole group instead of just the direct child. `bash -c "a | b"` and
+	// other pipelines/subshells fork grandchildren that exec.CommandContext's
+	// default kill (direct child only) would orphan — they survive as leaks
+	// and, worse, keep stdout/stderr fds open so c.Wait() blocks until they
+	// exit on their own. Group-kill plus WaitDelay closes both holes.
+	c.SysProcAttr = sysProcAttrSetpgid()
+	c.Cancel = func() error {
+		if c.Process == nil {
+			return nil
+		}
+		return killProcessGroup(c.Process.Pid)
+	}
+	// After Cancel runs, give the process group a brief window to release the
+	// stdout/stderr fds; if any descendant somehow survives, WaitDelay forces
+	// c.Wait() to return rather than hang on the inherited pipe.
+	c.WaitDelay = 100 * time.Millisecond
 	// Truncated buffers via io.MultiWriter + a counting wrapper.
 	stdoutBuf := &limitedBuffer{cap: cmdStdoutLimit}
 	stderrBuf := &limitedBuffer{cap: cmdStderrLimit}

@@ -14,60 +14,9 @@ import (
 // "bump-semver: <reason>" prefix — are written to stderr from here so
 // the --quiet-all flag can suppress them.
 func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	// Co-existence router (cobra migration, plan §2). Migrated entry
-	// points are handled by the cobra command tree; everything else
-	// falls through to the legacy hand-rolled parser below. This branch
-	// is removed once every verb is on cobra.
-	if useCobra(argv) {
-		return runCobra(argv, stdin, stdout, stderr)
-	}
-	args, err := parseArgs(argv)
-	if err != nil {
-		// parse errors precede any quiet flag taking effect (the flag
-		// itself may be malformed). Always print to stderr.
-		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
-		return &exitErr{code: 2}
-	}
-	switch args.kind {
-	case "version":
-		if args.output.JSON {
-			v, perr := ParseVersion(version)
-			if perr != nil {
-				return emitErr(stderr, args, fmt.Errorf("parse own version %q: %w", version, perr))
-			}
-			data, mErr := marshalJSONOutput(v.ToJSON(nil))
-			if mErr != nil {
-				return emitErr(stderr, args, fmt.Errorf("marshal json: %w", mErr))
-			}
-			_, _ = stdout.Write(data)
-			return nil
-		}
-		fmt.Fprintln(stdout, version)
-		return nil
-	case "help":
-		fmt.Fprint(stdout, shortHelpText)
-		return nil
-	case "helpFull":
-		fmt.Fprint(stdout, fullHelpText)
-		return nil
-	case "helpAction":
-		text, ok := actionHelpTexts[args.action]
-		if !ok {
-			// defensive: parseArgs should only set helpAction for
-			// known actions; fall back to the short help so the
-			// caller still sees something useful.
-			fmt.Fprint(stdout, shortHelpText)
-			return nil
-		}
-		fmt.Fprint(stdout, text)
-		return nil
-	case "compare":
-		return runCompare(args, stdin, stdout, stderr)
-	case "vcs":
-		return runVcsCmd(args, stdin, stdout, stderr)
-	}
-
-	return runBump(args, stdin, stdout, stderr)
+	// Every verb is on cobra (plan §2 Stage 4 complete); run() is now a
+	// thin entry point delegating to the cobra command tree.
+	return runCobra(argv, stdin, stdout, stderr)
 }
 
 // emitErr writes a "bump-semver: <reason>" line to stderr unless the

@@ -16,7 +16,7 @@ func TestDefineRule_TextRegexGet(t *testing.T) {
 	if err := os.WriteFile(path, []byte("version: 1.2.3\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", path,
 		"--define-rule", path,
 		"--format", "text",
@@ -47,7 +47,7 @@ func TestDefineRule_GlobalOverridesBuiltin(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", path,
 		"--format", "json",
 		"--version-path", "$.metadata.appVersion",
@@ -72,7 +72,7 @@ func TestDefineRule_TextExactlyOneMatch(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", path,
 		"--define-rule", path,
 		"--format", "text",
@@ -151,7 +151,7 @@ func TestDefineRule_DeadBlockErrors(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	// --define-rule "ghost.json" matches nothing.
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", path,
 		"--define-rule", "ghost.json",
 		"--format", "json",
@@ -181,7 +181,7 @@ func TestDefineRule_StdinPipe_ExtensionWithoutBuiltin(t *testing.T) {
 	// called resolveFileFromStdin (= no ruleBlocks plumbed), so
 	// --define-rule was silently dropped on the single-FILE + pipe
 	// shortcut.
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "myapp.env",
 		"--define-rule", "myapp.env",
 		"--format", "text",

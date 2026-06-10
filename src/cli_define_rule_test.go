@@ -15,7 +15,7 @@ import (
 
 func TestParse_DefineRule_GlobalOnly(t *testing.T) {
 	t.Parallel()
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "VERSION",
 		"--format", "text",
 		"--version-regex", `v(\d+\.\d+\.\d+)`,
@@ -43,7 +43,7 @@ func TestParse_DefineRule_GlobalOnly(t *testing.T) {
 
 func TestParse_DefineRule_OneBlock(t *testing.T) {
 	t.Parallel()
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "a.json", "b.txt",
 		"--define-rule", "b.txt",
 		"--format", "text",
@@ -76,7 +76,7 @@ func TestParse_DefineRule_OneBlock(t *testing.T) {
 
 func TestParse_DefineRule_TwoBlocks(t *testing.T) {
 	t.Parallel()
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "a.txt", "b.json",
 		"--define-rule", "a.txt",
 		"--format", "text",
@@ -103,7 +103,7 @@ func TestParse_DefineRule_GlobalThenBlock(t *testing.T) {
 	t.Parallel()
 	// Global --format json sets default; --define-rule X then overrides
 	// with text. Valid: global flags BEFORE the first --define-rule.
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "a.json", "b.txt",
 		"--format", "json",
 		"--version-path", "$.version",
@@ -130,7 +130,7 @@ func TestParse_DefineRule_GlobalThenBlock(t *testing.T) {
 func TestParse_DefineRule_DupFlagInBlock(t *testing.T) {
 	t.Parallel()
 	// --format twice in the same block is error (DR-0029 0c).
-	_, err := parseArgs([]string{
+	_, err := buildArgsForTest(t, []string{
 		"get", "a.txt",
 		"--define-rule", "a.txt",
 		"--format", "text",
@@ -150,7 +150,7 @@ func TestParse_DefineRule_DupFlagInBlock(t *testing.T) {
 
 func TestParse_DefineRule_DupFlagInGlobal(t *testing.T) {
 	t.Parallel()
-	_, err := parseArgs([]string{
+	_, err := buildArgsForTest(t, []string{
 		"get", "a.txt",
 		"--format", "text",
 		"--format", "json",
@@ -166,7 +166,7 @@ func TestParse_DefineRule_DupFlagInGlobal(t *testing.T) {
 func TestParse_DefineRule_XMLAccepted(t *testing.T) {
 	t.Parallel()
 	// --format xml is accepted (dot-path unified, DR-0029 updated).
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "a.xml",
 		"--define-rule", "a.xml",
 		"--format", "xml",
@@ -182,7 +182,7 @@ func TestParse_DefineRule_XMLAccepted(t *testing.T) {
 
 func TestParse_DefineRule_InvalidFormatRandom(t *testing.T) {
 	t.Parallel()
-	_, err := parseArgs([]string{
+	_, err := buildArgsForTest(t, []string{
 		"get", "a.txt",
 		"--format", "ini",
 	})
@@ -196,7 +196,7 @@ func TestParse_DefineRule_InvalidFormatRandom(t *testing.T) {
 
 func TestParse_DefineRule_EmptyPattern(t *testing.T) {
 	t.Parallel()
-	_, err := parseArgs([]string{
+	_, err := buildArgsForTest(t, []string{
 		"get", "a.txt", "--define-rule", "",
 	})
 	if err == nil {
@@ -209,7 +209,7 @@ func TestParse_DefineRule_EmptyPattern(t *testing.T) {
 
 func TestParse_DefineRule_EmptyFlagValue(t *testing.T) {
 	t.Parallel()
-	_, err := parseArgs([]string{
+	_, err := buildArgsForTest(t, []string{
 		"get", "a.txt",
 		"--define-rule", "a.txt",
 		"--format", "",
@@ -226,7 +226,7 @@ func TestParse_DefineRule_EqualsForm(t *testing.T) {
 	t.Parallel()
 	// --define-rule=PAT / --format=text / --version-path=$.v should all
 	// behave identically to the space form.
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "a.json",
 		"--define-rule=a.json",
 		"--format=json",
@@ -250,7 +250,7 @@ func TestParse_DefineRule_EqualsForm(t *testing.T) {
 
 func TestParse_DefineRule_NameFlags(t *testing.T) {
 	t.Parallel()
-	args, err := parseArgs([]string{
+	args, err := buildArgsForTest(t, []string{
 		"get", "a.json",
 		"--define-rule", "a.json",
 		"--format", "json",
@@ -284,7 +284,7 @@ func TestParse_DefineRule_AllFormatsAccepted(t *testing.T) {
 				"--define-rule", "a." + f,
 				"--format", f,
 			}, extra...)
-			_, err := parseArgs(argv)
+			_, err := buildArgsForTest(t, argv)
 			if err != nil {
 				t.Errorf("--format %s rejected: %v", f, err)
 			}

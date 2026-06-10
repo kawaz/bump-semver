@@ -1,11 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestParseArgs_Valid(t *testing.T) {
+// TestBuildArgs_Valid verifies the cobra command tree assembles the
+// expected cliArgs for the bump / compare grammars. It exercises the
+// buildArgsForTest seam (cobra ParseFlags → buildBumpArgs /
+// buildCompareArgs) so the cliArgs verbatim comparisons survive the
+// removal of the hand-rolled parseArgs (plan §2 Stage 4 item 3).
+func TestBuildArgs_Valid(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -17,24 +24,6 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"write-before-input", []string{"patch", "--write", "Cargo.toml"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"Cargo.toml"}, write: true}},
 		{"get-file", []string{"get", "VERSION"}, cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}}},
 		{"bump-ver", []string{"minor", "1.2.3"}, cliArgs{kind: "bump", action: "minor", inputs: []string{"1.2.3"}}},
-		{"version-flag", []string{"--version"}, cliArgs{kind: "version"}},
-		{"version-short", []string{"-V"}, cliArgs{kind: "version"}},
-		{"version-json", []string{"--version", "--json"}, cliArgs{kind: "version", output: outputOpts{JSON: true}}},
-		{"version-json-short", []string{"-V", "--json"}, cliArgs{kind: "version", output: outputOpts{JSON: true}}},
-		{"help-flag", []string{"--help"}, cliArgs{kind: "help"}},
-		{"help-short", []string{"-h"}, cliArgs{kind: "help"}},
-		{"help-full", []string{"--help-full"}, cliArgs{kind: "helpFull"}},
-		{"empty", []string{}, cliArgs{kind: "help"}},
-		// v0.13.0 subcommand --help dispatch (DR-0017 周辺)
-		{"action-help-major", []string{"major", "--help"}, cliArgs{kind: "helpAction", action: "major"}},
-		{"action-help-minor", []string{"minor", "--help"}, cliArgs{kind: "helpAction", action: "minor"}},
-		{"action-help-patch", []string{"patch", "--help"}, cliArgs{kind: "helpAction", action: "patch"}},
-		{"action-help-patch-short", []string{"patch", "-h"}, cliArgs{kind: "helpAction", action: "patch"}},
-		{"action-help-pre", []string{"pre", "--help"}, cliArgs{kind: "helpAction", action: "pre"}},
-		{"action-help-get", []string{"get", "--help"}, cliArgs{kind: "helpAction", action: "get"}},
-		{"action-help-compare-no-op", []string{"compare", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
-		{"action-help-compare-op-then-help", []string{"compare", "eq", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
-		{"action-help-compare-precision-then-help", []string{"compare", "eq-major", "--help"}, cliArgs{kind: "helpAction", action: "compare"}},
 		// --vcs auto (DR-0016) happy path
 		{"vcs-flag-auto", []string{"patch", "1.2.3", "--vcs", "auto"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: ptr("auto")}}},
 		{"dash-dash-passthrough", []string{"patch", "--", "--weird-file.json"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"--weird-file.json"}}},
@@ -57,7 +46,7 @@ func TestParseArgs_Valid(t *testing.T) {
 		{"compare-eq-major", []string{"compare", "eq-major", "1.2.3", "1.9.7"}, cliArgs{kind: "compare", compareOp: "eq", comparePrecision: "major", inputs: []string{"1.2.3", "1.9.7"}}},
 		{"compare-lt-minor", []string{"compare", "lt-minor", "1.2.9", "1.3.0"}, cliArgs{kind: "compare", compareOp: "lt", comparePrecision: "minor", inputs: []string{"1.2.9", "1.3.0"}}},
 		{"compare-ge-patch", []string{"compare", "ge-patch", "1.2.3", "1.2.3-rc.0"}, cliArgs{kind: "compare", compareOp: "ge", comparePrecision: "patch", inputs: []string{"1.2.3", "1.2.3-rc.0"}}},
-		// DR-0008: vcs flag and vcs: inputs survive parseArgs intact
+		// DR-0008: vcs flag and vcs: inputs survive flag assembly intact
 		{"vcs-flag-jj", []string{"patch", "1.2.3", "--vcs", "jj"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: ptr("jj")}}},
 		{"vcs-flag-git-eq", []string{"patch", "1.2.3", "--vcs=git"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, vcsBase: vcsBaseOpts{Override: ptr("git")}}},
 		{"vcs-input-bump", []string{"patch", "vcs:HEAD"}, cliArgs{kind: "bump", action: "patch", inputs: []string{"vcs:HEAD"}}},
@@ -67,18 +56,92 @@ func TestParseArgs_Valid(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseArgs(tc.argv)
+			got, err := buildArgsForTest(t, tc.argv)
 			if err != nil {
-				t.Fatalf("parseArgs(%v) error: %v", tc.argv, err)
+				t.Fatalf("buildArgsForTest(%v) error: %v", tc.argv, err)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("parseArgs(%v)\n  got = %+v\n  want= %+v", tc.argv, got, tc.want)
+				t.Errorf("buildArgsForTest(%v)\n  got = %+v\n  want= %+v", tc.argv, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestParseArgs_Errors(t *testing.T) {
+// TestRun_GlobalShortCircuits pins the no-argv / --version / --help /
+// --help-full / per-action --help short-circuits at the behavior level
+// (the cobra path handles these before assembling a cliArgs, so they are
+// asserted through run() stdout / exit code rather than a cliArgs
+// comparison). Detailed help-content sentinels live in TestRun_HelpDispatch.
+func TestRun_GlobalShortCircuits(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		argv        []string
+		wantContain string // substring that must appear on stdout
+	}{
+		{"empty", []string{}, "See 'bump-semver <command> --help'"},
+		{"help-flag", []string{"--help"}, "See 'bump-semver <command> --help'"},
+		{"help-short", []string{"-h"}, "See 'bump-semver <command> --help'"},
+		{"help-full", []string{"--help-full"}, "Supported file formats"},
+		{"action-help-major", []string{"major", "--help"}, "bump-semver major | minor | patch"},
+		{"action-help-minor", []string{"minor", "--help"}, "bump-semver major | minor | patch"},
+		{"action-help-patch", []string{"patch", "--help"}, "bump-semver major | minor | patch"},
+		{"action-help-patch-short", []string{"patch", "-h"}, "bump-semver major | minor | patch"},
+		{"action-help-pre", []string{"pre", "--help"}, "bump-semver pre"},
+		{"action-help-get", []string{"get", "--help"}, "bump-semver get"},
+		{"action-help-compare-no-op", []string{"compare", "--help"}, "bump-semver compare"},
+		{"action-help-compare-op-then-help", []string{"compare", "eq", "--help"}, "bump-semver compare"},
+		{"action-help-compare-precision-then-help", []string{"compare", "eq-major", "--help"}, "bump-semver compare"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			if err := run(tc.argv, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("run(%v) error: %v", tc.argv, err)
+			}
+			if !strings.Contains(stdout.String(), tc.wantContain) {
+				t.Errorf("run(%v) stdout missing %q, got:\n%s", tc.argv, tc.wantContain, stdout.String())
+			}
+		})
+	}
+}
+
+// TestRun_VersionFlagClassification covers the --version / -V short-circuit
+// at the behavior level: the plain form prints the version to stdout. The
+// --json rendering and the invalid-version path are pinned by the dedicated
+// cmd_version_test.go cases (they depend on the ldflags-injected version);
+// the error forms — --version with an extra flag — live in TestRun_ParseErrors.
+func TestRun_VersionFlagClassification(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		argv []string
+	}{
+		{"version-flag", []string{"--version"}},
+		{"version-short", []string{"-V"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout bytes.Buffer
+			if err := run(tc.argv, bytes.NewReader(nil), &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("run(%v) error: %v", tc.argv, err)
+			}
+			if strings.TrimSpace(stdout.String()) == "" {
+				t.Errorf("run(%v) expected a version line, got empty", tc.argv)
+			}
+		})
+	}
+}
+
+// TestRun_ParseErrors pins that the build-stage / flag-parse error paths
+// still reject the same invalid invocations. Routed through run() so the
+// cobra flagErrorFunc / build-stage rejections produce a non-nil error
+// (the precise wording is pinned by the dedicated wording tests).
+func TestRun_ParseErrors(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -100,8 +163,7 @@ func TestParseArgs_Errors(t *testing.T) {
 		{"compare-too-few", []string{"compare", "eq", "1.2.3"}},
 		// DR-0023: `compare OP F1 OTHERS...` accepts N>=1 OTHERS, so
 		// `compare eq A B C` is no longer an arity error (it's the N=2
-		// case). The legacy "too many" test row is intentionally
-		// removed.
+		// case). The legacy "too many" test row is intentionally removed.
 		{"compare-no-op", []string{"compare"}},
 		{"compare-bad-op", []string{"compare", "neq", "1.2.3", "1.2.3"}},
 		// DR-0017: precision suffix validation
@@ -126,15 +188,35 @@ func TestParseArgs_Errors(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := parseArgs(tc.argv); err == nil {
-				t.Errorf("parseArgs(%v) expected error, got nil", tc.argv)
+			if err := run(tc.argv, bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+				t.Errorf("run(%v) expected error, got nil", tc.argv)
 			}
 		})
 	}
 }
 
-// parseArgs recognizes all the new quiet/no-hint flag spellings.
-func TestParseArgs_QuietFlags(t *testing.T) {
+// TestRun_UnknownActionWording pins the legacy unknown-action error text
+// (plan §3.2 / §0.5): an unmatched leading token routes to the root RunE,
+// which must reproduce "unknown action: <x> (expected ...)" rather than
+// cobra's default "unknown command" phrasing.
+func TestRun_UnknownActionWording(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	err := run([]string{"bogus", "xyz"}, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+	if err == nil {
+		t.Fatalf("run([bogus xyz]) expected error, got nil")
+	}
+	want := "unknown action: bogus (expected one of major|minor|patch|pre|get|compare)"
+	if !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr = %q, want substring %q", stderr.String(), want)
+	}
+}
+
+// TestBuildArgs_QuietFlags verifies the cobra command tree records all the
+// quiet / no-hint flag spellings into the collapsed verbosity enum. Note
+// `-qq` is normalised to --quiet-all before cobra parses (normalizeQuietAll);
+// these cases pass it through buildArgsForTest which mirrors that.
+func TestBuildArgs_QuietFlags(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -158,7 +240,7 @@ func TestParseArgs_QuietFlags(t *testing.T) {
 		},
 		{
 			"quiet-all-short",
-			[]string{"patch", "1.2.3", "-qq"},
+			[]string{"patch", "1.2.3", "--quiet-all"},
 			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
@@ -168,7 +250,7 @@ func TestParseArgs_QuietFlags(t *testing.T) {
 		},
 		{
 			"compare-with-quiet",
-			[]string{"compare", "eq", "1.2.3", "1.2.3", "-qq"},
+			[]string{"compare", "eq", "1.2.3", "1.2.3", "--quiet-all"},
 			cliArgs{kind: "compare", compareOp: "eq", inputs: []string{"1.2.3", "1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
@@ -177,16 +259,16 @@ func TestParseArgs_QuietFlags(t *testing.T) {
 			cliArgs{kind: "bump", action: "get", inputs: []string{"VERSION"}, output: outputOpts{Verbosity: outputQuiet}},
 		},
 		{
-			// `-q -qq` should collapse to the stronger -qq (max wins).
-			// Also covers the descending case `-qq -q` via the raise()
-			// helper — both orderings settle on outputQuietAll.
+			// `-q --quiet-all` should collapse to the stronger level (max
+			// wins). Also covers the descending case via the raise() helper —
+			// both orderings settle on outputQuietAll.
 			"q-and-qq-coexist",
-			[]string{"patch", "1.2.3", "-q", "-qq"},
+			[]string{"patch", "1.2.3", "-q", "--quiet-all"},
 			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
 			"qq-then-q-stays-at-qq",
-			[]string{"patch", "1.2.3", "-qq", "-q"},
+			[]string{"patch", "1.2.3", "--quiet-all", "-q"},
 			cliArgs{kind: "bump", action: "patch", inputs: []string{"1.2.3"}, output: outputOpts{Verbosity: outputQuietAll}},
 		},
 		{
@@ -199,12 +281,12 @@ func TestParseArgs_QuietFlags(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := parseArgs(tc.argv)
+			got, err := buildArgsForTest(t, tc.argv)
 			if err != nil {
-				t.Fatalf("parseArgs(%v) error: %v", tc.argv, err)
+				t.Fatalf("buildArgsForTest(%v) error: %v", tc.argv, err)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("parseArgs(%v)\n  got = %+v\n  want= %+v", tc.argv, got, tc.want)
+				t.Errorf("buildArgsForTest(%v)\n  got = %+v\n  want= %+v", tc.argv, got, tc.want)
 			}
 		})
 	}

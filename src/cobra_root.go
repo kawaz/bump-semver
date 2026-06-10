@@ -16,19 +16,14 @@ import (
 // is on cobra the router is removed entirely and run() always delegates
 // to runCobra.
 //
-// Stage 2 scope: the global short-circuit forms (--version / -V /
-// --help / -h / --help-full), the no-argument case (short help) and the
-// whole `vcs` subtree. The remaining real verbs (major, compare, ...)
-// still flow through the legacy parseArgs path.
+// Stage 4 scope: every verb is now on cobra — the global short-circuit
+// forms (--version / -V / --help / -h / --help-full), the no-argument
+// case (short help), the `vcs` subtree, `compare`, and the bump family
+// (major/minor/patch/pre/get). Any other leading token is routed to
+// cobra too, where the root RunE reports it as an unknown action. The
+// legacy parseArgs path is no longer reachable and is removed.
 func useCobra(argv []string) bool {
-	if len(argv) == 0 {
-		return true
-	}
-	switch argv[0] {
-	case "--version", "-V", "--help", "-h", "--help-full", "vcs", "compare":
-		return true
-	}
-	return false
+	return true
 }
 
 // runCobra builds a fresh root command and executes it against argv.
@@ -51,13 +46,11 @@ func runCobra(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	// pflag cannot represent `-qq` as a single shorthand (it tokenises
 	// it as `-q -q` = quiet, not quiet-all). Rewrite the literal token
-	// to --quiet-all before cobra parses the migrated verbs that accept
-	// the verbosity flags (vcs subtree, compare). The rewrite is scoped to
-	// these because the remaining legacy verbs are still parsed by the
-	// hand-rolled loop where `-qq` matches as a whole token.
-	if len(argv) > 0 && (argv[0] == "vcs" || argv[0] == "compare") {
-		argv = normalizeQuietAll(argv)
-	}
+	// to --quiet-all before cobra parses. Every verb that accepts the
+	// verbosity flags (vcs subtree, compare, bump family) is now on
+	// cobra, so the rewrite is applied unconditionally. The `--` guard
+	// inside normalizeQuietAll keeps post-separator positionals intact.
+	argv = normalizeQuietAll(argv)
 
 	root := newRootCmd(stdin, stdout, stderr)
 	root.SetArgs(argv)
@@ -95,8 +88,13 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 		Short:         "focused semver bump CLI",
 		SilenceErrors: true,
 		SilenceUsage:  true,
-		// Args/RunE is reached for the no-argument case (short help)
-		// and, in later stages, for unknown root-level subcommands.
+		// ArbitraryArgs overrides cobra's default legacyArgs validator,
+		// which would emit `unknown command "x"` for an unmatched leading
+		// token. Instead the token reaches the root RunE, which reports it
+		// with the legacy `unknown action: x (expected ...)` wording.
+		Args: cobra.ArbitraryArgs,
+		// RunE is reached for the no-argument case (short help) and for an
+		// unmatched leading token (an unknown action).
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if helpFull {
 				fmt.Fprint(stdout, fullHelpText)
@@ -106,11 +104,12 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 				fmt.Fprint(stdout, shortHelpText)
 				return nil
 			}
-			// Stage 1 never reaches here with a non-empty args slice:
-			// real verbs are routed to the legacy parser by useCobra.
-			// Later stages replace this with the unknown-action error.
-			fmt.Fprint(stdout, shortHelpText)
-			return nil
+			// A non-empty args slice here means args[0] resolved to no
+			// child command: an unknown action. Match the legacy
+			// parseBumpArgs wording (exit 2).
+			msg := fmt.Sprintf("unknown action: %s (expected one of major|minor|patch|pre|get|compare)", args[0])
+			fmt.Fprintln(stderr, "bump-semver: "+msg)
+			return &exitErr{code: exitCodeUsage, msg: msg}
 		},
 	}
 
@@ -125,8 +124,12 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.SetFlagErrorFunc(flagErrorFunc)
 
 	// Migrated subcommand trees (plan §2). Stage 2: vcs. Stage 3: compare.
+	// Stage 4: bump family (major/minor/patch/pre/get).
 	root.AddCommand(newVcsCmd(stdin, stdout, stderr))
 	root.AddCommand(newCompareCmd(stdin, stdout, stderr))
+	for _, c := range newBumpCmds(stdin, stdout, stderr) {
+		root.AddCommand(c)
+	}
 
 	// Route `--help-full` (when it leads) and `--help` / `-h` /
 	// no-argument all to the existing help text. cobra's default help

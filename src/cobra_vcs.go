@@ -71,6 +71,16 @@ func validateVcsOverride(stderr io.Writer, args cliArgs) error {
 // is rebuilt per invocation (see newRootCmd) so flag state never leaks
 // across run() calls.
 func newVcsCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
+	cmd, _ := buildVcsCmd(stdin, stdout, stderr)
+	return cmd
+}
+
+// buildVcsCmd constructs the `vcs` parent and full child tree, returning
+// the shared cliArgs the child flags / RunEs populate. Splitting the
+// returned args out lets same-package tests parse a vcs argv and inspect
+// the assembled cliArgs (e.g. the --glob-* slots) without running the
+// dispatcher, the same seam buildBumpCmd / buildCompareCmd provide.
+func buildVcsCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *cliArgs) {
 	// Shared cliArgs the child RunEs populate. The persistent vcs flags
 	// (--vcs / -q / -qq / --no-hint) write into the common sub-structs;
 	// each verb adds its own local flags writing into the verb sub-struct.
@@ -126,7 +136,7 @@ func newVcsCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 		newVcsTagCmd(&args, stdout, stderr),
 		newVcsOutdatedCmd(&args, stdout, stderr),
 	)
-	return vcsCmd
+	return vcsCmd, &args
 }
 
 // addVcsPersistentFlags registers the flags shared by every vcs verb:

@@ -58,6 +58,46 @@ func (v *onceStringValue) String() string {
 	return ""
 }
 
+// onceBoolValue is a boolean flag (no argument) that may be supplied at
+// most once. The legacy parser rejects a repeated --write / --no-pre /
+// --no-build-metadata with `<name> specified twice` rather than the
+// last-wins pflag default; this reproduces that. It is registered with
+// NoOptDefVal = "true" so the bare flag form consumes no argument.
+type onceBoolValue struct {
+	name string // "--write" / "--no-pre" / "--no-build-metadata"
+	slot *bool
+	set  bool
+}
+
+func newOnceBool(name string, slot *bool) *onceBoolValue {
+	return &onceBoolValue{name: name, slot: slot}
+}
+
+func (v *onceBoolValue) Set(string) error {
+	if v.set {
+		return fmt.Errorf("%s specified twice", v.name)
+	}
+	v.set = true
+	*v.slot = true
+	return nil
+}
+
+func (v *onceBoolValue) Type() string { return "bool" }
+
+func (v *onceBoolValue) String() string {
+	if v.set && *v.slot {
+		return "true"
+	}
+	return "false"
+}
+
+// addOnceBool registers a onceBoolValue on fs and sets NoOptDefVal so the
+// bare flag form (no `=value`) consumes no argument and toggles it on.
+func addOnceBool(fs *pflag.FlagSet, v *onceBoolValue, name, usage string) {
+	fs.Var(v, name, usage)
+	fs.Lookup(name).NoOptDefVal = "true"
+}
+
 // excludesValue implements `--excludes PATTERN` (DR-0033): repeatable +
 // append, with an empty value rejected as a usage error (matching the
 // legacy "--excludes value must not be empty" wording). The bare /
@@ -275,11 +315,15 @@ func addSharedBumpFlags(cmd *cobra.Command, args *cliArgs) *sharedBumpFlags {
 	st := &sharedBumpFlags{}
 	f := cmd.Flags()
 
-	f.BoolVar(&args.write, "write", false, "write the new version back to its source")
+	// --write / --no-pre / --no-build-metadata reject a second occurrence
+	// (legacy "<flag> specified twice"); --json / --no-hint are idempotent
+	// (silently absorbed). onceBoolValue needs NoOptDefVal so the bare form
+	// consumes no argument.
+	addOnceBool(f, newOnceBool("--write", &args.write), "write", "write the new version back to its source")
 	f.Var(newOnceString("--pre", &args.bump.Pre), "pre", "set the pre-release identifier")
-	f.BoolVar(&args.bump.NoPre, "no-pre", false, "strip the pre-release identifier")
+	addOnceBool(f, newOnceBool("--no-pre", &args.bump.NoPre), "no-pre", "strip the pre-release identifier")
 	f.Var(newOnceString("--build-metadata", &args.bump.BuildMetadata), "build-metadata", "set the build metadata")
-	f.BoolVar(&args.bump.NoBuildMetadata, "no-build-metadata", false, "strip the build metadata")
+	addOnceBool(f, newOnceBool("--no-build-metadata", &args.bump.NoBuildMetadata), "no-build-metadata", "strip the build metadata")
 	f.BoolVar(&args.output.JSON, "json", false, "structured JSON output")
 	f.Var(newOnceString("--vcs", &args.vcsBase.Override), "vcs", "force backend: jj | git | auto")
 

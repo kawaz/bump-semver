@@ -6,14 +6,13 @@ import (
 	"testing"
 )
 
-// TestUseCobra_Stage3Routing pins the Stage 3 co-existence router: the
-// global short-circuit forms (--version / -V / --help / -h /
-// --help-full), the no-argument case, the whole `vcs` subtree AND
-// `compare` are routed to cobra; the remaining bump/get verbs still flow
-// through the legacy parser.
-func TestUseCobra_Stage3Routing(t *testing.T) {
+// TestUseCobra_AllRoutesToCobra pins the Stage 4 router state: every verb
+// is on cobra, so useCobra reports true unconditionally (the legacy
+// parseArgs path has been removed). Unknown leading tokens also route to
+// cobra, where the root RunE reports them as an unknown action.
+func TestUseCobra_AllRoutesToCobra(t *testing.T) {
 	t.Parallel()
-	cobraCases := [][]string{
+	cases := [][]string{
 		{},
 		{"--version"},
 		{"-V"},
@@ -24,20 +23,14 @@ func TestUseCobra_Stage3Routing(t *testing.T) {
 		{"vcs"},
 		{"vcs", "get", "root"},
 		{"compare", "eq", "1.0.0", "1.0.0"},
-	}
-	for _, argv := range cobraCases {
-		if !useCobra(argv) {
-			t.Errorf("useCobra(%v) = false, want true (cobra route)", argv)
-		}
-	}
-	legacyCases := [][]string{
 		{"major"},
 		{"minor", "1.2.3"},
 		{"get"},
+		{"bogus"},
 	}
-	for _, argv := range legacyCases {
-		if useCobra(argv) {
-			t.Errorf("useCobra(%v) = true, want false (legacy route)", argv)
+	for _, argv := range cases {
+		if !useCobra(argv) {
+			t.Errorf("useCobra(%v) = false, want true (cobra route)", argv)
 		}
 	}
 }

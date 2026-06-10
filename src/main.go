@@ -20,13 +20,16 @@
 //   - main.go         — process entry point (this file) + the tiny
 //     generic helpers `ptr` / `derefOr`
 //   - exit.go         — exit-code constants + the `exitErr` carrier
-//   - cli_parse.go    — CLI grammar: cliArgs + opts sub-structs +
-//     parseArgs dispatcher + verb-specific
-//     subparsers + the shared bump/compare flag
-//     loop
-//   - cli_dispatch.go — `run` dispatcher + `runBump` + the bump-side
-//     diagnostic helpers (emitErr / emitFallback
-//     Hints / shouldShowHint / countFileInputs)
+//   - cli_types.go    — CLI grammar data model: cliArgs + opts
+//     sub-structs + the shared value helpers
+//     (parseCompareOp / parseGlobFlag / parseBoolValue)
+//   - cobra_*.go      — the cobra command tree (root / bump / compare /
+//     vcs), custom pflag.Values, flag-error shaping
+//     and help wiring that assemble cliArgs and call
+//     the dispatchers
+//   - cli_dispatch.go — `run` entry point (delegates to cobra), `runBump`
+//     and the bump-side diagnostic helpers (emitErr /
+//     emitFallbackHints / shouldShowHint / countFileInputs)
 //   - resolve.go      — input resolution layer shared with compare.go
 //     (locatedField, resolveInput*, resolveInputs,
 //     allSameValue, formatMismatchError, wrapOrigin

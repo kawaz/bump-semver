@@ -396,15 +396,26 @@ func TestParseArgs_GlobFlags(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		got, err := parseArgs(c.argv)
+		// Error cases assert the final flagErrorFunc / build-stage wording,
+		// so they go through run() (which reshapes pflag errors into the
+		// project's "bump-semver: ..." stderr line). Acceptance cases need
+		// the assembled cliArgs, so they go through buildArgsForTest (which
+		// parses the same cobra command tree without dispatching).
 		if c.err != "" {
-			if err == nil || !strings.Contains(err.Error(), c.err) {
-				t.Errorf("parseArgs(%v): expected err containing %q, got %v", c.argv, c.err, err)
+			var stderr bytes.Buffer
+			err := run(c.argv, bytes.NewReader(nil), &bytes.Buffer{}, &stderr)
+			if err == nil {
+				t.Errorf("run(%v): expected error containing %q, got nil", c.argv, c.err)
+				continue
+			}
+			if !strings.Contains(stderr.String(), c.err) {
+				t.Errorf("run(%v): expected stderr containing %q, got %q", c.argv, c.err, stderr.String())
 			}
 			continue
 		}
+		got, err := buildArgsForTest(t, c.argv)
 		if err != nil {
-			t.Errorf("parseArgs(%v): unexpected err: %v", c.argv, err)
+			t.Errorf("buildArgsForTest(%v): unexpected err: %v", c.argv, err)
 			continue
 		}
 		if c.check != nil {

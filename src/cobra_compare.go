@@ -22,24 +22,13 @@ import (
 // newCompareCmd builds the `compare` command. Rebuilt per invocation (see
 // newRootCmd) so flag state never leaks across run() calls.
 func newCompareCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
-	args := cliArgs{kind: "compare"}
-
-	cmd := &cobra.Command{
-		Use:           "compare",
-		Short:         "compare a base value to one or more others (exit-code-driven)",
-		SilenceErrors: true,
-		SilenceUsage:  true,
-	}
-	// shared is the per-invocation rule recorder state; it is captured by
-	// the RunE closure below. It cannot be a package-level var (that would
-	// leak state across parallel run() calls).
-	shared := addSharedBumpFlags(cmd, &args)
+	cmd, args, shared := buildCompareCmd()
 
 	// DisableFlagParsing is left off: the operator is an ordinary leading
 	// positional, and inputs starting with `-` are handled by the `--`
 	// separator (cobra's standard end-of-flags convention).
 	cmd.RunE = func(cmd *cobra.Command, posArgs []string) error {
-		built, err := buildCompareArgs(&args, shared, posArgs)
+		built, err := buildCompareArgs(args, shared, posArgs)
 		if err != nil {
 			// Build-stage (parse) errors precede any quiet flag taking
 			// effect, so they are always printed (legacy run() §3.1).
@@ -60,6 +49,23 @@ func newCompareCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	})
 
 	return cmd
+}
+
+// buildCompareCmd constructs the cobra `compare` command together with
+// the per-invocation cliArgs and shared rule-recorder state it captures.
+// Splitting construction from the RunE wiring lets same-package tests
+// parse an argv and inspect the assembled cliArgs without running the
+// dispatcher (plan §0.3 recommendation (a)).
+func buildCompareCmd() (*cobra.Command, *cliArgs, *sharedBumpFlags) {
+	args := &cliArgs{kind: "compare"}
+	cmd := &cobra.Command{
+		Use:           "compare",
+		Short:         "compare a base value to one or more others (exit-code-driven)",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	shared := addSharedBumpFlags(cmd, args)
+	return cmd, args, shared
 }
 
 // buildCompareArgs assembles the compare cliArgs from the parsed flags and

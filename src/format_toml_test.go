@@ -409,7 +409,7 @@ func TestTomlReplaceInSection_MissingSection(t *testing.T) {
 name = "x"
 version = "1.2.3"
 `)
-	_, err := tomlReplaceInSection(in, "workspace", "1.2.4")
+	_, err := tomlReplaceInSection(in, "workspace", "1.2.3", "1.2.4")
 	if err == nil {
 		t.Error("expected error when [workspace] section is absent")
 	}
@@ -423,7 +423,7 @@ func TestTomlReplaceInSection_MissingVersion(t *testing.T) {
 name = "x"
 description = "y"
 `)
-	_, err := tomlReplaceInSection(in, "project", "1.2.4")
+	_, err := tomlReplaceInSection(in, "project", "1.2.3", "1.2.4")
 	if err == nil {
 		t.Error("expected error when [project] has no version line")
 	}
@@ -441,7 +441,7 @@ version = "1.2.3"
 [tool.black]
 line-length = 100
 `)
-	out, err := tomlReplaceInSection(in, "tool.poetry", "1.2.4")
+	out, err := tomlReplaceInSection(in, "tool.poetry", "1.2.3", "1.2.4")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -465,7 +465,7 @@ version = "1.2.3"
 [deps]
 version = "9.9.9"
 `)
-	out, err := tomlReplaceInSection(in, "", "2.0.0")
+	out, err := tomlReplaceInSection(in, "", "1.2.3", "2.0.0")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -494,7 +494,7 @@ version = "1.2.3"
 [tool.black]
 line-length = 100
 `)
-	out, err := tomlReplaceInSection(in, "tool.poetry", "9.9.9")
+	out, err := tomlReplaceInSection(in, "tool.poetry", "1.2.3", "9.9.9")
 	if err != nil {
 		t.Fatalf("Replace error: %v", err)
 	}
@@ -536,5 +536,72 @@ func TestTomlReplace_PyProject_TrailingComment(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `version = "1.2.4"  # release tag`) {
 		t.Errorf("trailing comment not preserved:\n%s", string(out))
+	}
+}
+
+// --- M-2: Replace guards against rewriting a `version =` line that does
+// not match the value Inspect actually read (e.g. a fake `version =`
+// line inside a multi-line string literal) ---------------------------
+
+// TestTomlReplace_MultilineStringFakeVersion_TopLevel exercises the
+// silent-corruption case in the top-level (pre-section) region. Inspect
+// reads the real top-level `version = "1.2.3"`, but the line-anchored
+// regex would otherwise grab the fake `version = "0.0.0"` sitting inside
+// a multi-line string literal that appears earlier. Replace must refuse
+// rather than corrupt the file.
+func TestTomlReplace_MultilineStringFakeVersion_TopLevel(t *testing.T) {
+	t.Parallel()
+	in := []byte("readme = \"\"\"\nExample:\nversion = \"0.0.0\"\n\"\"\"\nversion = \"1.2.3\"\n")
+	_, err := replaceVia("manifest.toml", in, "1.2.3", "1.2.4")
+	if err == nil {
+		t.Fatal("expected error: regex matched a fake version line inside a multi-line string, but Replace proceeded")
+	}
+	if !strings.Contains(err.Error(), "does not match inspected current") {
+		t.Errorf("error = %q, want it to mention mismatch with inspected current", err.Error())
+	}
+}
+
+// TestTomlReplace_MultilineStringFakeVersion_Section is the same guard
+// scoped to a `[project]` section: the fake `version =` line inside a
+// multi-line string must not be rewritten.
+func TestTomlReplace_MultilineStringFakeVersion_Section(t *testing.T) {
+	t.Parallel()
+	in := []byte("[project]\nreadme = \"\"\"\nversion = \"0.0.0\"\n\"\"\"\nversion = \"1.2.3\"\n")
+	_, err := replaceVia("pyproject.toml", in, "1.2.3", "1.2.4")
+	if err == nil {
+		t.Fatal("expected error: regex matched a fake version line inside a multi-line string, but Replace proceeded")
+	}
+	if !strings.Contains(err.Error(), "does not match inspected current") {
+		t.Errorf("error = %q, want it to mention mismatch with inspected current", err.Error())
+	}
+}
+
+// TestTomlReplaceInSection_CurrentMatchesNormalCase is the positive
+// regression: when the matched line's value equals current, Replace
+// proceeds normally.
+func TestTomlReplaceInSection_CurrentMatchesNormalCase(t *testing.T) {
+	t.Parallel()
+	in := []byte("[package]\nversion = \"1.2.3\"\n")
+	out, err := tomlReplaceInSection(in, "package", "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `version = "1.2.4"`) {
+		t.Errorf("version not bumped:\n%s", string(out))
+	}
+}
+
+// TestTomlReplaceInSection_EmptyCurrentSkipsAssert confirms that passing
+// an empty current value skips the assertion (back-compat for direct
+// test/internal callers that do not thread a current value).
+func TestTomlReplaceInSection_EmptyCurrentSkipsAssert(t *testing.T) {
+	t.Parallel()
+	in := []byte("[package]\nversion = \"1.2.3\"\n")
+	out, err := tomlReplaceInSection(in, "package", "", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `version = "1.2.4"`) {
+		t.Errorf("version not bumped when current is empty:\n%s", string(out))
 	}
 }

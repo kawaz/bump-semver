@@ -175,9 +175,17 @@ func tomlSectionHeaderRe(sectionPath string) *regexp.Regexp {
 // The original quoting style (single vs. double) and any trailing
 // inline comment on the version line are preserved verbatim, just like
 // the pre-DR-0014 hard-coded rewriters did.
-func tomlReplaceInSection(content []byte, sectionPath, newVersion string) ([]byte, error) {
+//
+// current is the version value Inspect read from this file. When
+// non-empty it is asserted against the value the line-anchored regex
+// actually matched; a mismatch means the regex grabbed a different
+// `version =` line than the one Inspect parsed (e.g. a fake assignment
+// inside a multi-line string literal), so Replace refuses to rewrite.
+// An empty current skips the assertion (back-compat for internal/test
+// callers that do not thread a current value).
+func tomlReplaceInSection(content []byte, sectionPath, current, newVersion string) ([]byte, error) {
 	if sectionPath == "" {
-		return tomlReplaceTopLevelRegion(content, newVersion)
+		return tomlReplaceTopLevelRegion(content, current, newVersion)
 	}
 	headerRe := tomlSectionHeaderRe(sectionPath)
 	hdr := headerRe.FindIndex(content)
@@ -193,6 +201,9 @@ func tomlReplaceInSection(content []byte, sectionPath, newVersion string) ([]byt
 	loc := tomlVersionLineRe.FindSubmatchIndex(section)
 	if loc == nil {
 		return nil, fmt.Errorf("missing [%s].version line", sectionPath)
+	}
+	if err := tomlAssertMatchedValue(section, loc, current); err != nil {
+		return nil, err
 	}
 	out := make([]byte, 0, len(content)+len(newVersion))
 	out = append(out, content[:sectionStart]...)
@@ -211,7 +222,7 @@ func tomlReplaceInSection(content []byte, sectionPath, newVersion string) ([]byt
 // Kept as its own function so the offset arithmetic mirrors
 // the section case structurally without one branch shadowing the
 // other.
-func tomlReplaceTopLevelRegion(content []byte, newVersion string) ([]byte, error) {
+func tomlReplaceTopLevelRegion(content []byte, current, newVersion string) ([]byte, error) {
 	region := content
 	if loc := tomlSectionStartRe.FindIndex(content); loc != nil {
 		region = content[:loc[0]]
@@ -219,6 +230,9 @@ func tomlReplaceTopLevelRegion(content []byte, newVersion string) ([]byte, error
 	loc := tomlVersionLineRe.FindSubmatchIndex(region)
 	if loc == nil {
 		return nil, fmt.Errorf("missing top-level version line")
+	}
+	if err := tomlAssertMatchedValue(region, loc, current); err != nil {
+		return nil, err
 	}
 	out := make([]byte, 0, len(content)+len(newVersion))
 	out = append(out, region[:loc[2]]...)       // before "version ="
@@ -229,6 +243,25 @@ func tomlReplaceTopLevelRegion(content []byte, newVersion string) ([]byte, error
 	out = append(out, region[loc[1]:]...)
 	out = append(out, content[len(region):]...)
 	return out, nil
+}
+
+// tomlAssertMatchedValue checks that the version value the line-anchored
+// regex matched (submatch group 3 = region[loc[6]:loc[7]]) equals the
+// value Inspect read (current). It guards against the regex grabbing a
+// different `version =` line than the parser did — most notably a fake
+// `version = "..."` assignment sitting inside a multi-line string
+// literal, which would otherwise be silently rewritten and corrupt the
+// file. An empty current skips the check (internal/test callers that do
+// not thread a current value retain the pre-assert behaviour).
+func tomlAssertMatchedValue(region []byte, loc []int, current string) error {
+	if current == "" {
+		return nil
+	}
+	matched := string(region[loc[6]:loc[7]])
+	if matched != current {
+		return fmt.Errorf("TOML version line value %q does not match inspected current %q (possible mismatched version= line, e.g. inside a multi-line string); refusing to rewrite", matched, current)
+	}
+	return nil
 }
 
 // tomlReplace dispatches by re-running Inspect to find which of the
@@ -244,7 +277,7 @@ func tomlReplaceTopLevelRegion(content []byte, newVersion string) ([]byte, error
 // Files that carry the version in BOTH `[project]` and `[tool.poetry]`
 // (theoretical PEP 621 migration mid-state) intentionally have only
 // the first match rewritten — DR-0014 § 6 documents the trade-off.
-func tomlReplace(rule CandidateRule, content []byte, _ /* current */, newVersion string) ([]byte, error) {
+func tomlReplace(rule CandidateRule, content []byte, current, newVersion string) ([]byte, error) {
 	if len(rule.VersionPaths) == 0 {
 		return nil, fmt.Errorf("TOML rule %q has no VersionPath", rule.Name)
 	}
@@ -261,7 +294,7 @@ func tomlReplace(rule CandidateRule, content []byte, _ /* current */, newVersion
 		if err != nil {
 			return nil, err
 		}
-		return tomlReplaceInSection(content, section, newVersion)
+		return tomlReplaceInSection(content, section, current, newVersion)
 	}
 	return nil, fmt.Errorf("TOML rule %q: no VersionPath matched on Replace", rule.Name)
 }

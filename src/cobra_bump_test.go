@@ -75,6 +75,22 @@ func TestBuildBump_DefineRuleArgvOrder(t *testing.T) {
 	}
 }
 
+// TestRun_PreValueDashQQ pins the value-position guard end-to-end: a
+// `-qq` passed as the value of --pre must reach the bump as the literal
+// pre-release "-qq" (not get rewritten to --quiet-all by the verbosity
+// normalisation). Regression for normalizeQuietAll clobbering value tokens.
+func TestRun_PreValueDashQQ(t *testing.T) {
+	t.Parallel()
+	var stdout bytes.Buffer
+	err := run([]string{"major", "1.2.3", "--pre", "-qq"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("run major 1.2.3 --pre -qq: %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "2.0.0--qq" {
+		t.Errorf("stdout = %q, want %q", got, "2.0.0--qq")
+	}
+}
+
 // TestRun_DoubleBoolFlagRejected pins that --write / --no-pre /
 // --no-build-metadata reject a second occurrence with the legacy
 // "specified twice" wording (onceBoolValue), routed through run() so the

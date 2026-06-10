@@ -46,11 +46,12 @@ func runCobra(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	// pflag cannot represent `-qq` as a single shorthand (it tokenises
 	// it as `-q -q` = quiet, not quiet-all). Rewrite the literal token
-	// to --quiet-all before cobra parses. Every verb that accepts the
-	// verbosity flags (vcs subtree, compare, bump family) is now on
-	// cobra, so the rewrite is applied unconditionally. The `--` guard
-	// inside normalizeQuietAll keeps post-separator positionals intact.
-	argv = normalizeQuietAll(argv)
+	// to --quiet-all before cobra parses, but only in a flag position:
+	// the `--` guard skips post-separator positionals and the
+	// value-taking-flag set skips a `-qq` that is the value of a flag
+	// like --pre / -m (so `--pre -qq` stays literal). The set is derived
+	// from the command tree's pflag FlagSets so new flags auto-follow.
+	argv = normalizeQuietAll(argv, valueTakingFlags())
 
 	root := newRootCmd(stdin, stdout, stderr)
 	root.SetArgs(argv)

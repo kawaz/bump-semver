@@ -114,7 +114,7 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 		return runVcsCmdGetLatestRelease(args, stdout, stderr)
 	}
 
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -210,7 +210,7 @@ func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
 			fmt.Errorf("unknown vcs is predicate: %s (expected one of: %s)", pred, strings.Join(vcsIsPreds, " / ")))
 	}
 
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -279,9 +279,9 @@ func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
 // exit 0 (= "no diff to report").
 func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 	if len(args.vcsArgs) == 0 {
-		// The parseArgs layer normally short-circuits "vcs diff" with no
-		// further args to the per-verb help; this branch only fires if a
-		// future code path reaches the dispatcher with an empty arg list.
+		// The cobra layer (bareVerb) normally short-circuits "vcs diff"
+		// with no further args to the per-verb help; this branch only fires
+		// if a future code path reaches the dispatcher with an empty arg list.
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("vcs diff requires a REV (usage: vcs diff REV [PATH..])"))
 	}
@@ -330,7 +330,7 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 		}
 	}
 
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -443,7 +443,7 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 	// accepted shapes (paths / --staged / bare / amend-of-each) into
 	// the backend implementations.
 	// Step 4: resolve backend.
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -539,7 +539,7 @@ func runVcsCmdFetch(args cliArgs, stdout, stderr io.Writer) error {
 	if err := validateRemote(remote); err != nil {
 		return emitVcsUsage(stderr, args, fmt.Errorf("vcs fetch: %w", err))
 	}
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -594,7 +594,7 @@ func runVcsCmdPush(args cliArgs, stdout, stderr io.Writer) error {
 	if err := validateRemote(remote); err != nil {
 		return emitVcsUsage(stderr, args, fmt.Errorf("vcs push: %w", err))
 	}
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
 	b, err := newVcsBackend(vcsOverride)
 	if err != nil {
 		return emitVcsErr(stderr, args, err)
@@ -666,7 +666,7 @@ func runVcsCmdTag(args cliArgs, stdout, stderr io.Writer) error {
 		// (= source 軸を verb 名に畳む再整理)。v0 break policy で alias
 		// は残さない、明示的な migration hint だけ返す。
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("vcs tag latest was moved in v0.32.0; use `vcs get latest-tag` (or `vcs get latest-release` for GitHub Releases). See DR-0032"))
+			fmt.Errorf("vcs tag latest was moved in v0.32.0; use `vcs get latest-tag` (or `vcs get latest-release` for GitHub Releases)"))
 	default:
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("unknown vcs tag sub-verb: %q (expected: push / delete)", args.vcsTag.SubVerb))

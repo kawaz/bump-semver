@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -200,22 +201,72 @@ func addVerbosityFlags(fs *pflag.FlagSet, v *outputVerbosity) {
 	fs.Lookup("no-hint").NoOptDefVal = "x"
 }
 
-// normalizeQuietAll rewrites the standalone `-qq` token to `--quiet-all`
-// (and any `--` separator stops the rewrite, mirroring the legacy
-// whole-token match that never reinterprets post-`--` positionals).
-// pflag cannot represent `-qq` as a single shorthand, so this runs over
-// argv before cobra parses the vcs subtree.
-func normalizeQuietAll(argv []string) []string {
+// valueTakingFlags derives the set of flag tokens that consume a separate
+// argument (NoOptDefVal == "" in pflag terms), walking the entire cobra
+// command tree from newRootCmd. Both spellings are recorded: the long
+// form `--name` and, when present, the shorthand `-x`. Bool-like flags
+// (verbosity raisers, --write, glob flags, etc.) set NoOptDefVal and are
+// therefore excluded — they never swallow the next token.
+//
+// The result feeds normalizeQuietAll so a `-qq` that is the *value* of a
+// value-taking flag (e.g. `--pre -qq`, `-m -qq`) is left literal instead
+// of being rewritten to --quiet-all. Deriving from the FlagSet (rather
+// than hardcoding a list) keeps the guard in sync as flags are added.
+func valueTakingFlags() map[string]bool {
+	set := map[string]bool{}
+	root := newRootCmd(nil, io.Discard, io.Discard)
+
+	var visit func(cmd *cobra.Command)
+	visit = func(cmd *cobra.Command) {
+		collect := func(f *pflag.Flag) {
+			if f.NoOptDefVal != "" {
+				return // bare form consumes no argument
+			}
+			set["--"+f.Name] = true
+			if f.Shorthand != "" {
+				set["-"+f.Shorthand] = true
+			}
+		}
+		cmd.Flags().VisitAll(collect)
+		cmd.PersistentFlags().VisitAll(collect)
+		for _, child := range cmd.Commands() {
+			visit(child)
+		}
+	}
+	visit(root)
+	return set
+}
+
+// normalizeQuietAll rewrites a standalone `-qq` token to `--quiet-all`,
+// but only when it appears in a flag position. pflag cannot represent
+// `-qq` as a single shorthand (it tokenises it as `-q -q` = quiet), so
+// this runs over argv before cobra parses.
+//
+// Two boundaries leave a `-qq` untouched:
+//   - anything at/after a `--` separator (post-separator positionals are
+//     never reinterpreted, matching the legacy whole-token match)
+//   - a `-qq` that sits in a value position: the immediately preceding
+//     token is a value-taking flag passed in its separate-argument form
+//     (e.g. `--pre -qq`, `-m -qq`). An inline `--flag=value` does not
+//     consume the next token, so a following `-qq` is a flag position again.
+//
+// valueFlags is the set produced by valueTakingFlags().
+func normalizeQuietAll(argv []string, valueFlags map[string]bool) []string {
 	out := make([]string, 0, len(argv))
+	prevConsumesValue := false
 	for i, a := range argv {
 		if a == "--" {
 			out = append(out, argv[i:]...)
 			break
 		}
-		if a == "-qq" {
+		if a == "-qq" && !prevConsumesValue {
 			out = append(out, "--quiet-all")
+			prevConsumesValue = false
 			continue
 		}
+		// A value-taking flag in `--flag value` / `-x value` form swallows
+		// the next token; the `=`-joined form (`--flag=value`) does not.
+		prevConsumesValue = valueFlags[a]
 		out = append(out, a)
 	}
 	return out

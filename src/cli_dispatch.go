@@ -109,7 +109,7 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		}
 	}
 
-	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // already validated in parseArgs
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // already validated in applySharedTail
 	// PeerExpand=true: bump/get want N-arg cross-source equality
 	// across all sibling FILE paths when a file-omitted vcs:REV is
 	// present (DR-0023). Compare uses PeerExpand=false.

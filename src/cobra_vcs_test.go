@@ -88,20 +88,37 @@ func TestParseOutdatedTokens_QuietAll(t *testing.T) {
 
 // TestNormalizeQuietAll covers the `-qq` → `--quiet-all` rewrite and the
 // `--` boundary that stops it (post-separator positionals are untouched).
+// It also pins the value-position guard: a `-qq` that is the value of a
+// value-taking flag (e.g. --pre -qq) must NOT be rewritten, because the
+// legacy parser accepts `--pre -qq` literally (pre == "-qq").
 func TestNormalizeQuietAll(t *testing.T) {
 	t.Parallel()
+	vf := valueTakingFlags()
 	cases := []struct {
+		name string
 		in   []string
 		want []string
 	}{
-		{[]string{"diff", "-qq", "HEAD"}, []string{"diff", "--quiet-all", "HEAD"}},
-		{[]string{"diff", "-q", "HEAD"}, []string{"diff", "-q", "HEAD"}},
-		{[]string{"outdated", "--", "-qq", "T"}, []string{"outdated", "--", "-qq", "T"}},
+		{"flag-position", []string{"diff", "-qq", "HEAD"}, []string{"diff", "--quiet-all", "HEAD"}},
+		{"plain-quiet-untouched", []string{"diff", "-q", "HEAD"}, []string{"diff", "-q", "HEAD"}},
+		{"after-separator-untouched", []string{"outdated", "--", "-qq", "T"}, []string{"outdated", "--", "-qq", "T"}},
+		// Leading standalone -qq is a flag position.
+		{"leading", []string{"-qq", "patch", "1.2.3"}, []string{"--quiet-all", "patch", "1.2.3"}},
+		// -qq as the value of --pre is NOT a flag position: leave it literal.
+		{"value-of-pre", []string{"pre", "1.2.3", "--pre", "-qq"}, []string{"pre", "1.2.3", "--pre", "-qq"}},
+		// -qq as the value of -m / --message must also stay literal.
+		{"value-of-message-short", []string{"vcs", "commit", "-m", "-qq"}, []string{"vcs", "commit", "-m", "-qq"}},
+		// --pre=x consumes its value inline, so the following -qq IS a flag
+		// position again and must be rewritten.
+		{"after-inline-value-pre", []string{"pre", "1.2.3", "--pre=x", "-qq"}, []string{"pre", "1.2.3", "--pre=x", "--quiet-all"}},
+		// A bool flag (NoOptDefVal set) does not consume the next token, so a
+		// -qq after it is still a flag position.
+		{"after-bool-flag", []string{"patch", "1.2.3", "--write", "-qq"}, []string{"patch", "1.2.3", "--write", "--quiet-all"}},
 	}
 	for _, c := range cases {
-		got := normalizeQuietAll(c.in)
+		got := normalizeQuietAll(c.in, vf)
 		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("normalizeQuietAll(%v) = %v, want %v", c.in, got, c.want)
+			t.Errorf("%s: normalizeQuietAll(%v) = %v, want %v", c.name, c.in, got, c.want)
 		}
 	}
 }

@@ -61,7 +61,7 @@ func readPatternListFile(path string) ([]string, error) {
 			continue
 		}
 		if hasFilePrefix(line) {
-			return nil, fmt.Errorf("file:%s:%d: nested file: is not supported (MVP scope, see DR-0033)", path, lineNo)
+			return nil, fmt.Errorf("file:%s:%d: nested file: is not supported", path, lineNo)
 		}
 		out = append(out, line)
 	}
@@ -95,7 +95,7 @@ func expandFileSpec(path string, opts globOpts) ([]string, error) {
 			continue
 		}
 		if hasFilePrefix(line) {
-			return nil, fmt.Errorf("file:%s:%d: nested file: is not supported (MVP scope, see DR-0033)", path, lineNo)
+			return nil, fmt.Errorf("file:%s:%d: nested file: is not supported", path, lineNo)
 		}
 		if hasGlobPrefix(line) {
 			pat, perr := parseGlobSpec(line)

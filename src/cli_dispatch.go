@@ -14,6 +14,13 @@ import (
 // "bump-semver: <reason>" prefix — are written to stderr from here so
 // the --quiet-all flag can suppress them.
 func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	// Co-existence router (cobra migration, plan §2). Migrated entry
+	// points are handled by the cobra command tree; everything else
+	// falls through to the legacy hand-rolled parser below. This branch
+	// is removed once every verb is on cobra.
+	if useCobra(argv) {
+		return runCobra(argv, stdin, stdout, stderr)
+	}
 	args, err := parseArgs(argv)
 	if err != nil {
 		// parse errors precede any quiet flag taking effect (the flag

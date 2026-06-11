@@ -575,6 +575,12 @@ func statFileExists(path string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// isStdinPipe reports whether stdin carries piped content the single-FILE
+// shortcut should read (shell pipes / FIFOs / file redirects — all of which
+// reach EOF). Sockets are excluded: agent harnesses and some CI runners wire
+// a unix socket to stdin that stays open without ever delivering data, so
+// io.ReadAll on it blocks forever. A socket stdin therefore goes down the
+// normal on-disk path; explicit stdin reads remain available via `-`.
 func isStdinPipe(stdin io.Reader) bool {
 	f, ok := stdin.(*os.File)
 	if !ok {
@@ -584,5 +590,6 @@ func isStdinPipe(stdin io.Reader) bool {
 	if err != nil {
 		return false
 	}
-	return (fi.Mode() & os.ModeCharDevice) == 0
+	mode := fi.Mode()
+	return mode&os.ModeCharDevice == 0 && mode&os.ModeSocket == 0
 }

@@ -77,3 +77,15 @@ fixture: `tests/fixtures/workspace-root/Cargo.toml`。
 空内容になるため)。より有効なのは「**読んだ content のバイト数 + 入力解決経路 (file / stdin-pipe /
 vcs)**」を 1 行出す軽量トレース (`-vv` 相当)。`resolved input0 from <stdin-pipe|file>, N bytes`
 だけで同種問題の切り分けが一瞬になる。フル `--debug-rules` より安価。
+
+## 追補 (2026-06-11): socket stdin は read が永久ブロックする
+
+- 空 FIFO (GHA) は「即 EOF」だが、**開いたままデータが来ない unix socket** が stdin に
+  配線される環境 (agent harness のバックグラウンド shell、一部 CI) では io.ReadAll が
+  永久ブロックする。実害報告: `bump-semver minor Cargo.toml --write` が 2 時間ハング
+  (lsof で fd0=unix socket を確認)
+- 対処 (v0.38.1): isStdinPipe を `mode&ModeCharDevice == 0 && mode&ModeSocket == 0` に
+  変更し socket を shortcut 対象外に。socket stdin は通常のディスク読み経路に落ちる。
+  shell パイプ / FIFO / ファイルリダイレクトは従来通り (いずれも EOF に到達する)
+- 明示 `-` 入力は socket でも従来通り stdin を読む (ブロックはユーザ意図)
+- 回帰テスト: src/stdin_socket_test.go (socketpair で 10 秒 timeout ガード、修正なしで red を実証済み)

@@ -91,7 +91,19 @@ var yamlTopLevelVersionLineRe = regexp.MustCompile(
 // matching `version:` line wins. If callers need per-document
 // rewriting they can split on `---` and process each document
 // independently before concatenating.
-func yamlReplace(rule CandidateRule, content []byte, _ /* current */, newVersion string) ([]byte, error) {
+//
+// current is the version value Inspect read from this file. When
+// non-empty it is asserted against the value the column-0 line-anchored
+// regex actually matched; a mismatch means the regex grabbed a `version:`
+// line the parser did not treat as the top-level version. This mirrors
+// TOML's tomlAssertMatchedValue. The YAML silent-corruption vector is a
+// multi-line **quoted scalar** (e.g. `readme: "foo\nversion: 0.0.0\nbar"`)
+// whose folded continuation line begins with `version:` at column 0:
+// yaml.v3 folds it into the surrounding string, so Inspect reads the real
+// version while the regex would grab the fake one and corrupt the file.
+// An empty current skips the assertion (back-compat for internal/test
+// callers that do not thread a current value).
+func yamlReplace(rule CandidateRule, content []byte, current, newVersion string) ([]byte, error) {
 	if len(rule.VersionPaths) != 1 || rule.VersionPaths[0] != ".version" {
 		return nil, fmt.Errorf("YAML format currently supports only top-level .version (got %v)", rule.VersionPaths)
 	}
@@ -105,6 +117,11 @@ func yamlReplace(rule CandidateRule, content []byte, _ /* current */, newVersion
 	valStart, valEnd, ok := yamlValueRange(tail, tailStart)
 	if !ok {
 		return nil, fmt.Errorf("malformed top-level version value")
+	}
+	if current != "" {
+		if matched := string(content[valStart:valEnd]); matched != current {
+			return nil, fmt.Errorf("YAML version line value %q does not match inspected current %q (possible mismatched version: line, e.g. inside a multi-line quoted scalar); refusing to rewrite", matched, current)
+		}
 	}
 	out := make([]byte, 0, len(content)+len(newVersion))
 	out = append(out, content[:valStart]...)

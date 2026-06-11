@@ -180,6 +180,94 @@ func TestYamlReplace_MissingVersion(t *testing.T) {
 	}
 }
 
+// --- Replace guards against rewriting a column-0 `version:` line that
+// does not match the value Inspect actually read -----------------------
+//
+// Mirrors the TOML `tomlAssertMatchedValue` guard. Unlike TOML, where
+// the silent-corruption vector is a `version =` line inside a `"""..."""`
+// multi-line string literal, the YAML vector is a multi-line **quoted
+// scalar** (double- or single-quoted) whose continuation line begins
+// with `version:` at column 0. yaml.v3 folds that continuation into the
+// surrounding string value, so the parser reads the real top-level
+// version, but the column-0 line-anchored regex would otherwise grab the
+// fake `version:` inside the scalar and corrupt the file. This is a real
+// (not merely parity) silent-corruption case — verified empirically.
+
+// TestYamlReplace_MultilineDoubleQuotedFakeVersion constructs a
+// double-quoted multi-line scalar (`readme: "foo\nversion: 0.0.0\nbar"`)
+// whose folded continuation line `version: 0.0.0` sits at column 0.
+// Inspect reads the real `version: 1.2.3`; Replace must refuse to rewrite
+// the fake line rather than corrupt the readme string.
+func TestYamlReplace_MultilineDoubleQuotedFakeVersion(t *testing.T) {
+	t.Parallel()
+	in := []byte("readme: \"foo\nversion: 0.0.0\nbar\"\nversion: 1.2.3\n")
+	_, err := replaceVia("Chart.yaml", in, "1.2.3", "1.2.4")
+	if err == nil {
+		t.Fatal("expected error: regex matched a fake version line inside a multi-line quoted scalar, but Replace proceeded")
+	}
+	if !strings.Contains(err.Error(), "does not match inspected current") {
+		t.Errorf("error = %q, want it to mention mismatch with inspected current", err.Error())
+	}
+}
+
+// TestYamlReplace_MultilineSingleQuotedFakeVersion is the single-quoted
+// variant of the same silent-corruption vector.
+func TestYamlReplace_MultilineSingleQuotedFakeVersion(t *testing.T) {
+	t.Parallel()
+	in := []byte("readme: 'foo\nversion: 0.0.0\nbar'\nversion: 1.2.3\n")
+	_, err := replaceVia("Chart.yaml", in, "1.2.3", "1.2.4")
+	if err == nil {
+		t.Fatal("expected error: regex matched a fake version line inside a multi-line quoted scalar, but Replace proceeded")
+	}
+	if !strings.Contains(err.Error(), "does not match inspected current") {
+		t.Errorf("error = %q, want it to mention mismatch with inspected current", err.Error())
+	}
+}
+
+// TestYamlReplace_CurrentMatchesNormalCase is the positive regression:
+// when the matched line's value equals current, Replace proceeds.
+func TestYamlReplace_CurrentMatchesNormalCase(t *testing.T) {
+	t.Parallel()
+	in := []byte("version: 1.2.3\nname: foo\n")
+	out, err := replaceVia("Chart.yaml", in, "1.2.3", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), "version: 1.2.4\n") {
+		t.Errorf("version not bumped:\n%s", string(out))
+	}
+}
+
+// TestYamlReplace_EmptyCurrentSkipsAssert confirms that passing an empty
+// current value skips the assertion (back-compat for internal/test
+// callers that do not thread a current value, mirroring TOML).
+func TestYamlReplace_EmptyCurrentSkipsAssert(t *testing.T) {
+	t.Parallel()
+	in := []byte("version: 1.2.3\nname: foo\n")
+	out, err := replaceVia("Chart.yaml", in, "", "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), "version: 1.2.4\n") {
+		t.Errorf("version not bumped when current is empty:\n%s", string(out))
+	}
+}
+
+// TestYamlReplace_QuotedCurrentMatches confirms the assertion compares
+// against the unquoted scalar value: Inspect reports `1.2.3` for a
+// double-quoted `version: "1.2.3"`, and Replace must accept that match.
+func TestYamlReplace_QuotedCurrentMatches(t *testing.T) {
+	t.Parallel()
+	in := []byte("version: \"1.2.3\"\nname: foo\n")
+	out, err := replaceVia("Chart.yaml", in, "1.2.3", "2.0.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), "version: \"2.0.0\"\n") {
+		t.Errorf("version not bumped for quoted match:\n%s", string(out))
+	}
+}
+
 // TestYamlInspect_MultiDocumentTakesFirst documents the DR-0011 design
 // decision: only the first document is examined, so the second
 // document's `version:` is ignored.

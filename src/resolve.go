@@ -208,6 +208,13 @@ func resolveFileFromStdinWithRules(file string, stdin io.Reader, ruleBlocks []ru
 	if err != nil {
 		return resolvedInput{}, fmt.Errorf("read stdin: %w", err)
 	}
+	// Reject empty piped content, matching the `-` marker's empty-input
+	// guard (readStdinLine). A writer-less pipe (e.g. an empty FIFO) yields
+	// 0 bytes; without this the empty content silently parses to a
+	// versionless document and surfaces as a confusing "missing version".
+	if len(content) == 0 {
+		return resolvedInput{}, fmt.Errorf("stdin: empty input")
+	}
 	insp, err := h.Inspect(content)
 	if err != nil {
 		return resolvedInput{}, err
@@ -388,11 +395,20 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 		rawCount++
 	}
 
-	// Legacy stdin pipe shortcut: one FILE input (not `-`, exists or
-	// at least matches a known rule), stdin is a pipe → read content
+	// Legacy stdin pipe shortcut: one FILE input (not `-`, does not exist
+	// on disk but matches a known rule), stdin is a pipe → read content
 	// from stdin and treat the path as a name hint. vcs: inputs are
 	// not eligible for this shortcut.
-	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && isStdinPipe(stdin) {
+	//
+	// Design rationale: the shortcut is gated on the path NOT existing on
+	// disk (statFile fails). Its sole purpose is `cat my.txt |
+	// bump-semver get my.txt` where `my.txt` is a *name hint* for the piped
+	// content, not a real file. When the path DOES exist, the on-disk file
+	// is the source of truth and must win. Without this gate, a writer-less
+	// pipe stdin (e.g. GitHub Actions wires `run:` step stdin to an empty
+	// FIFO) shadows the real file with 0 bytes, making `get Cargo.toml`
+	// fail with "missing version" only under such stdin shapes.
+	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && !statFileExists(inputs[0]) && isStdinPipe(stdin) {
 		if opts.Write {
 			return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
 		}
@@ -529,6 +545,15 @@ func checkDeadBlocks(blocks []ruleBlock, resolved []resolvedInput) error {
 	}
 	return fmt.Errorf("dead --define-rule block(s) (no SOURCE matched): %s\nhint: remove the unused --define-rule, or add a SOURCE whose path matches the PATTERN",
 		strings.Join(labels, ", "))
+}
+
+// statFileExists reports whether path resolves to a regular (non-directory)
+// file on disk. Mirrors the "exists as a file" gate used elsewhere in
+// resolveInputs so the stdin-pipe shortcut only fires for name-hint paths
+// that are NOT real files.
+func statFileExists(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir()
 }
 
 func isStdinPipe(stdin io.Reader) bool {

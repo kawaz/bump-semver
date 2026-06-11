@@ -38,6 +38,7 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 - [DR-0033](./DR-0033-vcs-excludes-and-file-prefix.md) — `vcs diff` (phase 1) に `--excludes PATTERN` flag を追加 (= repeatable + append、post-filter で順序非依存、include ∖ exclude の集合演算)。`file:<path>` 入力 prefix も land (= 1 行 1 path、literal / `glob:` 受け入れ、`#` コメント / 空行スキップ)。`!`-prefix shorthand は不採用 (= gitignore セマンティック反転 / bash history expansion 回避)。DR-0024 で scope-out した「exclude pattern」「file:LIST 将来案」をともに本 DR で land、release.yml dogfood で `_test.go` 除外を実現
 - [DR-0034](./DR-0034-arg-injection-trust-boundary.md) — 外部コマンド引数インジェクション対策 (C-1)。ユーザ由来の rev / tag NAME / remote / repository が `-` 始まりだと git/jj/gh にフラグ解釈される問題を、CLI ディスパッチ + 入力モード resolver の入口に検証を集約して解消。URL スキーム allowlist は DR-0019/DR-0032 の設計継承で不採用、最小の `-` 始まり拒否に限定
 - [DR-0035](./DR-0035-atomic-write-and-all-or-nothing.md) — `--write` の二相化 (全 file の Replace を先に計算 → all-or-nothing) + アトミック書き込み (同一ディレクトリ temp + rename) による manifest 破損防止 (C-2)。symlink は実体解決してから rename (symlink 維持 + 実体更新)、mode 保持。rollback 不採用 (DR-0004 §7 維持) はそのままに prevention を追加、§7 を部分 supersede。phase 2 後段失敗の部分書き込み窓は残余リスクとして許容
+- [DR-0036](./DR-0036-package-split-deferred.md) — パッケージ分割 (`internal/` 化) は見送り、`vcs_backend.go` (2184 行) を同一パッケージ内でファイル 3 分割 (`_git` / `_jj` / 本体) するファイルレベル整理を採用。rules ⇄ format / resolve ⇄ vcs の双方向結合 + `exitErr` 全層染み出しにより別パッケージ化は即 import cycle + 共有型パッケージ新設 + 100 識別子超の export 改名 + テスト約 20 本書き換えが必要で、単一バイナリ CLI の規模に対し設計コストが便益を上回る。宣言の cut&paste のみ (コード変更ゼロ)。再検討トリガは vcs の別ツール切り出し需要等
 
 ## Archived
 

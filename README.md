@@ -710,6 +710,13 @@ Current capabilities at a glance:
 
 The full version-by-version history lives in [CHANGELOG.md](./CHANGELOG.md). For design rationale see [docs/decisions/](./docs/decisions/); for upcoming items see [docs/ROADMAP.md](./docs/ROADMAP.md).
 
+## Need a format that isn't built in?
+
+You have two paths:
+
+- **Don't wait** — define the extraction yourself with [`--define-rule`](#custom-rules---define-rule). It works immediately.
+- **Make it built-in for everyone** — open a [Built-in format request](https://github.com/kawaz/bump-semver/issues/new?template=format-request.yml). See [CONTRIBUTING.md](./CONTRIBUTING.md) for scope and PR guidelines.
+
 ## License
 
 [MIT](LICENSE)

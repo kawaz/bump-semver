@@ -1,0 +1,87 @@
+name: Built-in format request
+description: Request that a file format be added to the built-in extraction table.
+title: "[format] <file name or extension>"
+labels: ["format-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping `bump-semver` grow its built-in format table!
+
+        **Before you file this, can `--define-rule` already cover your case?**
+        You don't have to wait for a release — a custom extraction rule lets you
+        read/write the version right now:
+
+        ```bash
+        # JSON field
+        bump-semver get myapp.config --define-rule myapp.config --format json --version-path '$.version'
+        # text + regex
+        bump-semver patch app.conf --write --define-rule app.conf --format text --version-regex 'VERSION=([0-9.]+)'
+        ```
+
+        See the [Custom rules](https://github.com/kawaz/bump-semver#custom-rules---define-rule)
+        section of the README. If that works for you, you may not need this issue at all —
+        but a request is still welcome so the format can become built-in for everyone.
+  - type: input
+    id: filename
+    attributes:
+      label: File name / extension
+      description: The basename or glob this format is recognized by.
+      placeholder: "myapp.config  /  *.zon  /  build.zig.zon"
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: What is this file used for?
+      description: Tool / language / framework that owns this file, with a link if you have one.
+      placeholder: |
+        Zig package manifest, used by the Zig build system.
+        https://ziglang.org/learn/build-system/
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample file
+      description: A short, real-looking excerpt (about 5-20 lines) where the version line is visible. This will be rendered verbatim.
+      render: text
+      placeholder: |
+        .{
+            .name = "myapp",
+            .version = "1.2.3",
+            .dependencies = .{},
+        }
+    validations:
+      required: true
+  - type: input
+    id: version-path
+    attributes:
+      label: Path to the version
+      description: Where the version lives in the sample, as a jq/dot-path (json/yaml/toml/xml) or a regex with one capture group (text).
+      placeholder: "$.version   /   plugin.version   /   version = \"([0-9.]+)\""
+    validations:
+      required: true
+  - type: input
+    id: name-path
+    attributes:
+      label: Path to the package name (optional)
+      description: Same form as above, if the file also carries a package name worth cross-checking.
+      placeholder: "$.name"
+    validations:
+      required: false
+  - type: input
+    id: links
+    attributes:
+      label: Related repo / official docs (optional)
+      description: Any links to the format's spec or a project that uses it.
+      placeholder: "https://github.com/..."
+    validations:
+      required: false
+  - type: checkboxes
+    id: tried-define-rule
+    attributes:
+      label: Did you try --define-rule?
+      options:
+        - label: I tried `--define-rule` and it works (this request is to make it built-in).
+        - label: I tried `--define-rule` and it did NOT work (please describe the failure in the usage box above).

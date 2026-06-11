@@ -710,6 +710,13 @@ bump-semver completion <bash|zsh|fish|powershell>
 
 version ごとの完全な履歴は [CHANGELOG.md](./CHANGELOG.md)。設計判断は [docs/decisions/](./docs/decisions/)、将来検討項目は [docs/ROADMAP.md](./docs/ROADMAP.md) を参照。
 
+## builtin に無い形式が必要なら
+
+経路は 2 つ:
+
+- **待たない** — [`--define-rule`](#カスタムルール---define-rule) で自分で抽出を定義する。即座に動く。
+- **みんなのために builtin 化** — [Built-in format request](https://github.com/kawaz/bump-semver/issues/new?template=format-request.yml) を起票する。スコープと PR ガイドラインは [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
+
 ## ライセンス
 
 [MIT](LICENSE)

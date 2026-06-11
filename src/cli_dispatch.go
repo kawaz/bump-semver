@@ -308,23 +308,122 @@ func runBump(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	if args.write {
-		for _, ri := range resolved {
-			if ri.handler == nil || ri.file == "" {
-				continue
-			}
-			out, err := ri.handler.Replace(ri.content, cur, newV.String())
-			if err != nil {
-				return emitErr(stderr, args, fmt.Errorf("replace %s: %w", ri.file, err))
-			}
-			mode := os.FileMode(0644)
-			if fi, statErr := os.Stat(ri.file); statErr == nil {
-				mode = fi.Mode().Perm()
-			}
-			if err := os.WriteFile(ri.file, out, mode); err != nil {
-				return emitErr(stderr, args, fmt.Errorf("write %s: %w", ri.file, err))
-			}
+		if err := writeBumpedFiles(resolved, cur, newV.String()); err != nil {
+			return emitErr(stderr, args, err)
 		}
 	}
+	return nil
+}
+
+// pendingWrite is one file's computed result, ready to be committed to
+// disk in the write phase.
+type pendingWrite struct {
+	file    string      // the path the user named (may be a symlink)
+	target  string      // the real path written to (symlink resolved)
+	content []byte      // new file content
+	mode    os.FileMode // permission bits to apply
+}
+
+// writeBumpedFiles persists the bumped version to every FILE-origin
+// input. It is split into two phases so a failure cannot leave a
+// partially-updated set of files (DR-0004 §7 prevention; rollback is
+// still intentionally absent):
+//
+//  1. Compute phase: run Replace for every file and stat its mode.
+//     If any Replace fails, return immediately having written nothing
+//     (all-or-nothing). This is what catches the "Cargo.toml bumped but
+//     package.json's Replace failed" torn-update class.
+//  2. Write phase: write each file atomically by creating a temp file
+//     in the same directory and renaming it over the target. A killed
+//     process or a write error therefore never leaves a torn (partially
+//     written) file on disk.
+//
+// Symlinks are resolved (filepath.EvalSymlinks) before writing so the
+// atomic rename replaces the real file rather than turning the symlink
+// into a regular file. The original file's permission bits are carried
+// onto the temp file before the rename so mode is preserved.
+//
+// Residual risk (DR §7 supersede): if the write phase itself fails on a
+// later file (e.g. the second rename hits EACCES), earlier files are
+// already committed. This partial-write window is the accepted
+// consequence of not carrying rollback logic — VCS restores the tree.
+func writeBumpedFiles(resolved []resolvedInput, cur, newVersion string) error {
+	// Phase 1: compute every file's new content up front. Nothing is
+	// written until all Replace calls succeed.
+	var pending []pendingWrite
+	for _, ri := range resolved {
+		if ri.handler == nil || ri.file == "" {
+			continue
+		}
+		out, err := ri.handler.Replace(ri.content, cur, newVersion)
+		if err != nil {
+			return fmt.Errorf("replace %s: %w", ri.file, err)
+		}
+
+		// Resolve the symlink so we write the real file, not the link.
+		// EvalSymlinks fails if the target doesn't exist; the input
+		// came from a successful read so it does, but fall back to the
+		// literal path defensively.
+		target := ri.file
+		if resolved, rErr := filepath.EvalSymlinks(ri.file); rErr == nil {
+			target = resolved
+		}
+
+		mode := os.FileMode(0644)
+		if fi, statErr := os.Stat(target); statErr == nil {
+			mode = fi.Mode().Perm()
+		}
+
+		pending = append(pending, pendingWrite{
+			file:    ri.file,
+			target:  target,
+			content: out,
+			mode:    mode,
+		})
+	}
+
+	// Phase 2: commit each computed result atomically (temp + rename).
+	for _, pw := range pending {
+		if err := atomicWriteFile(pw.target, pw.content, pw.mode); err != nil {
+			return fmt.Errorf("write %s: %w", pw.file, err)
+		}
+	}
+	return nil
+}
+
+// atomicWriteFile writes content to path by creating a temp file in the
+// same directory, applying mode, then renaming it over path. The rename
+// is atomic on a single filesystem, so readers never observe a
+// half-written file. The temp file is removed on any error path.
+func atomicWriteFile(path string, content []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".bump-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup if we don't reach a successful rename.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	committed = true
 	return nil
 }
 

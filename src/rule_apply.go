@@ -333,7 +333,7 @@ func detectHandlerWithCliRule(path string, block ruleBlock) (Handler, error) {
 }
 
 // pickHandlerForFile is the DR-0029 entry point used by resolveFile /
-// resolveFileFromStdin. When ruleBlocks is non-nil and a block matches
+// resolveFilePipeOrDisk. When ruleBlocks is non-nil and a block matches
 // `path` (or the global block carries rule flags), a cliRuleHandler is
 // returned; otherwise the existing builtin detectHandler is invoked.
 //

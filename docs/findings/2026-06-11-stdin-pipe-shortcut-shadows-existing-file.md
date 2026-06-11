@@ -3,7 +3,7 @@
 - Date: 2026-06-11
 - 関連: 旧 issue `docs/issue/2026-06-10-get-cargo-toml-fails-only-on-github-actions.md` (解決済・削除)
 - 関連 DR: DR-0021 (cargo workspace.package fallback), DR-0029 (stdin-pipe shortcut + CLI rule)
-- 修正: `src/resolve.go` stdin-pipe shortcut の発火条件にファイル不在ゲートを追加 + 空内容を明示エラー化
+- 修正: `src/resolve.go` stdin-pipe shortcut を「pipe 内容が空か」で分岐 (非空=pipe 優先で DR-0004 §6 の契約維持 / 空=ディスクへフォールバック / 空かつ不在=ヒント込みエラー)
 
 ## 判明した事実
 
@@ -34,34 +34,41 @@
 
 ## 修正の詳細
 
-第一 (設計修正): stdin-pipe shortcut の発火条件に **`!statFileExists(inputs[0])`** を AND。
-shortcut の本来意図は `cat my.txt | bump-semver get my.txt` のように **存在しないファイル名を
-フォーマットのヒント**として使い内容は pipe から読む用途。実在ファイルは常にディスクが真実なので
-`os.ReadFile` 経路 (stdin 非依存) を通す。
+DR-0004 §6 の契約は「単一 FILE + stdin pipe のとき FILE は名前ヒント、内容は stdin から」。
+当初の修正案 (発火条件に `!statFileExists` を AND し、実在ファイルなら pipe を無視) はこの契約を
+破る: `jj file show v0.1.0 Cargo.toml | bump-semver get Cargo.toml` のように **実在ファイルの
+過去リビジョン内容を pipe で渡す**正規ユースケースで、ディスクの現在版が勝ち pipe が黙って無視
+される (silent wrong-answer)。
 
-- 既存テスト温存の根拠: `TestRun_StdinPipe` (`package.json`),
-  `TestDefineRule_StdinPipe_ExtensionWithoutBuiltin` (`myapp.env`) はどちらも
-  **存在しないファイル名**を使うため、不在ゲートで全て pass のまま。
-- 唯一の挙動変更: **実在 path 名 + 別内容を pipe** した病的ケースで「pipe でなく file を読む」に
-  変わる。これは未定義・非意図動作なので守る価値が薄い。同一内容を pipe するケースは結果同一で実害なし。
+確定した仕様: **発火条件は `isStdinPipe` のみ**に戻し、shortcut 内で **pipe 内容が空かどうか**で
+分岐する (`resolveFilePipeOrDisk`):
 
-第二 (防御, self-check の対極補完): `resolveFileFromStdinWithRules` で読んだ content が空なら
-**`stdin: empty input`** で明示エラー。`-` マーカ経路 (`readStdinLine`) は既に空入力を
-エラーにしていたのに pipe-shortcut 経路 (`io.ReadAll`) だけ空チェックが抜けていた (片面実装)。
-これ単体でも今回の silent wrong-answer を「分かるエラー」に変えるが、根治は第一。両方入れて堅くした。
+- **pipe 内容が非空 → pipe が勝つ** (DR-0004 §6 維持。FILE は名前ヒント)。
+- **pipe 内容が空 (0 バイト) かつ FILE 実在 → ディスクの FILE 読みにフォールバック**
+  (= GitHub Actions の writer 不在 FIFO 救済)。通常の位置引数解決ループへ落とし、`resolveFileWithRules`
+  / `os.ReadFile` を単一の真実経路として通す。
+- **pipe 内容が空かつ FILE 不在 → `file %q not found and piped stdin was empty` エラー**。
+  ユーザの実際の誤り (パス typo) に辿り着けるよう、不在パス名と空 pipe の両方を文言に含める。
+
+これにより `-` マーカ経路 (`readStdinLine`) と shortcut 経路 (`io.ReadAll`) の空入力ハンドリングが
+揃い、空入力が「versionless document」として静かに通る silent wrong-answer も解消する。
 
 ## 検証マトリクス (修正後, ローカル darwin/arm64)
 
 | 入力 | stdin | 期待 | 結果 |
 |---|---|---|---|
-| 実在 `workspace-root/Cargo.toml` | 空パイプ (writer 即 close) | file を読む → `0.3.1` | OK exit 0 |
-| 実在 `Cargo.toml` | `[workspace.package] version=1.1.1` を pipe | **file 優先** → `0.3.1` | OK exit 0 |
-| 非存在 `does-not-exist.json` | `{"version":"9.9.9"}` を pipe | shortcut → `9.9.9` | OK exit 0 (name-hint 用途温存) |
+| 実在 `workspace-root/Cargo.toml` | 空パイプ (writer 即 close) | ディスクへフォールバック → `0.3.1` | OK exit 0 |
+| 実在 `Cargo.toml` (`version=9.9.9`) | `version=0.1.0` を pipe | **pipe 優先** (名前ヒント) → `0.1.0` | OK exit 0 |
+| 非存在 `does-not-exist.json` | `{"version":"9.9.9"}` を pipe | shortcut → `9.9.9` | OK exit 0 (name-hint 用途) |
+| 非存在 `does-not-exist.json` | 空パイプ | エラー: not found + empty | OK exit 2 |
 | 非存在 `package.json` (既存テスト) | `{"version":"1.2.3"}` を pipe | shortcut → `1.2.4` | OK (TestRun_StdinPipe) |
+| 非存在 `package.json` + `--write` | `{"version":"1.2.3"}` を pipe | --write incompatible エラー | OK (TestRun_StdinPipeWriteRejected) |
 
 回帰テスト: `src/stdin_pipe_existing_file_test.go`
-(`TestRun_ExistingFile_NotShadowedByEmptyStdinPipe`,
-`TestRun_WorkspaceRootFixture_NotShadowedByEmptyStdinPipe`)。
+(`TestRun_ExistingFile_EmptyPipeFallsBackToDisk`,
+`TestRun_WorkspaceRootFixture_EmptyPipeFallsBackToDisk`,
+`TestRun_ExistingFile_NonEmptyPipeWins`,
+`TestRun_MissingFile_EmptyPipeErrorsWithHint`)。
 fixture: `tests/fixtures/workspace-root/Cargo.toml`。
 
 ## 診断オプションについての所見 (将来 TODO, 優先度低)

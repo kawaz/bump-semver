@@ -175,11 +175,10 @@ func TestDefineRule_DeadBlockErrors(t *testing.T) {
 func TestDefineRule_StdinPipe_ExtensionWithoutBuiltin(t *testing.T) {
 	t.Parallel()
 	// `.env` has no builtin rule, but the user supplies one via
-	// --define-rule. resolveFileFromStdinWithRules must honour the
-	// CLI block instead of rejecting "unsupported file". Regression
-	// guard for codex review-gate finding: pre-fix the stdin path
-	// called resolveFileFromStdin (= no ruleBlocks plumbed), so
-	// --define-rule was silently dropped on the single-FILE + pipe
+	// --define-rule. resolveFilePipeOrDisk must honour the CLI block
+	// instead of rejecting "unsupported file". Regression guard for codex
+	// review-gate finding: an earlier stdin path dropped ruleBlocks, so
+	// --define-rule was silently ignored on the single-FILE + pipe
 	// shortcut.
 	args, err := buildArgsForTest(t, []string{
 		"get", "myapp.env",
@@ -191,9 +190,12 @@ func TestDefineRule_StdinPipe_ExtensionWithoutBuiltin(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	stdin := strings.NewReader("VERSION=v3.2.1\n")
-	ri, err := resolveFileFromStdinWithRules("myapp.env", stdin, args.ruleBlocks)
+	ri, fellThrough, err := resolveFilePipeOrDisk("myapp.env", stdin, args.ruleBlocks)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
+	}
+	if fellThrough {
+		t.Fatalf("fellThrough = true, want false (non-empty pipe must win)")
 	}
 	if len(ri.fields) != 1 || ri.fields[0].Value != "3.2.1" {
 		t.Errorf("Versions = %+v, want 3.2.1", ri.fields)

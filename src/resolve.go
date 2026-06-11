@@ -189,45 +189,51 @@ func resolveFileWithRules(file string, ruleBlocks []ruleBlock) (resolvedInput, e
 	return ri, nil
 }
 
-// resolveFileFromStdin handles the legacy "single FILE + stdin pipe"
-// shortcut: the path is treated as a name hint and content is read
-// from stdin.
-func resolveFileFromStdin(file string, stdin io.Reader) (resolvedInput, error) {
-	return resolveFileFromStdinWithRules(file, stdin, nil)
-}
-
-// resolveFileFromStdinWithRules is the DR-0029 generalisation of
-// resolveFileFromStdin. Same role as resolveFileWithRules but for the
-// "single FILE + stdin pipe" shortcut.
-func resolveFileFromStdinWithRules(file string, stdin io.Reader, ruleBlocks []ruleBlock) (resolvedInput, error) {
-	h, err := pickHandlerForFile(file, ruleBlocks)
-	if err != nil {
-		return resolvedInput{}, err
-	}
+// resolveFilePipeOrDisk handles the "single FILE + stdin pipe" shortcut
+// (DR-0004 §6). It reads stdin once and decides:
+//
+//   - non-empty pipe → the pipe content wins; FILE is only a name hint.
+//     Returns the resolved input (fellThrough=false).
+//   - empty pipe + FILE exists on disk → fall back to the on-disk file.
+//     Returns fellThrough=true so the caller resolves the file via the
+//     normal positional path (keeps a single source of truth for disk
+//     reads). The returned resolvedInput is zero and must be ignored.
+//   - empty pipe + FILE missing → error naming both the missing path and
+//     the empty pipe (so a typo'd path is diagnosable, not masked as a
+//     downstream "missing version").
+//
+// Writeback is never allowed through this path: --write is rejected by the
+// caller before we get here, so the resolved input's `file` stays empty.
+func resolveFilePipeOrDisk(file string, stdin io.Reader, ruleBlocks []ruleBlock) (ri resolvedInput, fellThrough bool, err error) {
 	content, err := io.ReadAll(stdin)
 	if err != nil {
-		return resolvedInput{}, fmt.Errorf("read stdin: %w", err)
+		return resolvedInput{}, false, fmt.Errorf("read stdin: %w", err)
 	}
-	// Reject empty piped content, matching the `-` marker's empty-input
-	// guard (readStdinLine). A writer-less pipe (e.g. an empty FIFO) yields
-	// 0 bytes; without this the empty content silently parses to a
-	// versionless document and surfaces as a confusing "missing version".
 	if len(content) == 0 {
-		return resolvedInput{}, fmt.Errorf("stdin: empty input")
+		// Empty pipe: prefer the on-disk file when it exists; otherwise the
+		// path is likely a typo — surface both facts.
+		if statFileExists(file) {
+			return resolvedInput{}, true, nil
+		}
+		return resolvedInput{}, false, fmt.Errorf("file %q not found and piped stdin was empty", file)
+	}
+	h, err := pickHandlerForFile(file, ruleBlocks)
+	if err != nil {
+		return resolvedInput{}, false, err
 	}
 	insp, err := h.Inspect(content)
 	if err != nil {
-		return resolvedInput{}, err
+		return resolvedInput{}, false, err
 	}
-	ri := resolvedInput{
+	ri = resolvedInput{
 		originFile: file,
 		fields:     locatedFromInspection(file, insp.Versions),
-		file:       "", // stdin pipe: do not allow writeback (already rejected at parse time)
+		file:       "", // stdin pipe: do not allow writeback
 		handler:    h,
 		content:    content,
 		insp:       insp,
 	}
-	return ri, nil
+	return ri, false, nil
 }
 
 func readStdinLine(stdin io.Reader) (string, error) {
@@ -395,20 +401,20 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 		rawCount++
 	}
 
-	// Legacy stdin pipe shortcut: one FILE input (not `-`, does not exist
-	// on disk but matches a known rule), stdin is a pipe → read content
-	// from stdin and treat the path as a name hint. vcs: inputs are
-	// not eligible for this shortcut.
+	// Legacy stdin pipe shortcut: one FILE input (not `-`, not `vcs:`),
+	// stdin is a pipe → the FILE is a name hint and content is read from
+	// stdin (DR-0004 §6, originally DR-0001). This is the `jj file show
+	// <rev> Cargo.toml | bump-semver get Cargo.toml` use case: read a past
+	// revision's content from the pipe while the on-disk file holds the
+	// current version.
 	//
-	// Design rationale: the shortcut is gated on the path NOT existing on
-	// disk (statFile fails). Its sole purpose is `cat my.txt |
-	// bump-semver get my.txt` where `my.txt` is a *name hint* for the piped
-	// content, not a real file. When the path DOES exist, the on-disk file
-	// is the source of truth and must win. Without this gate, a writer-less
-	// pipe stdin (e.g. GitHub Actions wires `run:` step stdin to an empty
-	// FIFO) shadows the real file with 0 bytes, making `get Cargo.toml`
-	// fail with "missing version" only under such stdin shapes.
-	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && !statFileExists(inputs[0]) && isStdinPipe(stdin) {
+	// Empty-pipe fallback: a writer-less pipe (e.g. GitHub Actions wires a
+	// `run:` step's stdin to an empty FIFO) yields 0 bytes. Reading that as
+	// the file content silently shadows the real file and fails with a
+	// confusing "missing version". So when the pipe is empty we fall back to
+	// the on-disk file (if it exists); only then do we error. Non-empty pipe
+	// content always wins (the FILE remains a name hint) per DR-0004 §6.
+	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && isStdinPipe(stdin) {
 		if opts.Write {
 			return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
 		}
@@ -427,11 +433,17 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 		// builtin" verdict would wrongly reject; widen the gate to
 		// "builtin matches OR a CLI block would match".
 		if pathHasAnyRule(inputs[0]) || cliRuleCoversFile(inputs[0], opts.RuleBlocks) {
-			ri, err := resolveFileFromStdinWithRules(inputs[0], stdin, opts.RuleBlocks)
+			ri, fellThrough, err := resolveFilePipeOrDisk(inputs[0], stdin, opts.RuleBlocks)
 			if err != nil {
 				return nil, err
 			}
-			return []resolvedInput{ri}, nil
+			if !fellThrough {
+				return []resolvedInput{ri}, nil
+			}
+			// Empty pipe + the path exists on disk: fall through to the
+			// normal positional-input loop below, which reads the file via
+			// resolveFileWithRules. (We do NOT return here so the standard
+			// path stays the single source of truth for on-disk reads.)
 		}
 	}
 
@@ -548,9 +560,10 @@ func checkDeadBlocks(blocks []ruleBlock, resolved []resolvedInput) error {
 }
 
 // statFileExists reports whether path resolves to a regular (non-directory)
-// file on disk. Mirrors the "exists as a file" gate used elsewhere in
-// resolveInputs so the stdin-pipe shortcut only fires for name-hint paths
-// that are NOT real files.
+// file on disk. Used by the empty-pipe branch of resolveFilePipeOrDisk to
+// decide between falling back to the on-disk file and erroring on a likely
+// typo'd path. Mirrors the "exists as a file" gate used elsewhere in
+// resolveInputs.
 func statFileExists(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && !fi.IsDir()

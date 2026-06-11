@@ -134,3 +134,58 @@ func TestRun_MissingFile_EmptyPipeErrorsWithHint(t *testing.T) {
 		t.Errorf("error should name the missing file and the empty pipe; got: %q", msg)
 	}
 }
+
+// Empty pipe + existing file + --write: the empty pipe falls through to the
+// on-disk path, where --write works as usual. This is the GHA run-step shape
+// (writer-less FIFO stdin) — patch FILE --write must be able to bump the
+// on-disk file there.
+func TestRun_ExistingFile_EmptyPipeWriteBumpsDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Cargo.toml")
+	onDisk := "[package]\nname = \"x\"\nversion = \"1.2.3\"\n"
+	if err := os.WriteFile(path, []byte(onDisk), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := pipeWith(t, "")
+	defer r.Close()
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"patch", path, "--write", "--no-hint"}, r, &stdout, &stderr); err != nil {
+		t.Fatalf("run error: %v\nstderr: %s", err, stderr.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "version = \"1.2.4\"") {
+		t.Errorf("on-disk file not bumped; content:\n%s", got)
+	}
+}
+
+// Non-empty pipe + --write stays rejected: the pipe content wins and there
+// is no on-disk target to write back to.
+func TestRun_NonEmptyPipeWriteStillRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Cargo.toml")
+	onDisk := "[package]\nname = \"x\"\nversion = \"9.9.9\"\n"
+	if err := os.WriteFile(path, []byte(onDisk), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := pipeWith(t, "[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
+	defer r.Close()
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"patch", path, "--write", "--no-hint"}, r, &stdout, &stderr)
+	if err == nil {
+		t.Fatalf("expected error, got success; stdout=%q", stdout.String())
+	}
+	if msg := err.Error(); !strings.Contains(msg, "--write is incompatible with stdin pipe input") {
+		t.Errorf("error = %q, want the --write incompatible message", msg)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != onDisk {
+		t.Errorf("on-disk file must stay untouched; content:\n%s", got)
+	}
+}

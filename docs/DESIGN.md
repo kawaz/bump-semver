@@ -121,7 +121,7 @@ Rule-body flags placed *before* the first `--define-rule` form the global defaul
 | `vcs commit -a` / `--all` | Error (DR-0020 safety: stage explicitly) |
 | `vcs push` with both `--branch` and `--bookmark` | Error (synonyms; pass one) |
 | Multiple INPUTs disagree | `version mismatch:` with column-aligned origin labels |
-| Single FILE INPUT + stdin pipe | FILE is a name hint, content read from stdin (legacy) |
+| Single FILE INPUT + stdin pipe | FILE is a name hint, content read from stdin (legacy); an empty pipe falls back to the on-disk FILE |
 | Multiple INPUTs + stdin pipe | stdin pipe is ignored (explicit INPUTs win, cat / sed convention) |
 | Otherwise | Proceed |
 
@@ -177,7 +177,7 @@ This lets `marketplace.json` outside `.claude-plugin/` still get tried as a Clau
 
 The currently supported formats are `json`, `toml`, `yaml`, `text` (`format_text.go`: plain whole-file content as in `VERSION`, plus the line-anchored regex rewriter from DR-0012 for single-line manifests like `*.cabal` / `*.spec` / `build.gradle` / `*.xcconfig`), `pbxproj` (DR-0015, Xcode multi-match), `xml` (DR-0015, Apple plist `<key>/<string>` pairs), and `xml-element` (DR-0018, slash-rooted XML path lookup used by `pom.xml` / `*.csproj`; `format_xml_element.go` / `format_xml_dotpath.go`). The `xml` and `xml-element` formats are intentionally separate: plist's flat key-value shape and Maven/.NET's nested-element shape have different evaluation rules, so each gets its own dispatcher case.
 
-When stdin is a pipe and exactly one FILE INPUT is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin (legacy shortcut). With multiple INPUTs the stdin pipe is ignored (explicit INPUTs take precedence, cat / sed convention). Passing `-` as an INPUT explicitly invokes the new "read VER from stdin" path.
+When stdin is a pipe and exactly one FILE INPUT is given, FILE is used **only** as a name hint for the dispatch above; the content is read from stdin (legacy shortcut). An empty pipe (e.g. a writer-less FIFO wired to a CI step's stdin) falls back to reading the on-disk FILE, where `--write` works as usual. With multiple INPUTs the stdin pipe is ignored (explicit INPUTs take precedence, cat / sed convention). Passing `-` as an INPUT explicitly invokes the new "read VER from stdin" path.
 
 ### Handler interface and consistency checks (DR-0004)
 

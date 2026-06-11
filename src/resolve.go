@@ -202,8 +202,10 @@ func resolveFileWithRules(file string, ruleBlocks []ruleBlock) (resolvedInput, e
 //     the empty pipe (so a typo'd path is diagnosable, not masked as a
 //     downstream "missing version").
 //
-// Writeback is never allowed through this path: --write is rejected by the
-// caller before we get here, so the resolved input's `file` stays empty.
+// Writeback is never allowed when the pipe content wins: the caller rejects
+// --write for that branch, so the resolved input's `file` stays empty. The
+// empty-pipe fall-through reaches the normal on-disk path where --write
+// works as usual.
 func resolveFilePipeOrDisk(file string, stdin io.Reader, ruleBlocks []ruleBlock) (ri resolvedInput, fellThrough bool, err error) {
 	content, err := io.ReadAll(stdin)
 	if err != nil {
@@ -415,9 +417,6 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 	// the on-disk file (if it exists); only then do we error. Non-empty pipe
 	// content always wins (the FILE remains a name hint) per DR-0004 §6.
 	if len(inputs) == 1 && inputs[0] != "-" && !strings.HasPrefix(inputs[0], "vcs:") && isStdinPipe(stdin) {
-		if opts.Write {
-			return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
-		}
 		// DR-0029: the stdin-pipe shortcut must also see CLI rule blocks
 		// so a user can apply --define-rule to a piped file (otherwise
 		// `cat my.txt | bump-semver get my.txt --define-rule ...` would
@@ -438,6 +437,13 @@ func resolveInputs(inputs []string, stdin io.Reader, opts resolveInputsOpts) ([]
 				return nil, err
 			}
 			if !fellThrough {
+				// The pipe content won: there is no on-disk target to write
+				// back to, so --write cannot be honoured. An empty pipe falls
+				// through to the on-disk file where --write works as usual
+				// (e.g. CI runners that wire a writer-less FIFO to stdin).
+				if opts.Write {
+					return nil, fmt.Errorf("--write is incompatible with stdin pipe input")
+				}
 				return []resolvedInput{ri}, nil
 			}
 			// Empty pipe + the path exists on disk: fall through to the

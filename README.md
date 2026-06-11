@@ -521,7 +521,7 @@ With `--write`, only **FILE-origin inputs** are written back; VER and stdin inpu
 
 ### stdin pipe
 
-When stdin is a pipe **and exactly one FILE INPUT is given**, that FILE is treated as a name hint and content is read from stdin (legacy shortcut, kept for backward compatibility). With multiple INPUTs the stdin pipe is ignored. Useful for comparing across revisions without checking out the file:
+When stdin is a pipe **and exactly one FILE INPUT is given**, that FILE is treated as a name hint and content is read from stdin (legacy shortcut, kept for backward compatibility). If the pipe yields no content (e.g. CI runners wire a writer-less FIFO to a step's stdin), the on-disk FILE is read instead — and `--write` works against it as usual. With multiple INPUTs the stdin pipe is ignored. Useful for comparing across revisions without checking out the file:
 
 ```bash
 jj file show v0.1.0 Cargo.toml | bump-semver get Cargo.toml

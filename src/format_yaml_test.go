@@ -268,6 +268,40 @@ func TestYamlReplace_QuotedCurrentMatches(t *testing.T) {
 	}
 }
 
+// TestYamlReplace_CRLF confirms a CRLF-terminated bare scalar rewrites
+// correctly. Inspect (via yaml.Unmarshal) reports the value without the
+// trailing `\r`, so the current-value assertion must compare against
+// `1.2.3`, not `1.2.3\r`. yamlValueRange must trim the `\r` from the bare
+// scalar range, otherwise matched=="1.2.3\r" != current=="1.2.3" rejects
+// the rewrite. The CRLF line terminator must be preserved in the output.
+func TestYamlReplace_CRLF(t *testing.T) {
+	t.Parallel()
+	in := []byte("version: 1.2.3\r\nname: foo\r\n")
+	// Use the value Inspect actually reads as the asserted current, mirroring
+	// the real --write call path (Inspect → Replace with that current).
+	insp, err := inspectVia("Chart.yaml", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if len(insp.Versions) != 1 {
+		t.Fatalf("expected 1 version, got %d (%v)", len(insp.Versions), insp.Versions)
+	}
+	current := insp.Versions[0].Value
+	if current != "1.2.3" {
+		t.Fatalf("Inspect read current %q, want 1.2.3 (yaml strips \\r)", current)
+	}
+	out, err := replaceVia("Chart.yaml", in, current, "1.2.4")
+	if err != nil {
+		t.Fatalf("Replace error (CRLF false-positive guard regression): %v", err)
+	}
+	if !strings.Contains(string(out), "version: 1.2.4\r\n") {
+		t.Errorf("CRLF not preserved or value not bumped:\n%q", string(out))
+	}
+	if strings.Contains(string(out), "1.2.4\r\r") || strings.Contains(string(out), "version: 1.2.4\n") {
+		t.Errorf("CR mis-handled (doubled or dropped):\n%q", string(out))
+	}
+}
+
 // TestYamlInspect_MultiDocumentTakesFirst documents the DR-0011 design
 // decision: only the first document is examined, so the second
 // document's `version:` is ignored.

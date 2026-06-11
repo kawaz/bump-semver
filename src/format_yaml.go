@@ -197,8 +197,13 @@ func yamlValueRange(tail []byte, base int) (start, end int, ok bool) {
 				break
 			}
 		}
-		// Trim trailing whitespace.
-		for valEnd > valStart && (tail[valEnd-1] == ' ' || tail[valEnd-1] == '\t') {
+		// Trim trailing whitespace, including a CR so a CRLF-terminated
+		// line (`version: 1.2.3\r\n`) yields the bare value `1.2.3` rather
+		// than `1.2.3\r`. Without the `\r`, the current-value assertion in
+		// yamlReplace mis-rejects CRLF files (Inspect strips `\r`, the range
+		// kept it), and a rewrite would otherwise leave the CR embedded in
+		// the value.
+		for valEnd > valStart && (tail[valEnd-1] == ' ' || tail[valEnd-1] == '\t' || tail[valEnd-1] == '\r') {
 			valEnd--
 		}
 		if valEnd <= valStart {

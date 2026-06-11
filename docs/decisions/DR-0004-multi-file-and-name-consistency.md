@@ -105,6 +105,11 @@ DR-0001 では「stdin pipe + 単一 FILE = FILE は名前ヒント、内容は 
 
 ### 7. `--write` 時の挙動
 
+> **Superseded-in-part by DR-0035**: 「rollback ロジックは持たない」判断は維持。ただし
+> 「各 file を逐次 Replace+書き戻し」する部分は DR-0035 で二相化 (全 file の Replace を
+> 先に計算 → all-or-nothing) + アトミック書き込み (temp + rename) に置き換えた
+> (prevention 追加)。下記の記述はその範囲で更新済みと読むこと。
+
 - 全 file の全 version field を新 version で書き換え
 - 各 file は順次書き戻し、途中失敗時はそのまま `replace <file>: <reason>` で exit non-zero
 - **rollback ロジックは持たない**。jj / git で容易に復元できるため、bump-semver 内に複雑さを持ち込まない方針

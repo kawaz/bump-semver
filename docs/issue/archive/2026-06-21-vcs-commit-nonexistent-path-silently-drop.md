@@ -1,6 +1,6 @@
 ---
 title: vcs commit が削除された path を黙殺する (nonexistent-path silently drop の考慮漏れ)
-status: wip
+status: resolved
 category: bug
 created: 2026-06-21T12:15:49+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-06-21T12:22:31+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-06-21T12:44:43+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0037","implemented","done:test 781件 PASS (新規11件追加)、実機4シナリオ確認済。利用リポ移行は v0.39.0 リリース後に別途対応。claude-local-issue 側 --staged workaround 撤去も後続作業"]
 blocked_by:
 origin: 自リポ TODO
 ---

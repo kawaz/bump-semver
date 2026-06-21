@@ -266,6 +266,39 @@ func (j *jjBackend) IsClean() (bool, error) {
 	}
 }
 
+// validateNonexistentPaths errors when a path is neither present on the
+// filesystem nor tracked at @-. Used in the default (!allowNonexistentPath)
+// Commit path mode to surface typos that jj's diff-summary gate would
+// otherwise silently swallow as a "no diff → no-op" success.
+//
+// DR-0037 follow-up: git's `git add -A -- PATHS` naturally errors on truly
+// unknown paths, but jj's `jj diff --summary -- PATHS` returns empty for
+// both "tracked but no change" and "unknown / untracked". Without this
+// pre-check the jj backend would silently accept typos (Codex stop-time
+// review caught this asymmetry between the two backends).
+//
+// "Tracked at @-" is the right reference (not @): a path the user just
+// deleted is no longer tracked at @ after snapshot, but is still tracked
+// at @- — exactly the deletion-in-progress case this DR exists to support.
+func (j *jjBackend) validateNonexistentPaths(paths []string) error {
+	var missing []string
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			continue // exists on filesystem (jj snapshot will pick it up)
+		}
+		out, err := runBackendCmd("jj", "file", "list", "-r", "@-", "--", p)
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) > 0 {
+		return &exitErr{code: exitCodeVCSExec,
+			msg: fmt.Sprintf("jj: pathspec(s) did not match any tracked or filesystem files: %s (use --allow-nonexistent-path to silently drop)",
+				strings.Join(missing, ", "))}
+	}
+	return nil
+}
+
 // --- Commit implementations (DR-0020 PR-4) --------------------------------
 
 // Commit (jj) records the requested change set. See the interface comment
@@ -308,14 +341,18 @@ func (j *jjBackend) Commit(opts commitOpts) error {
 	// paths mode.
 	// --allow-nonexistent-path: legacy declarative-convergence — filter to
 	// filesystem-visible paths first (deleted tracked files are dropped).
-	// Default (no flag): forward all paths as-is; jj filesets handle
-	// modified/new/deleted uniformly and error on truly unknown paths.
+	// Default (no flag): forward all paths as-is; validateNonexistentPaths
+	// pre-checks that each path is either present on the filesystem or
+	// tracked at @-, so jj's diff-summary gate (which can't distinguish
+	// "no change" from "unknown path") doesn't silently swallow typos.
 	paths := opts.paths
 	if opts.allowNonexistentPath {
 		paths = filterExistingPaths(opts.paths)
 		if len(paths) == 0 {
 			return nil // all-nonexistent → no-op success (legacy behaviour)
 		}
+	} else if err := j.validateNonexistentPaths(opts.paths); err != nil {
+		return err
 	}
 	// Gate via `jj diff --summary` over the same paths: if it produces no
 	// output, there is nothing to commit even after path filtering.
@@ -367,6 +404,8 @@ func (j *jjBackend) commitAmend(opts commitOpts) error {
 			if len(paths) == 0 {
 				return nil // all-nonexistent → no-op success (legacy behaviour)
 			}
+		} else if err := j.validateNonexistentPaths(opts.paths); err != nil {
+			return err
 		}
 		gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, paths...)
 		gateOut, err := runBackendCmd("jj", gateArgs...)

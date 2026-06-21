@@ -505,10 +505,11 @@ func TestJjBackend_Commit_Paths(t *testing.T) {
 	})
 }
 
-// TestJjBackend_Commit_Paths_NonexistentOnly: every supplied path is
-// nonexistent. Unlike git, jj's diff gate returns empty for unknown paths
-// (no error), so the result is a no-op under both the new default and with
-// --allow-nonexistent-path. @ id must stay the same (no new change created).
+// TestJjBackend_Commit_Paths_NonexistentOnly: under the new default a path
+// neither on the filesystem nor tracked at @- must error (parity with git
+// backend). jj's diff-summary gate returns empty for both "no change" and
+// "unknown path", so without the validateNonexistentPaths pre-check this
+// case would silently swallow typos.
 func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
@@ -518,8 +519,31 @@ func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 	withCwd(t, dir, func() {
 		before, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
 		b := &jjBackend{}
-		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost"}); err != nil {
-			t.Errorf("nonexistent-only Commit should succeed (idempotent), got: %v", err)
+		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost"}); err == nil {
+			t.Errorf("expected error for unknown path under new default, got nil")
+		}
+		after, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		if string(before) != string(after) {
+			t.Errorf("expected @ unchanged on error, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Paths_NonexistentOnly_AllowFlag: with
+// --allow-nonexistent-path, the legacy no-op behaviour is preserved
+// (declarative convergence).
+func TestJjBackend_Commit_Paths_NonexistentOnly_AllowFlag(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost", allowNonexistentPath: true}); err != nil {
+			t.Errorf("nonexistent-only Commit with allow flag should succeed (idempotent), got: %v", err)
 		}
 		after, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
 		if string(before) != string(after) {
@@ -770,8 +794,8 @@ func TestJjBackend_Commit_Amend_Paths_NoEdit(t *testing.T) {
 	})
 }
 
-// TestJjBackend_Commit_Amend_Paths_NonexistentOnly: all-nonexistent
-// PATH list during amend → no-op, @- and @ unchanged.
+// TestJjBackend_Commit_Amend_Paths_NonexistentOnly: under the new default
+// an unknown path during amend must error (parity with git backend).
 func TestJjBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
@@ -782,13 +806,37 @@ func TestJjBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
 		beforeParent, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
 		beforeWc, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
 		b := &jjBackend{}
-		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}}); err != nil {
-			t.Errorf("nonexistent-only amend Commit should succeed (idempotent), got: %v", err)
+		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}}); err == nil {
+			t.Errorf("expected error for unknown path under new default amend, got nil")
 		}
 		afterParent, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
 		afterWc, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
 		if string(beforeParent) != string(afterParent) || string(beforeWc) != string(afterWc) {
-			t.Errorf("expected @ and @- unchanged for nonexistent-only amend (jj)")
+			t.Errorf("expected @ and @- unchanged on error (jj)")
+		}
+	})
+}
+
+// TestJjBackend_Commit_Amend_Paths_NonexistentOnly_AllowFlag: with
+// --allow-nonexistent-path, amend with all-nonexistent paths is the
+// legacy no-op (no movement of @ or @-).
+func TestJjBackend_Commit_Amend_Paths_NonexistentOnly_AllowFlag(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		beforeParent, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
+		beforeWc, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}, allowNonexistentPath: true}); err != nil {
+			t.Errorf("nonexistent-only amend with allow flag should succeed (idempotent), got: %v", err)
+		}
+		afterParent, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "change_id")
+		afterWc, _ := runBackendCmd("jj", "log", "-r", "@", "--no-graph", "-T", "change_id")
+		if string(beforeParent) != string(afterParent) || string(beforeWc) != string(afterWc) {
+			t.Errorf("expected @ and @- unchanged for nonexistent-only amend with allow flag (jj)")
 		}
 	})
 }

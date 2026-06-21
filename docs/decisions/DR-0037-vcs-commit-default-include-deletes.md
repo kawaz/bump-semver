@@ -62,6 +62,18 @@ grep 調査の結果 (issue 参照):
 
 移行コストは小さい。bump 系 justfile は 1 リポ 1 行が大半で、対象リポは限定的。
 
+### jj backend 固有の補強 (v0.39.1)
+
+git の `git add -A -- PATHS` は unknown path で fatal error を返す (= 反転後デフォルトと自然に整合) が、jj の `jj diff --summary -- PATHS` は **unknown path も「変更なし」も同じ空 output を返す**。そのため新デフォルト経路で typo な path を渡すと、jj backend は silent no-op (exit 0) で受け流してしまう非対称が残っていた (Codex stop-time review 指摘)。
+
+v0.39.1 で jj backend に `validateNonexistentPaths` を追加し、新デフォルト経路の事前段階で「filesystem 不在 **かつ** `@-` で tracked でない」path を typo と判定して exit 3 化。両 backend で挙動が完全に揃った:
+
+- filesystem 上にある path → そのまま jj/git に渡す (modify / new add)
+- filesystem 不在 + `@-` で tracked → 削除として commit に含める
+- filesystem 不在 + tracked でもない → typo として exit 3、`--allow-nonexistent-path` 案内付き
+
+`--allow-nonexistent-path` 経路 (= 旧挙動) は不変。
+
 ### `vcs diff` の declarative-convergence は変更しない
 
 `filterExistingPaths` は `vcs diff` (DR-0020 PR-3) 用途では維持される。DR-0020 PR-3 の仕様 「存在しない PATH は無視」は diff verb の意図と整合しており、本 DR の影響を受けない。本 DR は `vcs commit` の path mode にのみ作用する。

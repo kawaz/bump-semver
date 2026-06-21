@@ -339,8 +339,11 @@ Usage:
 
 Modes:
   PATH..        Commit the working-tree content of the listed paths only.
-                Nonexistent paths are silently dropped. All-nonexistent OR
-                no actual change → exit 0, no commit (idempotent).
+                All paths are forwarded to the VCS as-is: deleted tracked
+                files are committed as deletions, and truly unknown paths
+                cause a VCS error. No actual change → exit 0, no commit
+                (idempotent). Pass --allow-nonexistent-path to restore the
+                legacy behaviour of silently dropping missing paths.
   --staged      Commit all staged/dirty changes at once.
                   git: commits the index (anything previously 'git add'-ed).
                   jj:  commits the entire @ snapshot (jj auto-stages).
@@ -361,7 +364,8 @@ const vcsCommitExamples = `  bump-semver vcs commit -m "bump version" VERSION Ca
   bump-semver vcs commit --staged -m "release: 1.2.3"
   bump-semver vcs commit --amend                # fold all into previous, keep message
   bump-semver vcs commit --amend -m "release: 1.2.3 (final)"
-  bump-semver vcs commit --amend VERSION        # fold ONLY VERSION into previous`
+  bump-semver vcs commit --amend VERSION        # fold ONLY VERSION into previous
+  bump-semver vcs commit --allow-nonexistent-path -m "bump" VERSION Cargo.toml  # skip missing`
 
 const vcsFetchLong = `bump-semver vcs fetch — refresh refs from a remote (git/jj-agnostic)
 

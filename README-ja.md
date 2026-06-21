@@ -160,17 +160,17 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION 変更なし"
 
 | モード | 動作 |
 |---|---|
-| `-m MSG PATH..` | 指定 path の working-tree 内容だけを stage + commit。存在しない path は黙ってスキップ (宣言的収束)。全 path 不在 / 全部変更なし → exit 0 (commit せず冪等成功) |
+| `-m MSG PATH..` | 指定 path を stage + commit。削除済み tracked file は削除として commit される。全く存在しない path は VCS エラーになる (git 文脈に合わせた新デフォルト)。全変更なし → exit 0 (commit せず冪等成功)。`--allow-nonexistent-path` を付けると旧来の「存在しない path を黙ってスキップ (宣言的収束)」挙動に戻る |
 | `-m MSG --staged` | staged / dirty な変更を一括 commit。**git**: index を commit。**jj**: `@` 全体を commit (jj は自動 stage)。内容なし → exit 0 (冪等) |
-| `--amend [-m MSG] [PATH.. \| --staged]` | 新規 commit を作る代わりに直前 commit へ吸収する。上 2 モードと**完全対称** — `--amend` でも `PATH..` / `--staged` 同じ selector を受理する。素の `--amend` は明示 rewrite (gate なし、message-only amend も合法)。吸収範囲は backend で異なる — **git**: staged の index を HEAD に吸収 (未 stage の worktree 変更は **含まない**、`--staged` と同じスコープ)。**jj**: `@` snapshot 全体を `@-` に吸収 (jj は自動 stage なので全変更が吸収対象)。`--amend PATH..` は指定 path のみを吸収 (path モードと同じ「全 path 不在 / 全変更なし → no-op」ルールが効く)。`--amend --staged` は素の `--amend` の明示的シノニム (= 吸収元は index / `@` snapshot そのもの)。`-m` ありで直前メッセージを上書き、なしで保持。等価コマンド: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`、jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
+| `--amend [-m MSG] [PATH.. \| --staged]` | 新規 commit を作る代わりに直前 commit へ吸収する。上 2 モードと**完全対称** — `--amend` でも `PATH..` / `--staged` 同じ selector を受理する。素の `--amend` は明示 rewrite (gate なし、message-only amend も合法)。吸収範囲は backend で異なる — **git**: staged の index を HEAD に吸収 (未 stage の worktree 変更は **含まない**、`--staged` と同じスコープ)。**jj**: `@` snapshot 全体を `@-` に吸収 (jj は自動 stage なので全変更が吸収対象)。`--amend PATH..` は指定 path のみを吸収 (path モードと同じ「全変更なし → no-op」ルールが効く)。`--amend --staged` は素の `--amend` の明示的シノニム (= 吸収元は index / `@` snapshot そのもの)。`-m` ありで直前メッセージを上書き、なしで保持。等価コマンド: git → `git add -A -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`、jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
 
 **`-a` / `--all` は意図的に非提供** (DR-0020 安全設計)。jj の「カレントコミット=自動 stage」世界観だと `-a` の unstaged 巻き込み挙動は事故を招きやすいため、`--staged` (全変更を commit) または `PATH..` を明示する形に絞っている。`-a` を渡すと exit 2 + `--staged` / `PATH..` への誘導 hint を返す。
 
-path / `--staged` モードの empty-no-op ルールにより、以下のような言語横断スニペットが安全に書ける:
+複数の version file 候補を並べて「存在するものだけ commit、無いものはスキップ」したい場合は `--allow-nonexistent-path` を使う:
 
 ```bash
 # version 関連ファイルが「あれば commit、無ければスルー」(プロジェクトに依存しない)
-bump-semver vcs commit -m "bump version" VERSION Cargo.toml package.json pyproject.toml
+bump-semver vcs commit --allow-nonexistent-path -m "bump version" VERSION Cargo.toml package.json pyproject.toml
 ```
 
 `vcs commit` の終了コード: `0` 成功 or 冪等 no-op; `2` usage エラー (`-m` 欠如 / `-a` 拒否 / `--staged + PATH` / mode 未指定); `3` VCS 実行エラー (リポではない、commit 失敗)。

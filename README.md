@@ -160,23 +160,23 @@ bump-semver vcs diff -q HEAD~1 -- VERSION && echo "VERSION unchanged"
 
 | Mode | Behaviour |
 |---|---|
-| `-m MSG PATH..` | Stage + commit each existing path's working-tree content. Nonexistent paths silently dropped (declarative convergence). All-nonexistent / no real change → exit 0 with no commit (idempotent) |
+| `-m MSG PATH..` | Stage + commit the listed paths. Deleted tracked files are committed as deletions; truly unknown paths cause a VCS error. No real change → exit 0 with no commit (idempotent). Pass `--allow-nonexistent-path` to restore the legacy behaviour of silently dropping missing paths (declarative-convergence opt-in) |
 | `-m MSG --staged` | Commit every staged/dirty change in one shot. **git**: commits the index. **jj**: commits the whole `@` snapshot (jj auto-stages). No content → exit 0, idempotent |
-| `--amend [-m MSG] [PATH.. \| --staged]` | Fold the current change into the previous commit instead of creating a new one. Fully symmetric with the two modes above — `--amend` accepts the same `PATH..` / `--staged` selectors. Bare `--amend` is an explicit rewrite (ungated; message-only amend with no change is legal); the absorbed scope follows the backend — **git**: folds the staged index into HEAD (unstaged worktree changes are NOT included); **jj**: folds the entire `@` snapshot into `@-` (jj auto-stages, so this IS every current change). `--amend PATH..` folds only those paths (same all-nonexistent / no-change → no-op rule as plain path mode). `--amend --staged` is an explicit synonym for bare amend (the index / `@` snapshot IS amend's absorption source). With `-m`: rewrite the previous commit's message; without: preserve it. Equivalences: git → `git add -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`; jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
+| `--amend [-m MSG] [PATH.. \| --staged]` | Fold the current change into the previous commit instead of creating a new one. Fully symmetric with the two modes above — `--amend` accepts the same `PATH..` / `--staged` selectors. Bare `--amend` is an explicit rewrite (ungated; message-only amend with no change is legal); the absorbed scope follows the backend — **git**: folds the staged index into HEAD (unstaged worktree changes are NOT included); **jj**: folds the entire `@` snapshot into `@-` (jj auto-stages, so this IS every current change). `--amend PATH..` folds only those paths (same no-change → no-op rule as plain path mode). `--amend --staged` is an explicit synonym for bare amend (the index / `@` snapshot IS amend's absorption source). With `-m`: rewrite the previous commit's message; without: preserve it. Equivalences: git → `git add -A -- PATHS; git commit --amend [-m\|--no-edit] -- PATHS`; jj → `jj squash --from @ --into @- [-m MSG \| -u] [-- PATHS]` |
 
 **`-a` / `--all` is intentionally not provided** (DR-0020 safety). jj's auto-staged worldview makes `-a`'s unstaged-grab semantic too easy to trip on; use `--staged` (commit all current changes) or pass `PATH..` explicitly. Calling `-a` exits 2 with a hint pointing at `--staged` / `PATH..`.
 
-The empty-no-op rule for path / `--staged` modes makes this snippet portable across languages:
+To commit whatever version-bearing files exist (skipping absent ones), use `--allow-nonexistent-path`:
 
 ```bash
-# Commit whatever version-bearing files exist & changed; safe if some don't apply
-bump-semver vcs commit -m "bump version" VERSION Cargo.toml package.json pyproject.toml
+# Commit whichever version files are present; absent ones are silently skipped
+bump-semver vcs commit --allow-nonexistent-path -m "bump version" VERSION Cargo.toml package.json pyproject.toml
 ```
 
-Exit codes for `vcs commit`: `0` success or idempotent no-op; `2` usage error (missing `-m`, `-a` rejected, `--staged + PATH`, no-mode); `3` VCS subprocess error (not a repo, commit failed).
+Exit codes for `vcs commit`: `0` success or idempotent no-op; `2` usage error (missing `-m`, `-a` rejected, `--staged + PATH`, no-mode); `3` VCS subprocess error (not a repo, unknown path, commit failed).
 
 ```bash
-bump-semver vcs commit -m "bump 1.2.3" VERSION         # commit just VERSION
+bump-semver vcs commit -m "bump 1.2.3" VERSION         # commit just VERSION (errors if missing)
 bump-semver vcs commit --staged -m "release: 1.2.3"     # commit everything staged
 bump-semver vcs commit --amend                          # absorb (git: index; jj: @) into previous, keep msg
 bump-semver vcs commit --amend -m "release: 1.2.3 (final)"  # rewrite previous msg

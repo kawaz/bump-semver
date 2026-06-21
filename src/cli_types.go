@@ -124,10 +124,11 @@ type vcsDiffOpts struct {
 // runVcsCmdCommit needs the distinction for the --amend "keep
 // existing message" path (noEdit = amend && Message == nil).
 type vcsCommitOpts struct {
-	Message *string
-	Staged  bool
-	Amend   bool
-	DashA   bool
+	Message              *string
+	Staged               bool
+	Amend                bool
+	DashA                bool
+	AllowNonexistentPath bool
 }
 
 // vcsPushOpts groups verb-local flags for `vcs push` (DR-0020 PR-5 /

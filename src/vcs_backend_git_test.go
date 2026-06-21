@@ -468,8 +468,80 @@ func TestGitBackend_Commit_Paths_NewFile(t *testing.T) {
 	})
 }
 
+// TestGitBackend_Commit_Paths_DeletedTracked: a tracked file deleted from the
+// filesystem (D status) is committed as a deletion when passed by path. This
+// is the primary motivation for the default-behaviour reversal: the old
+// filterExistingPaths dropped deleted files silently, causing missed deletes.
+func TestGitBackend_Commit_Paths_DeletedTracked(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	// Delete the tracked VERSION file.
+	if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"VERSION"}, message: "delete version"}); err != nil {
+			t.Fatalf("Commit deleted path: %v", err)
+		}
+		// HEAD should contain a deletion of VERSION.
+		out, _ := runBackendCmd("git", "log", "-1", "--diff-filter=D", "--name-only", "--pretty=")
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("expected VERSION deleted in HEAD commit, got: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Paths_DeletedTracked_AllowFlagDrops: with
+// --allow-nonexistent-path a deleted tracked file is silently dropped (old
+// behaviour): the deletion does NOT make it into the commit.
+func TestGitBackend_Commit_Paths_DeletedTracked_AllowFlagDrops(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	// Add another tracked file so we have something to commit.
+	if err := writeFile(filepath.Join(dir, "other.txt"), "hello\n"); err != nil {
+		t.Fatal(err)
+	}
+	runIn(t, dir, "git", "add", "other.txt")
+	runIn(t, dir, "git", "-c", "user.name=T", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qm", "add other")
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Delete the tracked VERSION file.
+	if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		// With flag: VERSION (deleted) is dropped, other.txt committed alone.
+		if err := b.Commit(commitOpts{paths: []string{"VERSION", "other.txt"}, message: "partial", allowNonexistentPath: true}); err != nil {
+			t.Fatalf("Commit with allow flag: %v", err)
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) == string(after) {
+			t.Errorf("expected a new commit (other.txt should be committed)")
+		}
+		out, _ := runBackendCmd("git", "log", "-1", "--name-only", "--pretty=")
+		if strings.Contains(string(out), "VERSION") {
+			t.Errorf("VERSION delete should NOT be in commit with allow flag: %q", string(out))
+		}
+		if !strings.Contains(string(out), "other.txt") {
+			t.Errorf("other.txt should be in commit: %q", string(out))
+		}
+	})
+}
+
 // TestGitBackend_Commit_Paths_NonexistentOnly: every supplied path is
-// nonexistent → no commit, no error (declarative convergence).
+// nonexistent (never tracked) → error under the new default (git errors on
+// truly unknown paths). With --allow-nonexistent-path the old no-op
+// behaviour is preserved.
 func TestGitBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
@@ -477,11 +549,35 @@ func TestGitBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 	}
 	dir := setupGitRepo(t, nil, "1.0.0")
 	withCwd(t, dir, func() {
-		// Capture pre-state.
 		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
 		b := &gitBackend{}
-		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost"}); err != nil {
-			t.Errorf("nonexistent-only Commit should succeed (idempotent), got: %v", err)
+		// New default: git errors on truly unknown paths.
+		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost"}); err == nil {
+			t.Errorf("expected error for truly unknown path under new default, got nil")
+		}
+		// HEAD must not advance.
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("expected no new commit, HEAD before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Paths_NonexistentOnly_AllowFlag: with
+// --allow-nonexistent-path the legacy no-op behaviour is preserved: every
+// path filtered → exit 0, no commit.
+func TestGitBackend_Commit_Paths_NonexistentOnly_AllowFlag(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"no-such.txt"}, message: "ghost", allowNonexistentPath: true}); err != nil {
+			t.Errorf("nonexistent-only Commit with allow flag should succeed (idempotent), got: %v", err)
 		}
 		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
 		if string(before) != string(after) {
@@ -491,9 +587,11 @@ func TestGitBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 	})
 }
 
-// TestGitBackend_Commit_Paths_PartialExist: a mix of existing and
-// nonexistent paths commits only the existing ones (no error).
-func TestGitBackend_Commit_Paths_PartialExist(t *testing.T) {
+// TestGitBackend_Commit_Paths_PartialExist_AllowFlag: with
+// --allow-nonexistent-path a mix of existing and nonexistent paths commits
+// only the existing ones (no error). This preserves the legacy
+// declarative-convergence behaviour.
+func TestGitBackend_Commit_Paths_PartialExist_AllowFlag(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -504,8 +602,8 @@ func TestGitBackend_Commit_Paths_PartialExist(t *testing.T) {
 	}
 	withCwd(t, dir, func() {
 		b := &gitBackend{}
-		if err := b.Commit(commitOpts{paths: []string{"VERSION", "no-such.txt"}, message: "bump+ghost"}); err != nil {
-			t.Fatalf("Commit partial: %v", err)
+		if err := b.Commit(commitOpts{paths: []string{"VERSION", "no-such.txt"}, message: "bump+ghost", allowNonexistentPath: true}); err != nil {
+			t.Fatalf("Commit partial with allow flag: %v", err)
 		}
 		out, _ := runBackendCmd("git", "log", "-1", "--name-only", "--pretty=")
 		if !strings.Contains(string(out), "VERSION") {
@@ -513,6 +611,33 @@ func TestGitBackend_Commit_Paths_PartialExist(t *testing.T) {
 		}
 		if strings.Contains(string(out), "no-such.txt") {
 			t.Errorf("HEAD should not mention nonexistent path: %q", string(out))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Paths_PartialExist_DefaultErrors: under the new
+// default, passing a mix of existing and truly nonexistent paths causes git
+// to error (the nonexistent path is not silently dropped).
+func TestGitBackend_Commit_Paths_PartialExist_DefaultErrors(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "VERSION"), "2.0.0\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"VERSION", "no-such.txt"}, message: "bump+ghost"}); err == nil {
+			t.Errorf("expected error for nonexistent path under new default, got nil")
+		}
+		// HEAD must not advance.
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("expected no new commit on error, HEAD before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
 		}
 	})
 }
@@ -704,10 +829,9 @@ func TestGitBackend_Commit_Amend_Paths_NewFile(t *testing.T) {
 	})
 }
 
-// TestGitBackend_Commit_Amend_Paths_NonexistentOnly: all-nonexistent
-// PATH list during amend → no-op, no HEAD movement (mirrors non-amend
-// path-mode declarative convergence; differs from bare `--amend` which
-// is an ungated explicit rewrite).
+// TestGitBackend_Commit_Amend_Paths_NonexistentOnly: truly nonexistent
+// PATH list during amend → error under the new default. With
+// --allow-nonexistent-path the old no-op behaviour is preserved.
 func TestGitBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
@@ -717,8 +841,33 @@ func TestGitBackend_Commit_Amend_Paths_NonexistentOnly(t *testing.T) {
 	withCwd(t, dir, func() {
 		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
 		b := &gitBackend{}
-		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}}); err != nil {
-			t.Errorf("nonexistent-only amend Commit should succeed (idempotent), got: %v", err)
+		// New default: git errors on truly unknown paths.
+		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}}); err == nil {
+			t.Errorf("expected error for truly unknown path under new default, got nil")
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("HEAD should not advance, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestGitBackend_Commit_Amend_Paths_NonexistentOnly_AllowFlag: with
+// --allow-nonexistent-path the legacy no-op behaviour is preserved: every
+// path filtered → exit 0, no HEAD movement (mirrors non-amend; differs from
+// bare --amend which is an ungated explicit rewrite).
+func TestGitBackend_Commit_Amend_Paths_NonexistentOnly_AllowFlag(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		b := &gitBackend{}
+		if err := b.Commit(commitOpts{amend: true, message: "ghost", paths: []string{"no-such.txt"}, allowNonexistentPath: true}); err != nil {
+			t.Errorf("nonexistent-only amend Commit with allow flag should succeed (idempotent), got: %v", err)
 		}
 		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
 		if string(before) != string(after) {

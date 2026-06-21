@@ -1,7 +1,8 @@
 # DR-0020: `vcs` サブコマンド群 (git/jj を吸収するリリース/push 定型操作)
 
-- Status: Active (未実装、ROADMAP 参照)
+- Status: Active (PR-1〜PR-6 land 済、PR-7 残。Commit path mode は DR-0037 で反転)
 - Date: 2026-05-30
+- Updated: DR-0037 (2026-06-21) — `vcs commit` の path mode (PR-4 の declarative-convergence) を反転。Diff 等他 mode は本 DR のまま維持
 
 ## Context
 

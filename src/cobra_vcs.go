@@ -215,6 +215,7 @@ func newVcsCommitCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 	f.BoolVar(&args.vcsCommit.Staged, "staged", false, "commit all staged/dirty changes at once")
 	f.BoolVar(&args.vcsCommit.Amend, "amend", false, "fold the change into the previous commit")
 	f.BoolVarP(&args.vcsCommit.DashA, "all", "a", false, "rejected by design: use --staged")
+	f.BoolVar(&args.vcsCommit.AllowNonexistentPath, "allow-nonexistent-path", false, "silently drop PATH args that don't exist on the filesystem (legacy bump declarative-convergence behaviour)")
 	applyVcsVerbHelp(cmd)
 	return cmd
 }

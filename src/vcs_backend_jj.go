@@ -306,13 +306,20 @@ func (j *jjBackend) Commit(opts commitOpts) error {
 		return nil
 	}
 	// paths mode.
-	existing := filterExistingPaths(opts.paths)
-	if len(existing) == 0 {
-		return nil
+	// --allow-nonexistent-path: legacy declarative-convergence — filter to
+	// filesystem-visible paths first (deleted tracked files are dropped).
+	// Default (no flag): forward all paths as-is; jj filesets handle
+	// modified/new/deleted uniformly and error on truly unknown paths.
+	paths := opts.paths
+	if opts.allowNonexistentPath {
+		paths = filterExistingPaths(opts.paths)
+		if len(paths) == 0 {
+			return nil // all-nonexistent → no-op success (legacy behaviour)
+		}
 	}
 	// Gate via `jj diff --summary` over the same paths: if it produces no
 	// output, there is nothing to commit even after path filtering.
-	gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, existing...)
+	gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, paths...)
 	gateOut, err := runBackendCmd("jj", gateArgs...)
 	if err != nil {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
@@ -320,7 +327,7 @@ func (j *jjBackend) Commit(opts commitOpts) error {
 	if strings.TrimSpace(string(gateOut)) == "" {
 		return nil
 	}
-	commitArgs := append([]string{"commit", "-m", opts.message}, existing...)
+	commitArgs := append([]string{"commit", "-m", opts.message}, paths...)
 	if _, err := runBackendCmd("jj", commitArgs...); err != nil {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
@@ -353,11 +360,15 @@ func (j *jjBackend) commitAmend(opts commitOpts) error {
 	// Path-scoped amend: gate first so all-nonexistent / no-change is
 	// a no-op (declarative convergence, mirrors non-amend path mode).
 	if len(opts.paths) > 0 {
-		existing := filterExistingPaths(opts.paths)
-		if len(existing) == 0 {
-			return nil
+		// Apply the same allowNonexistentPath logic as non-amend path mode.
+		paths := opts.paths
+		if opts.allowNonexistentPath {
+			paths = filterExistingPaths(opts.paths)
+			if len(paths) == 0 {
+				return nil // all-nonexistent → no-op success (legacy behaviour)
+			}
 		}
-		gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, existing...)
+		gateArgs := append([]string{"diff", "--summary", "--from", "@-", "--to", "@", "--"}, paths...)
 		gateOut, err := runBackendCmd("jj", gateArgs...)
 		if err != nil {
 			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
@@ -372,7 +383,7 @@ func (j *jjBackend) commitAmend(opts commitOpts) error {
 			args = append(args, "-m", opts.message)
 		}
 		args = append(args, "--")
-		args = append(args, existing...)
+		args = append(args, paths...)
 		if _, err := runBackendCmd("jj", args...); err != nil {
 			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 		}

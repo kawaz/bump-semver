@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -165,9 +166,9 @@ func TestRun_VcsCommit_Paths_Git(t *testing.T) {
 	})
 }
 
-// TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent: all-nonexistent
-// PATH list → exit 0, no HEAD movement (declarative convergence).
-func TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent(t *testing.T) {
+// TestRun_VcsCommit_Paths_NonexistentOnly_DefaultErrors: under the new
+// default, supplying a truly nonexistent path causes git to error (exit 3).
+func TestRun_VcsCommit_Paths_NonexistentOnly_DefaultErrors(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
 		t.Skip("git not installed")
@@ -177,8 +178,32 @@ func TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent(t *testing.T) {
 		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
 		err := run([]string{"vcs", "commit", "-m", "ghost", "no-such.txt"},
 			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err == nil {
+			t.Errorf("expected error for truly unknown path under new default, got nil")
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("HEAD should not advance, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent: with
+// --allow-nonexistent-path the legacy no-op behaviour is preserved:
+// all-nonexistent PATH list → exit 0, no HEAD movement.
+func TestRun_VcsCommit_Paths_NonexistentOnly_Idempotent(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		err := run([]string{"vcs", "commit", "--allow-nonexistent-path", "-m", "ghost", "no-such.txt"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
 		if err != nil {
-			t.Errorf("expected exit 0 for nonexistent-only, got: %v", err)
+			t.Errorf("expected exit 0 for nonexistent-only with allow flag, got: %v", err)
 		}
 		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
 		if string(before) != string(after) {
@@ -359,6 +384,60 @@ func TestRun_VcsCommit_NotARepo(t *testing.T) {
 		var ee *exitErr
 		if !errors.As(err, &ee) || ee.code != exitCodeVCSExec {
 			t.Errorf("expected exit %d (vcs exec), got: %v", exitCodeVCSExec, err)
+		}
+	})
+}
+
+// TestRun_VcsCommit_Paths_DeletedTracked_Git: end-to-end — delete a tracked
+// file, pass it by path → deletion committed (new default behaviour; the old
+// filterExistingPaths would have silently dropped it).
+func TestRun_VcsCommit_Paths_DeletedTracked_Git(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	// Delete the tracked VERSION file.
+	if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		err := run([]string{"vcs", "commit", "-m", "delete version", "VERSION"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs commit deleted path: %v", err)
+		}
+		out, _ := runBackendCmd("git", "log", "-1", "--diff-filter=D", "--name-only", "--pretty=")
+		if !strings.Contains(string(out), "VERSION") {
+			t.Errorf("expected VERSION deleted in HEAD, got: %q", string(out))
+		}
+	})
+}
+
+// TestRun_VcsCommit_Paths_DeletedTracked_AllowFlagDrops_Git: with
+// --allow-nonexistent-path, the deleted tracked file is silently dropped
+// (no commit, no error — old declarative-convergence behaviour).
+func TestRun_VcsCommit_Paths_DeletedTracked_AllowFlagDrops_Git(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	// Delete the tracked VERSION file.
+	if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		before, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		err := run([]string{"vcs", "commit", "--allow-nonexistent-path", "-m", "delete version", "VERSION"},
+			bytes.NewReader(nil), &bytes.Buffer{}, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs commit --allow-nonexistent-path on deleted: %v", err)
+		}
+		after, _ := runBackendCmd("git", "rev-parse", "HEAD")
+		if string(before) != string(after) {
+			t.Errorf("HEAD should not advance when deleted file is dropped by allow flag, before=%s after=%s",
+				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
 		}
 	})
 }

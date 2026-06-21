@@ -483,11 +483,12 @@ func runVcsCmdCommit(args cliArgs, stdout, stderr io.Writer) error {
 	}
 	// Step 6: dispatch.
 	opts := commitOpts{
-		paths:   paths,
-		message: derefOr(args.vcsCommit.Message, ""),
-		staged:  args.vcsCommit.Staged,
-		amend:   args.vcsCommit.Amend,
-		noEdit:  args.vcsCommit.Amend && args.vcsCommit.Message == nil,
+		paths:                paths,
+		message:              derefOr(args.vcsCommit.Message, ""),
+		staged:               args.vcsCommit.Staged,
+		amend:                args.vcsCommit.Amend,
+		noEdit:               args.vcsCommit.Amend && args.vcsCommit.Message == nil,
+		allowNonexistentPath: args.vcsCommit.AllowNonexistentPath,
 	}
 	if err := b.Commit(opts); err != nil {
 		return emitVcsErr(stderr, args, err)

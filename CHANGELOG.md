@@ -4,6 +4,11 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.39.0
+
+- **BREAKING**: `vcs commit -m MSG PATH..` のデフォルト挙動を反転。削除された tracked path も commit に含まれるようになった (旧: `os.Stat` でフィルタして黙殺、新: `git add -A` / jj fileset 経由で削除を透過)。詳細 [DR-0037](./docs/decisions/DR-0037-vcs-commit-default-include-deletes.md)
+- 旧挙動 (複数候補から存在するものを pick して commit) が必要な場合は新フラグ `--allow-nonexistent-path` を追加する。単一 file 固定型の利用 (`Cargo.toml Cargo.lock`、`VERSION` 等、常時存在する file 列挙) は影響なし。
+
 ## v0.36.0
 
 - Migrated the hand-written argument parser and help text (~2300 lines) to [spf13/cobra](https://github.com/spf13/cobra). The `Options` section of every help screen is now generated from the cobra FlagSet, and help text is unified in English.

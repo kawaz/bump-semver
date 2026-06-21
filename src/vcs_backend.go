@@ -329,11 +329,13 @@ type tagDeleteOpts struct {
 // compact and future flags (e.g. PR-5's `--allow-empty` if ever needed)
 // extend without breaking implementations.
 type commitOpts struct {
-	// paths is the list of path arguments the user typed. The backend
-	// filters out nonexistent entries (declarative-convergence) before
-	// committing. Empty paths + !staged + !amend is a caller bug; the
-	// parser layer rejects that combination with exit 2 before reaching
-	// here.
+	// paths is the list of path arguments the user typed. By default the
+	// backend forwards all paths as-is to the VCS (deleted tracked files
+	// are committed as deletions; truly unknown paths cause a VCS error).
+	// When allowNonexistentPath is set the backend filters out
+	// filesystem-absent entries first (legacy declarative-convergence).
+	// Empty paths + !staged + !amend is a caller bug; the parser layer
+	// rejects that combination with exit 2 before reaching here.
 	paths []string
 
 	// message is the commit message. Required when !amend; with amend it
@@ -367,6 +369,14 @@ type commitOpts struct {
 	// message unchanged. Mutually exclusive with a non-empty message at
 	// the parser layer.
 	noEdit bool
+
+	// allowNonexistentPath, when true, silently drops paths that do not
+	// exist on the filesystem before handing them to the VCS backend
+	// (legacy declarative-convergence / bump behaviour). When false
+	// (the default), all supplied paths are forwarded to git/jj as-is;
+	// the VCS itself errors on truly unknown paths while naturally
+	// handling tracked-but-deleted files.
+	allowNonexistentPath bool
 }
 
 // newVcsBackend resolves the `--vcs` override (or auto-probe) into a

@@ -506,8 +506,9 @@ func TestJjBackend_Commit_Paths(t *testing.T) {
 }
 
 // TestJjBackend_Commit_Paths_NonexistentOnly: every supplied path is
-// nonexistent → no commit, no error (declarative convergence). The @ id
-// must stay the same (no new change created).
+// nonexistent. Unlike git, jj's diff gate returns empty for unknown paths
+// (no error), so the result is a no-op under both the new default and with
+// --allow-nonexistent-path. @ id must stay the same (no new change created).
 func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
@@ -524,6 +525,75 @@ func TestJjBackend_Commit_Paths_NonexistentOnly(t *testing.T) {
 		if string(before) != string(after) {
 			t.Errorf("expected @ unchanged, before=%s after=%s",
 				strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Paths_DeletedTracked: a tracked file deleted from the
+// filesystem is committed as a deletion when passed by path. jj naturally
+// tracks deletions via its auto-staging model, so passing the path to
+// jj commit picks up the D status.
+func TestJjBackend_Commit_Paths_DeletedTracked(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	// Delete the tracked VERSION file.
+	if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		if err := b.Commit(commitOpts{paths: []string{"VERSION"}, message: "delete version"}); err != nil {
+			t.Fatalf("Commit deleted path: %v", err)
+		}
+		// @- should describe "delete version" and show VERSION as deleted.
+		desc, _ := runBackendCmd("jj", "log", "-r", "@-", "--no-graph", "-T", "description.first_line()")
+		if got := strings.TrimSpace(string(desc)); got != "delete version" {
+			t.Errorf("@- description = %q, want 'delete version'", got)
+		}
+		summary, _ := runBackendCmd("jj", "diff", "--summary", "--from", "@--", "--to", "@-")
+		if !strings.Contains(string(summary), "VERSION") {
+			t.Errorf("@- should include VERSION deletion, got summary=%q", string(summary))
+		}
+	})
+}
+
+// TestJjBackend_Commit_Paths_DeletedTracked_AllowFlagDrops: with
+// --allow-nonexistent-path a deleted tracked file is silently dropped (old
+// behaviour): the deletion does NOT make it into the commit.
+func TestJjBackend_Commit_Paths_DeletedTracked_AllowFlagDrops(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	// Add a tracked file to modify alongside.
+	if err := writeFile(filepath.Join(dir, "other.txt"), "hello\n"); err != nil {
+		t.Fatal(err)
+	}
+	// jj auto-stages; commit other.txt first so it's in a parent.
+	runIn(t, dir, "jj", "commit", "-m", "add other", "other.txt")
+	if err := writeFile(filepath.Join(dir, "other.txt"), "edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	// Delete the tracked VERSION file.
+	if err := os.Remove(filepath.Join(dir, "VERSION")); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		// With flag: VERSION (deleted) is dropped, other.txt committed alone.
+		if err := b.Commit(commitOpts{paths: []string{"VERSION", "other.txt"}, message: "partial", allowNonexistentPath: true}); err != nil {
+			t.Fatalf("Commit with allow flag: %v", err)
+		}
+		summary, _ := runBackendCmd("jj", "diff", "--summary", "--from", "@--", "--to", "@-")
+		if strings.Contains(string(summary), "VERSION") {
+			t.Errorf("VERSION delete should NOT be in commit with allow flag: %q", string(summary))
+		}
+		if !strings.Contains(string(summary), "other.txt") {
+			t.Errorf("other.txt should be in commit: %q", string(summary))
 		}
 	})
 }

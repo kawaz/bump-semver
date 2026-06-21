@@ -1,6 +1,6 @@
 ---
 title: vcs commit PATH.. で delete も commit に含めるオプション
-status: idea
+status: discarded
 category: request
 created: 2026-06-20T00:16:45+09:00
 last_read:
@@ -8,9 +8,9 @@ open_entered:
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-06-21T12:21:08+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["2026-06-21 issue (vcs-commit-nonexistent-path-silently-drop) に統合。新 issue は同じ事象を扱うが、対応方針として「git 文脈に合わせデフォルト反転、bump 用途固有の silently-drop は明示フラグ側へ追い出す」を確定済み。本 issue は (a)(b)(c) 3 案のフラグ止まりで部外者起票スタンスだったが、ユーザ判断 (kawaz, 2026-06-21) で (b) デフォルト反転を採用したため役目を終えた。"]
 pending_reason:
 close_reason:
 blocked_by:

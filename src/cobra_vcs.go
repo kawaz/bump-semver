@@ -371,10 +371,11 @@ func newVcsPromoteCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 		Short:         "move the default branch/bookmark forward to the current commit",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		// promote takes no positional args and no flags by design — a bare
+		// invocation is the normal mode (= "advance default to current"),
+		// so we do NOT short-circuit to help on bareVerb. The dispatcher
+		// rejects stray positional args with exit 2.
 		RunE: func(cmd *cobra.Command, posArgs []string) error {
-			if bareVerb(cmd, posArgs) {
-				return cmd.Help()
-			}
 			if err := validateVcsOverride(stderr, *args); err != nil {
 				return err
 			}

@@ -62,6 +62,19 @@ ci: lint test build
 ensure-clean:
     bump-semver vcs is clean
 
+# fail with a sync→promote→push hint when invoked from a linked worktree
+# / secondary workspace (DR-0038 dogfood). The default branch should be
+# pushed from the main worktree / default workspace.
+[private]
+[script]
+check-not-worktree:
+    if bump-semver vcs is worktree; then
+        wt=$(bump-semver vcs get worktree-name)
+        bn=$(bump-semver vcs get default-branch)
+        printf >&2 "⚠ worktree %q にいます。%s に合流してから push してください\n  1. bump-semver vcs sync --onto %s@origin\n  2. bump-semver vcs promote\n  3. just push\n" "$wt" "$bn" "$bn"
+        exit 1
+    fi
+
 # fail if bump-trigger-paths changed since origin/main but VERSION was not bumped
 # (DR-0033 dogfood: test 専用の追加では VERSION bump を要求しない)
 check-version-bumped: (_check-version-bumped "src/" "go.mod" "go.sum")
@@ -94,7 +107,7 @@ bump-version level="patch": ensure-clean
     bump-semver vcs commit -m "Release v$(bump-semver get VERSION)" VERSION
 
 # push to origin/main with gates
-push: ci check-outdated-translations check-version-bumped
+push: check-not-worktree ci check-outdated-translations check-version-bumped
     bump-semver vcs push --branch main --jj-bookmark-auto-advance
     @echo "[hint] gh-monitor:watch-workflow --sha $(bump-semver vcs get commit-id --rev main) --on-success release.yml 'just on-success-release' kawaz/bump-semver"
 

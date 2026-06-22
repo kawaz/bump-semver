@@ -7,6 +7,7 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patc
 ## v0.40.1
 
 - Fix: `vcs promote` の bare 実行 (= 引数なし、`--help` なし) が help を表示するだけで実際の bookmark 移動が走らなかった bug を修正。v0.40.0 dogfood で発覚。
+- Docs (DR-0038): justfile push gate の正しい predicate を **`vcs is on-default-branch` の反転** に確定。`vcs is worktree` ベースだと kawaz の jj 運用 (= main workspace は secondary workspace) で main からの push が誤検出される盲点を Adoption pattern セクションに記録。
 
 ## v0.40.0
 

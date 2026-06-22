@@ -62,16 +62,20 @@ ci: lint test build
 ensure-clean:
     bump-semver vcs is clean
 
-# fail with a sync→promote→push hint when invoked from a linked worktree
-# / secondary workspace (DR-0038 dogfood). The default branch should be
-# pushed from the main worktree / default workspace.
+# fail with a sync→promote→push hint when the current bookmark / branch
+# is not the default (DR-0038 dogfood). We gate on the *branch* (not
+# IsWorktree) because the jj convention used here places the long-lived
+# `main` workspace as a *secondary* workspace — IsWorktree returns true
+# there too, so a worktree-based gate would block legitimate pushes from
+# `main`. The on-default-branch flip matches the actual question: "is
+# this the bookmark I should be pushing?"
 [private]
 [script]
-check-not-worktree:
-    if bump-semver vcs is worktree; then
-        wt=$(bump-semver vcs get worktree-name)
+check-on-default-branch:
+    if ! bump-semver vcs is on-default-branch; then
+        cur=$(bump-semver vcs get current-branch)
         bn=$(bump-semver vcs get default-branch)
-        printf >&2 "⚠ worktree %q にいます。%s に合流してから push してください\n  1. bump-semver vcs sync --onto %s@origin\n  2. bump-semver vcs promote\n  3. just push\n" "$wt" "$bn" "$bn"
+        printf >&2 "⚠ 現在 %q bookmark/branch にいます。%s に合流してから push してください\n  1. bump-semver vcs sync --onto %s@origin\n  2. bump-semver vcs promote\n  3. %s ワークスペースに移動して just push\n" "$cur" "$bn" "$bn" "$bn"
         exit 1
     fi
 
@@ -107,7 +111,7 @@ bump-version level="patch": ensure-clean
     bump-semver vcs commit -m "Release v$(bump-semver get VERSION)" VERSION
 
 # push to origin/main with gates
-push: check-not-worktree ci check-outdated-translations check-version-bumped
+push: check-on-default-branch ci check-outdated-translations check-version-bumped
     bump-semver vcs push --branch main --jj-bookmark-auto-advance
     @echo "[hint] gh-monitor:watch-workflow --sha $(bump-semver vcs get commit-id --rev main) --on-success release.yml 'just on-success-release' kawaz/bump-semver"
 

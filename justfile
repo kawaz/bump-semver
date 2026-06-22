@@ -75,9 +75,17 @@ check-on-default-branch:
     if ! bump-semver vcs is on-default-branch; then
         cur=$(bump-semver vcs get current-branch 2>/dev/null || echo "(ambiguous)")
         bn=$(bump-semver vcs get default-branch)
-        printf >&2 "⚠ 現在 '%s' bookmark/branch にいます。%s に合流してから push してください\n  1. bump-semver vcs sync --onto %s@origin\n  2. bump-semver vcs promote\n  3. %s ワークスペースに移動して just push\n" "$cur" "$bn" "$bn" "$bn"
+        printf >&2 "⚠ 現在 '%s' bookmark/branch にいます。%s に合流してから push してください\n  1. just sync         # %s@origin に rebase\n  2. just promote      # %s bookmark を current commit に forward\n  3. %s ワークスペースに移動して just push\n" "$cur" "$bn" "$bn" "$bn" "$bn"
         exit 1
     fi
+
+# 現在の worktree を default branch (= origin/<default>) に rebase (DR-0038)
+sync:
+    bump-semver vcs sync --onto $(bump-semver vcs get default-branch)@origin
+
+# default branch を現在の commit に forward (DR-0038、push しない)
+promote:
+    bump-semver vcs promote
 
 # fail if bump-trigger-paths changed since origin/main but VERSION was not bumped
 # (DR-0033 dogfood: test 専用の追加では VERSION bump を要求しない)

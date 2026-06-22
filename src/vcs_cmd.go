@@ -28,9 +28,13 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdTag(args, stdout, stderr)
 	case "outdated":
 		return runVcsCmdOutdated(args, stdout, stderr)
+	case "promote":
+		return runVcsCmdPromote(args, stdout, stderr)
+	case "sync":
+		return runVcsCmdSync(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag / outdated)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag / outdated / promote / sync)", args.vcsVerb))
 	}
 }
 
@@ -39,7 +43,7 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 //
 // DR-0032: latest-tag / latest-release replace the v0.29.0 `vcs tag latest
 // --source <tag|release>` (= source 軸を verb 名に畳む)。
-var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release"}
+var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release", "worktree-name", "default-branch"}
 
 // runVcsCmdGet implements `vcs get <key>`.
 //
@@ -159,6 +163,20 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 		}
 		emit(sha)
 		return nil
+	case "worktree-name":
+		name, err := b.WorktreeName()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		emit(name)
+		return nil
+	case "default-branch":
+		name, err := b.DefaultBranch()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		emit(name)
+		return nil
 	}
 	// Unreachable: key was validated against vcsGetKeys above.
 	return emitVcsUsage(stderr, args, fmt.Errorf("internal: unhandled vcs get key %q", key))
@@ -171,7 +189,7 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 // and jj users land here. Backend-specific concepts (e.g. jj's
 // `empty @`) stay out — they would not be transferable to git users
 // reading shared Taskfiles.
-var vcsIsPreds = []string{"clean", "dirty", "git", "jj"}
+var vcsIsPreds = []string{"clean", "dirty", "git", "jj", "worktree", "on-default-branch"}
 
 // runVcsCmdIs implements `vcs is <pred>`.
 //
@@ -231,6 +249,16 @@ func runVcsCmdIs(args cliArgs, stdout, stderr io.Writer) error {
 		result = !clean
 	case "git", "jj":
 		result = b.Kind() == pred
+	case "worktree":
+		result, err = b.IsWorktree()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+	case "on-default-branch":
+		result, err = b.IsOnDefaultBranch()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
 	default:
 		// Unreachable: pred was validated against vcsIsPreds above.
 		return emitVcsUsage(stderr, args, fmt.Errorf("internal: unhandled vcs is predicate %q", pred))
@@ -829,6 +857,76 @@ func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
 // existing emitErr hardcodes exit code 2 (kept as exitCodeUsage), but
 // future vcs errors need a different code path (exitCodeAmbiguous /
 // exitCodeVCSExec etc.) and we want a focused helper for those.
+// runVcsCmdPromote implements `vcs promote`: move the default branch /
+// bookmark forward to the current commit (no push).
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success (incl. no-op when already there)
+//   - 2  usage error (positional args supplied)
+//   - 3  VCS subprocess error or "not a vcs repo"
+//   - 5  non-fast-forward rejection (default is not an ancestor of current)
+func runVcsCmdPromote(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) > 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs promote does not accept positional arguments"))
+	}
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	opts := promoteOpts{}
+	if !args.output.Verbosity.ShouldSuppressStdout() {
+		opts.Stdout = stdout
+		opts.Stderr = stderr
+	}
+	if err := b.Promote(opts); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	return nil
+}
+
+// runVcsCmdSync implements `vcs sync --onto REF`: rebase the current
+// worktree / workspace onto REF.
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success
+//   - 2  usage error (--onto missing / empty / positional args supplied)
+//   - 3  VCS subprocess error (conflict, unknown ref, not a vcs repo)
+func runVcsCmdSync(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) > 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs sync does not accept positional arguments (use --onto REF)"))
+	}
+	if args.vcsSync.Onto == nil {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs sync: --onto REF is required"))
+	}
+	if *args.vcsSync.Onto == "" {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs sync: --onto value must not be empty"))
+	}
+	if err := validateUserRev(*args.vcsSync.Onto); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs sync: %w", err))
+	}
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	opts := syncOpts{Onto: *args.vcsSync.Onto}
+	if !args.output.Verbosity.ShouldSuppressStdout() {
+		opts.Stdout = stdout
+		opts.Stderr = stderr
+	}
+	if err := b.Sync(opts); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	return nil
+}
+
 func emitVcsUsage(stderr io.Writer, args cliArgs, err error) error {
 	if !args.output.Verbosity.ShouldSuppressError() {
 		fmt.Fprintln(stderr, "bump-semver: "+err.Error())

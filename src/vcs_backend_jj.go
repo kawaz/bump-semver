@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -950,6 +951,149 @@ func (j *jjBackend) CountCommitsSince(path string, sinceTS int64) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+// IsWorktree reports whether the jj working copy is a secondary workspace
+// (= one added via `jj workspace add`). The default workspace returns false.
+//
+// Detection relies on jj's on-disk layout: the default workspace's `.jj/repo`
+// is a directory (holding the repo's real state), while a secondary workspace
+// has `.jj/repo` as a *file* containing a relative path to the default's
+// `.jj/repo`. Probing the file kind is O(1) and avoids parsing variable jj
+// CLI output across versions.
+func (j *jjBackend) IsWorktree() (bool, error) {
+	root, err := j.Root()
+	if err != nil {
+		return false, err
+	}
+	info, statErr := os.Stat(filepath.Join(root, ".jj", "repo"))
+	if statErr != nil {
+		return false, &exitErr{code: exitCodeVCSExec, msg: statErr.Error()}
+	}
+	return !info.IsDir(), nil
+}
+
+// WorktreeName returns the current jj workspace name. Returns "" when the
+// working copy is the default workspace (= IsWorktree() returns false).
+//
+// Design rationale: jj does not expose "name of current workspace" as a
+// direct command. We rely on the convention (per jj-workflow.md) that
+// `jj workspace add <name>` creates a directory named `<name>` and the
+// workspace's name equals its dir basename. For kawaz's git bare + jj
+// workspace layout this always holds.
+func (j *jjBackend) WorktreeName() (string, error) {
+	isWt, err := j.IsWorktree()
+	if err != nil {
+		return "", err
+	}
+	if !isWt {
+		return "", nil
+	}
+	root, err := j.Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Base(root), nil
+}
+
+// DefaultBranch resolves the default bookmark name via jj-native calls
+// (= we do NOT shell out to git here — a jj secondary workspace's cwd
+// does not have a `.git` view, so git invocations fail).
+//
+// Resolution order:
+//  1. `jj log -r trunk()` — jj's standard revset alias for the canonical
+//     default. Surfaces the bookmark name when defined.
+//  2. Local bookmark probe: main → master → trunk. First existing wins.
+func (j *jjBackend) DefaultBranch() (string, error) {
+	if out, err := runBackendCmd("jj", "log", "-r", "trunk()", "--no-graph",
+		"-T", `bookmarks.map(|b| b.name()).join("\n") ++ "\n"`); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			name := strings.TrimSpace(line)
+			if name == "main" || name == "master" || name == "trunk" {
+				return name, nil
+			}
+		}
+	}
+	if out, err := runBackendCmd("jj", "bookmark", "list", "-T", `name ++ "\n"`); err == nil {
+		present := make(map[string]bool)
+		for _, line := range strings.Split(string(out), "\n") {
+			present[strings.TrimSpace(line)] = true
+		}
+		for _, candidate := range []string{"main", "master", "trunk"} {
+			if present[candidate] {
+				return candidate, nil
+			}
+		}
+	}
+	return "", &exitErr{
+		code: exitCodeVCSExec,
+		msg:  "default-branch: cannot determine (no trunk(); no local main/master/trunk bookmark)",
+	}
+}
+
+// IsOnDefaultBranch reports whether the bookmark unique to @'s ancestor
+// head equals DefaultBranch(). Ambiguous current branch (no bookmark, or
+// multiple bookmarks at head) is reported as "not on default" (false, nil)
+// rather than propagating the ambiguity error — the predicate's contract
+// is a boolean, and "ambiguous" maps cleanly to "definitely not on the
+// uniquely-named default".
+func (j *jjBackend) IsOnDefaultBranch() (bool, error) {
+	return isOnDefaultBranchCommon(j)
+}
+
+// Promote moves the default bookmark to opts.Rev (default: `@-`) via
+// `jj bookmark set <default> -r <rev>`. jj's bookmark set is forward-only
+// by default — a backwards move is rejected, which we surface as
+// *exitErr{exitCodeNonFastForward} so the dispatcher can hint the user
+// toward `vcs sync` before retrying.
+func (j *jjBackend) Promote(opts promoteOpts) error {
+	def, err := j.DefaultBranch()
+	if err != nil {
+		return err
+	}
+	rev := opts.Rev
+	if rev == "" {
+		rev = "@-"
+	}
+	stdout, stderr, code, runErr := runBackendCapture("jj", "bookmark", "set", def, "-r", rev)
+	if runErr != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: runErr.Error()}
+	}
+	if code != 0 {
+		joined := strings.TrimSpace(stderr)
+		if joined == "" {
+			joined = strings.TrimSpace(stdout)
+		}
+		// jj 0.42 surfaces backwards-move rejections as
+		// "Refusing to move bookmark backwards" / "would move backwards".
+		if strings.Contains(joined, "backwards") || strings.Contains(joined, "Refusing to move") {
+			return &exitErr{code: exitCodeNonFastForward, msg: joined}
+		}
+		return &exitErr{code: exitCodeVCSExec, msg: joined}
+	}
+	writePushDiagnostic(opts.Stdout, stderr)
+	return nil
+}
+
+// Sync rebases the current workspace onto opts.Onto via `jj rebase -d`.
+// The dispatcher pre-validates Onto is non-empty.
+func (j *jjBackend) Sync(opts syncOpts) error {
+	if opts.Onto == "" {
+		return &exitErr{code: exitCodeUsage, msg: "sync: --onto is required"}
+	}
+	stdout, stderr, code, runErr := runBackendCapture("jj", "rebase", "-d", opts.Onto)
+	if runErr != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: runErr.Error()}
+	}
+	if code != 0 {
+		joined := strings.TrimSpace(stderr)
+		if joined == "" {
+			joined = strings.TrimSpace(stdout)
+		}
+		return &exitErr{code: exitCodeVCSExec, msg: joined}
+	}
+	writePushDiagnostic(opts.Stdout, stderr)
+	return nil
 }
 
 // jjStringLiteral wraps s in jj-revset double-quote form. Internal `"`

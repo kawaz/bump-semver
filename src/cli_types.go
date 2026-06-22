@@ -183,6 +183,14 @@ type vcsTagOpts struct {
 	AllowMove bool
 }
 
+// vcsSyncOpts captures flags for `vcs sync` (rebase the current
+// worktree/workspace onto a named ref).
+type vcsSyncOpts struct {
+	// Onto is the target ref (required). The flag parser surfaces a missing
+	// value as exit 2.
+	Onto *string
+}
+
 // vcsGetOpts captures flags for `vcs get`:
 //   - LatestRepository / LatestIncludePre — `vcs get latest-{tag,release}` (DR-0032)
 //   - Rev — `vcs get commit-id` target rev (nil = backend default: `@` for jj /
@@ -216,6 +224,7 @@ type cliArgs struct {
 	vcsTag      vcsTagOpts
 	vcsGet      vcsGetOpts
 	vcsOutdated vcsOutdatedOpts
+	vcsSync     vcsSyncOpts
 	glob        globOpts
 
 	// ruleBlocks captures DR-0029 user-defined rule blocks (--define-rule).

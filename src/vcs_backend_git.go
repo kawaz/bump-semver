@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -592,6 +593,145 @@ func (g *gitBackend) FileTimestamp(path string) (int64, error) {
 		return 0, nil
 	}
 	return parseEpochOrZero(s), nil
+}
+
+// IsWorktree reports whether the cwd is inside a linked git worktree
+// (= one created via `git worktree add`). The main worktree returns false.
+//
+// Detection: compare `git rev-parse --git-common-dir` (always the main
+// `.git`) against `--git-dir` (per-worktree; the main worktree's `.git`
+// is also the common dir, while a linked worktree's `.git/worktrees/<name>`
+// differs).
+func (g *gitBackend) IsWorktree() (bool, error) {
+	common, err := runBackendCmd("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return false, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	gitDir, err := runBackendCmd("git", "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return false, &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return strings.TrimSpace(string(common)) != strings.TrimSpace(string(gitDir)), nil
+}
+
+// WorktreeName returns the current linked worktree's directory basename.
+// Returns "" for the main worktree.
+//
+// Design rationale: git tracks linked worktrees by directory path, not
+// by name — there is no `git worktree name` command. The path basename
+// is the closest human-readable identifier and matches how the user
+// invoked `git worktree add <path>`.
+func (g *gitBackend) WorktreeName() (string, error) {
+	isWt, err := g.IsWorktree()
+	if err != nil {
+		return "", err
+	}
+	if !isWt {
+		return "", nil
+	}
+	root, err := g.Root()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Base(root), nil
+}
+
+// DefaultBranch resolves the default branch name via `git symbolic-ref
+// refs/remotes/origin/HEAD`, with a local-branch fallback (main → master
+// → trunk) when the remote HEAD is unset.
+func (g *gitBackend) DefaultBranch() (string, error) {
+	return resolveDefaultBranchViaGit()
+}
+
+// IsOnDefaultBranch reports whether CurrentBranch() == DefaultBranch().
+// Detached HEAD (ambiguous current) is "not on default" rather than an
+// error — the predicate's contract is a boolean.
+func (g *gitBackend) IsOnDefaultBranch() (bool, error) {
+	return isOnDefaultBranchCommon(g)
+}
+
+// Promote advances the default branch to opts.Rev (default: HEAD) via
+// `git update-ref` with an explicit fast-forward check.
+//
+// Design rationale: `git push . <rev>:refs/heads/<default>` is rejected
+// by git when another worktree has the default branch checked out
+// (`receive.denyCurrentBranch=refuse`, the default) — the very scenario
+// promote exists to support (= you are in a linked worktree, default
+// branch is checked out by the main worktree). `update-ref` bypasses
+// the receive hook because it doesn't go through the push protocol;
+// the other worktree's index/workdir are deliberately not touched —
+// the user sees "branch is ahead" in `git status` until they pull /
+// reset, which is the correct end state. The ancestor check enforces
+// fast-forward-only by hand.
+func (g *gitBackend) Promote(opts promoteOpts) error {
+	def, err := g.DefaultBranch()
+	if err != nil {
+		return err
+	}
+	rev := opts.Rev
+	if rev == "" {
+		rev = "HEAD"
+	}
+	sha, err := resolveGitRev(rev)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	defRef := "refs/heads/" + def
+	// Capture the current default-branch SHA (if the ref exists) so the
+	// update-ref call can pin the expected old value — that turns the
+	// write into a compare-and-swap, defending against a concurrent
+	// move by another worktree between this read and the write.
+	defSHAOut, defErr := runBackendCmd("git", "rev-parse", "--verify", defRef)
+	defExists := defErr == nil
+	defSHA := strings.TrimSpace(string(defSHAOut))
+	if defExists && defSHA == sha {
+		// Already there — no-op.
+		writePushDiagnostic(opts.Stdout, fmt.Sprintf("%s already at %s", def, sha[:12]))
+		return nil
+	}
+	if defExists {
+		// Ancestor check: is defSHA an ancestor of sha?
+		code, err := runBackendExitCode("git", "merge-base", "--is-ancestor", defSHA, sha)
+		if err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if code != 0 {
+			return &exitErr{
+				code: exitCodeNonFastForward,
+				msg: fmt.Sprintf("promote: %s (%s) is not an ancestor of %s (%s); would be non-fast-forward",
+					def, defSHA[:12], rev, sha[:12]),
+			}
+		}
+	}
+	args := []string{"update-ref", defRef, sha}
+	if defExists {
+		args = append(args, defSHA)
+	}
+	if _, err := runBackendCmd("git", args...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	writePushDiagnostic(opts.Stdout, fmt.Sprintf("Moved %s to %s", def, sha[:12]))
+	return nil
+}
+
+// Sync rebases the current branch onto opts.Onto via `git rebase <onto>`.
+func (g *gitBackend) Sync(opts syncOpts) error {
+	if opts.Onto == "" {
+		return &exitErr{code: exitCodeUsage, msg: "sync: --onto is required"}
+	}
+	stdout, stderr, code, runErr := runBackendCapture("git", "rebase", opts.Onto)
+	if runErr != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: runErr.Error()}
+	}
+	if code != 0 {
+		joined := strings.TrimSpace(stderr)
+		if joined == "" {
+			joined = strings.TrimSpace(stdout)
+		}
+		return &exitErr{code: exitCodeVCSExec, msg: "git rebase: " + joined}
+	}
+	writePushDiagnostic(opts.Stdout, stdout)
+	return nil
 }
 
 // CountCommitsSince (git): `git rev-list --count HEAD --since=@<ts+1> --

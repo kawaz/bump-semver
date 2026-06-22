@@ -242,7 +242,13 @@ Keys:
   latest-tag       Largest SemVer-parseable tag (cwd VCS or via --repository).
                    See 'vcs get latest-tag --help' for options.
   latest-release   Largest SemVer-parseable GitHub Release (gh CLI required).
-                   See 'vcs get latest-release --help' for options.`
+                   See 'vcs get latest-release --help' for options.
+  worktree-name    Current linked worktree (git) / secondary workspace (jj)
+                   name. Returns "" (empty line) for the main worktree /
+                   default workspace.
+  default-branch   Canonical default branch name (main / master / trunk).
+                   Resolved from 'refs/remotes/origin/HEAD' when set,
+                   falling back to a local probe.`
 
 const vcsGetExitCodes = `  0   success (value printed on stdout, single line)
   2   usage error (key missing / unknown / multiple keys given)
@@ -256,6 +262,8 @@ const vcsGetExamples = `  bump-semver vcs get root                    # /path/to
   bump-semver vcs get commit-id --rev main    # SHA of main
   bump-semver vcs get latest-tag              # largest stable SemVer tag
   bump-semver vcs get latest-release          # largest stable GH Release
+  bump-semver vcs get worktree-name           # 'feature-x' (linked wt); "" on main
+  bump-semver vcs get default-branch          # main / master / trunk
   ROOT=$(bump-semver vcs get root) || exit    # capture for further use`
 
 const vcsIsLong = `bump-semver vcs is — test a VCS predicate
@@ -264,11 +272,15 @@ Usage:
   bump-semver vcs is <pred>
 
 Predicates:
-  clean    Worktree has no uncommitted changes (tracked-only; untracked
-           files are ignored on git, snapshotted on jj — see notes).
-  dirty    !clean (worktree has uncommitted changes).
-  git      The detected backend is git.
-  jj       The detected backend is jj.
+  clean              Worktree has no uncommitted changes (tracked-only; untracked
+                     files are ignored on git, snapshotted on jj — see notes).
+  dirty              !clean (worktree has uncommitted changes).
+  git                The detected backend is git.
+  jj                 The detected backend is jj.
+  worktree           Cwd is a linked worktree (git) / secondary workspace (jj).
+                     Main worktree / default workspace → exit 1.
+  on-default-branch  Current branch/bookmark equals the default branch.
+                     Ambiguous current (detached HEAD, no bookmark) → exit 1.
 
 Notes:
   - clean / dirty (git): runs 'git diff --quiet' (unstaged) AND
@@ -288,7 +300,9 @@ const vcsIsExitCodes = `  0   predicate true
 
 const vcsIsExamples = `  bump-semver vcs is clean && bump-semver patch VERSION --write
   if bump-semver vcs is git; then ... fi
-  bump-semver vcs is dirty || echo "nothing to commit"`
+  bump-semver vcs is dirty || echo "nothing to commit"
+  if bump-semver vcs is worktree; then echo "in a linked worktree"; fi
+  bump-semver vcs is on-default-branch && bump-semver vcs push --branch main`
 
 const vcsDiffLong = `bump-semver vcs diff — print the patch between REV and the working copy
 
@@ -537,6 +551,58 @@ const vcsOutdatedExamples = `  bump-semver vcs outdated 'glob:src/**/*.ts' 'lib/
   bump-semver vcs outdated README.md 'README-{ja,en}.md'
   bump-semver vcs outdated --explain 'glob:**/*-ja.md' '$1/$2.md'`
 
+const vcsPromoteLong = `bump-semver vcs promote — move the default branch/bookmark forward
+
+Usage:
+  bump-semver vcs promote
+
+Advances the default branch (git) / bookmark (jj) to the current commit
+the user is building on. The verb is intentionally orthogonal to 'vcs push'
+so the typical 'sync → promote → push' cascade reads as three explicit
+steps.
+
+Notes:
+  - Forward-only. Non-fast-forward (the default branch already has commits
+    the current does not) → exit 5. Run 'vcs sync --onto <default>' first.
+  - No push. Use 'vcs push --branch <default>' afterwards to share.
+  - git: 'git update-ref refs/heads/<default> <currentSHA>' after an
+    explicit ancestor check. Bypasses 'receive.denyCurrentBranch' so it
+    works even when the main worktree has the default branch checked out
+    (the main worktree will show "branch is ahead" until pulled / reset).
+  - jj:  'jj bookmark set <default> -r @-'. jj's bookmark set is
+    forward-only by default.`
+
+const vcsPromoteExitCodes = `  0   success (incl. no-op when default is already at the current commit)
+  2   usage error (positional arguments supplied)
+  3   VCS subprocess error or "not a vcs repo"
+  5   non-fast-forward (default has diverged from current — run vcs sync first)`
+
+const vcsPromoteExamples = `  bump-semver vcs promote                       # move default → current
+  bump-semver vcs promote && bump-semver vcs push --branch main`
+
+const vcsSyncLong = `bump-semver vcs sync — rebase the current worktree onto a reference
+
+Usage:
+  bump-semver vcs sync --onto REF
+
+Rebases the current branch / workspace onto REF. The --onto value is
+required; the verb deliberately does not auto-default to 'origin/<default>'
+so the side effect is predictable.
+
+Notes:
+  - git: 'git rebase <onto>' on the current branch.
+  - jj:  'jj rebase -d <onto>' against the entire workspace.
+  - Conflicts are propagated as exit 3; the user resolves them via the
+    underlying tool's conflict workflow.`
+
+const vcsSyncExitCodes = `  0   success
+  2   usage error (--onto missing / empty / positional arguments supplied)
+  3   VCS subprocess error (conflict, unknown ref, not a vcs repo)`
+
+const vcsSyncExamples = `  bump-semver vcs sync --onto main              # rebase onto local main
+  bump-semver vcs sync --onto origin/main       # rebase onto remote main
+  bump-semver vcs sync --onto $(bump-semver vcs get default-branch)`
+
 // applyVcsVerbHelp attaches the prose for a vcs child command, keyed by
 // its Use name. The two-tier `tag` children are handled separately.
 func applyVcsVerbHelp(cmd *cobra.Command) {
@@ -555,6 +621,10 @@ func applyVcsVerbHelp(cmd *cobra.Command) {
 		setHelp(cmd, vcsPushLong, vcsPushExitCodes, vcsPushExamples)
 	case "outdated":
 		setHelp(cmd, vcsOutdatedLong, vcsOutdatedExitCodes, vcsOutdatedExamples)
+	case "promote":
+		setHelp(cmd, vcsPromoteLong, vcsPromoteExitCodes, vcsPromoteExamples)
+	case "sync":
+		setHelp(cmd, vcsSyncLong, vcsSyncExitCodes, vcsSyncExamples)
 	}
 }
 

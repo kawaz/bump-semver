@@ -91,6 +91,8 @@ func buildVcsCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *cl
 		newVcsPushCmd(&args, stdout, stderr),
 		newVcsTagCmd(&args, stdout, stderr),
 		newVcsOutdatedCmd(&args, stdout, stderr),
+		newVcsPromoteCmd(&args, stdout, stderr),
+		newVcsSyncCmd(&args, stdout, stderr),
 	)
 	return vcsCmd, &args
 }
@@ -358,6 +360,55 @@ func newVcsTagDeleteCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command 
 	}
 	cmd.Flags().Var(newOnceString("--remote", &args.vcsPush.Remote), "remote", "remote `NAME` (default: origin)")
 	setHelp(cmd, vcsTagDeleteLong, vcsTagDeleteExitCodes, vcsTagDeleteExamples)
+	return cmd
+}
+
+// --- vcs promote -----------------------------------------------------------
+
+func newVcsPromoteCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "promote",
+		Short:         "move the default branch/bookmark forward to the current commit",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, posArgs []string) error {
+			if bareVerb(cmd, posArgs) {
+				return cmd.Help()
+			}
+			if err := validateVcsOverride(stderr, *args); err != nil {
+				return err
+			}
+			args.vcsVerb = "promote"
+			args.vcsArgs = posArgs
+			return runVcsCmdPromote(*args, stdout, stderr)
+		},
+	}
+	applyVcsVerbHelp(cmd)
+	return cmd
+}
+
+// --- vcs sync --------------------------------------------------------------
+
+func newVcsSyncCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "sync",
+		Short:         "rebase the current worktree onto a reference",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, posArgs []string) error {
+			if bareVerb(cmd, posArgs) {
+				return cmd.Help()
+			}
+			if err := validateVcsOverride(stderr, *args); err != nil {
+				return err
+			}
+			args.vcsVerb = "sync"
+			args.vcsArgs = posArgs
+			return runVcsCmdSync(*args, stdout, stderr)
+		},
+	}
+	cmd.Flags().Var(newOnceString("--onto", &args.vcsSync.Onto), "onto", "target `REF` to rebase onto (required)")
+	applyVcsVerbHelp(cmd)
 	return cmd
 }
 

@@ -4,6 +4,17 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.40.0
+
+- Added worktree / workspace awareness and default-branch promotion to the `vcs` family:
+  - `vcs is worktree` — true inside a linked worktree (git) / secondary workspace (jj).
+  - `vcs is on-default-branch` — true when the current branch/bookmark equals the default branch.
+  - `vcs get worktree-name` — the linked-worktree / secondary-workspace name; empty on the main worktree.
+  - `vcs get default-branch` — the canonical default branch (main / master / trunk), resolved from `refs/remotes/origin/HEAD` with a local fallback.
+  - `vcs promote` — move the default branch / bookmark forward to the current commit (no push; non-FF surfaces exit 5). git uses `update-ref` with an ancestor check so the move works even when another worktree has the default branch checked out; jj uses `jj bookmark set -r @-`.
+  - `vcs sync --onto REF` — rebase the current worktree / workspace onto REF (git: `git rebase`; jj: `jj rebase -d`).
+- Enables justfile `push` gates that detect "still in a worktree" and hint the user toward `vcs sync` → `vcs promote` → `vcs push`.
+
 ## v0.39.0
 
 - **BREAKING**: `vcs commit -m MSG PATH..` のデフォルト挙動を反転。削除された tracked path も commit に含まれるようになった (旧: `os.Stat` でフィルタして黙殺、新: `git add -A` / jj fileset 経由で削除を透過)。詳細 [DR-0037](./docs/decisions/DR-0037-vcs-commit-default-include-deletes.md)

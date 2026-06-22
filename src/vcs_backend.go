@@ -284,6 +284,114 @@ type vcsBackend interface {
 	//   - jj:  count of `description(...) ~ none() & files("<path>") &
 	//          committer_date(after:"@<ts+1>")` revset
 	CountCommitsSince(path string, sinceTS int64) (int, error)
+
+	// IsWorktree reports whether the cwd is inside a secondary worktree
+	// (git: linked worktree) / non-default workspace (jj: a workspace
+	// added via `jj workspace add`). The main worktree / default
+	// workspace returns false.
+	//
+	//   - git: compare `--git-common-dir` and `--git-dir`. Different =
+	//     linked worktree.
+	//   - jj: the workspace root != the repo root (the default workspace
+	//     by convention sits at the repo root).
+	//
+	// Errors (subprocess failure, not a repo) surface as
+	// *exitErr{exitCodeVCSExec}.
+	IsWorktree() (bool, error)
+
+	// WorktreeName returns the current worktree / workspace name. The
+	// default workspace / main worktree returns "" (empty). Used by hint
+	// messages and `just push` gates to surface the worktree the user is
+	// currently in.
+	//
+	//   - git: linked worktree path's basename; "" for the main worktree.
+	//   - jj: the workspace name as reported by `jj workspace list` for
+	//     the current workspace; "" for the default workspace.
+	WorktreeName() (string, error)
+
+	// DefaultBranch returns the canonical default branch / bookmark name
+	// (e.g. "main", "master", "trunk"). The resolution is remote-derived
+	// when available, falling back to a local heuristic.
+	//
+	//   - git: `git symbolic-ref refs/remotes/origin/HEAD` (the canonical
+	//     answer set by `git clone` / `git remote set-head`).
+	//   - jj: same git symbolic-ref lookup against the colocated `.git`
+	//     bare repo (jj workspaces always have access to a git view).
+	//
+	// When the remote HEAD is unset (`fatal: ref refs/remotes/origin/HEAD
+	// is not a symbolic ref`), the backend falls back to probing local
+	// branches in order: main, master, trunk. Returns *exitErr{exitCodeVCSExec}
+	// when none exist.
+	DefaultBranch() (string, error)
+
+	// IsOnDefaultBranch reports whether the current branch / bookmark
+	// equals the default branch.
+	//
+	//   - git: CurrentBranch() == DefaultBranch().
+	//   - jj: the closest bookmark to @ equals DefaultBranch(). Empty
+	//     working copies (`@` with no local bookmark) inherit from `@-`'s
+	//     bookmark.
+	//
+	// Returns (false, nil) when CurrentBranch is ambiguous (detached HEAD,
+	// no bookmark) — these are not "on default", but neither are they
+	// errors at the predicate layer.
+	IsOnDefaultBranch() (bool, error)
+
+	// Promote advances the default branch / bookmark to point at the
+	// commit the user is currently building on. Push is NOT performed
+	// (the verb is intentionally orthogonal to `vcs push` so the
+	// `sync → promote → push` cascade reads as three explicit steps).
+	//
+	//   - git: `git update-ref refs/heads/<default> <currentSHA>`. The
+	//     dispatcher pre-checks that <currentSHA> is a descendant of
+	//     <default> (`git merge-base --is-ancestor`) so the move is
+	//     fast-forward-only by construction; non-FF cases return
+	//     *exitErr{exitCodeNonFastForward}.
+	//   - jj: `jj bookmark set <default> -r <rev>` with `--allow-backwards`
+	//     omitted so the move is forward-only. The default `<rev>` is
+	//     `@-` (the parent of the working copy) — the jj convention is
+	//     `@` is the next throw-away change, so `@-` is the confirmed
+	//     content the bookmark should sit on. opts.Rev overrides this.
+	//
+	// Errors (no default branch, non-FF, ambiguous current branch) surface
+	// as *exitErr with the corresponding code.
+	Promote(opts promoteOpts) error
+
+	// Sync rebases the current worktree / workspace onto opts.Onto. The
+	// `--onto` is required (no default-推論 — the caller names it
+	// explicitly to keep the side-effect predictable).
+	//
+	//   - git: `git rebase <onto>` on the current branch.
+	//   - jj: `jj rebase -d <onto>` against the entire workspace.
+	//
+	// Conflict resolution is left to the user — the verb propagates the
+	// underlying tool's conflict exit (typically *exitErr{exitCodeVCSExec}).
+	Sync(opts syncOpts) error
+}
+
+// promoteOpts collects the per-call inputs to Promote. Mirrors the struct
+// shape of pushOpts / tagPushOpts so future extensions plug in without
+// changing existing callers.
+type promoteOpts struct {
+	// Rev is the source revision the default branch / bookmark should
+	// move to. Empty → backend default (git: HEAD, jj: @-).
+	Rev string
+
+	// Stdout / Stderr receive the underlying tool's diagnostic output.
+	// nil writers are silently ignored — backend tests that only assert
+	// exit semantics can leave them unset.
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// syncOpts collects the per-call inputs to Sync.
+type syncOpts struct {
+	// Onto is the target revision the current worktree should be rebased
+	// onto. Required; the dispatcher rejects empty values with exit 2.
+	Onto string
+
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // tagPushOpts collects the arguments for TagPush. Kept as a struct (vs.
@@ -661,6 +769,62 @@ func shortSHA(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+// --- shared promote/sync helpers ------------------------------------------
+
+// resolveDefaultBranchViaGit returns the canonical default branch name by
+// asking git directly (both backends route through it). The colocated git
+// store is always available — jj workspaces have a backing git repo, and
+// the git backend is git itself.
+//
+// Resolution order:
+//  1. `git symbolic-ref --short refs/remotes/origin/HEAD` (canonical answer
+//     set by `git clone` / `git remote set-head`). Strip the "origin/" prefix.
+//  2. Local branch probe: main → master → trunk. First existing wins.
+//
+// Returns *exitErr{exitCodeVCSExec} when none of the above resolves.
+func resolveDefaultBranchViaGit() (string, error) {
+	if out, err := runBackendCmd("git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		ref := strings.TrimSpace(string(out))
+		if idx := strings.Index(ref, "/"); idx >= 0 {
+			return ref[idx+1:], nil
+		}
+		if ref != "" {
+			return ref, nil
+		}
+	}
+	for _, candidate := range []string{"main", "master", "trunk"} {
+		code, err := runBackendExitCode("git", "show-ref", "--verify", "--quiet", "refs/heads/"+candidate)
+		if err == nil && code == 0 {
+			return candidate, nil
+		}
+	}
+	return "", &exitErr{
+		code: exitCodeVCSExec,
+		msg:  "default-branch: cannot determine (no origin/HEAD; no local main/master/trunk)",
+	}
+}
+
+// isOnDefaultBranchCommon factors the predicate body shared by git and jj
+// backends. Ambiguous CurrentBranch (detached HEAD, no bookmark) collapses
+// to (false, nil) — the predicate's contract is a boolean, and ambiguity
+// maps cleanly to "definitely not on the uniquely-named default". Any
+// other error propagates.
+func isOnDefaultBranchCommon(b vcsBackend) (bool, error) {
+	def, err := b.DefaultBranch()
+	if err != nil {
+		return false, err
+	}
+	cur, err := b.CurrentBranch()
+	if err != nil {
+		var ee *exitErr
+		if errors.As(err, &ee) && ee.code == exitCodeAmbiguous {
+			return false, nil
+		}
+		return false, err
+	}
+	return cur == def, nil
 }
 
 // parseEpochOrZero parses s as a unix-epoch integer. Returns 0 on parse

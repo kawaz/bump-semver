@@ -3,7 +3,7 @@ title: vcs sync の動作マトリクス検証 (= 既に sync 済 / divergent / 
 status: open
 category: task
 created: 2026-06-22T22:08:18+09:00
-last_read:
+last_read: 2026-06-23T11:00:40+09:00
 open_entered: 2026-06-22T22:08:18+09:00
 wip_entered:
 blocked_entered:

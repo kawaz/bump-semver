@@ -1,3 +1,22 @@
+---
+title: vcs に worktree/workspace 検出 + default branch への promote サブコマンドを追加
+status: open
+category: request
+created: 2026-06-18T11:29:21+09:00
+last_read:
+open_entered: 2026-06-18T11:29:21+09:00
+wip_entered:
+blocked_entered:
+pending_entered:
+discarded_entered:
+resolved_entered:
+discard_reason:
+pending_reason:
+close_reason:
+blocked_by:
+origin: 自リポ TODO
+---
+
 # vcs に worktree/workspace 検出 + default branch への promote サブコマンドを追加
 
 ## 背景

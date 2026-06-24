@@ -1,6 +1,6 @@
 ---
 title: vcs に worktree/workspace 検出 + default branch への promote サブコマンドを追加
-status: open
+status: resolved
 category: request
 created: 2026-06-18T11:29:21+09:00
 last_read:
@@ -9,10 +9,11 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: "2026-06-24T17:56:45+09:00"
 discard_reason:
 pending_reason:
 close_reason:
+  - "implemented"
 blocked_by:
 origin: 自リポ TODO
 ---

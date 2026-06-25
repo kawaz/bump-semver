@@ -30,7 +30,9 @@ check-on-default-branch:
 - bash の `set -euo pipefail` 下では subshell `$(...)` の exit 非ゼロが recipe 全体を殺し、hint メッセージを出す前に exit 4 で死ぬ。
 - 回避策: `cur=$(bump-semver vcs get current-branch 2>/dev/null || echo "(ambiguous)")` でフォールバック。
 - 4 リポ統一の justfile gate にこのフォールバックを組込み済 (v0.40.1)。
-- 上流側 (`bump-semver`) の改善候補: `vcs get current-branch --fallback=VALUE` flag や `vcs is on-default-branch --verbose` で current 値も併せて返す等。設計判断要 (= 別 issue で起票予定)。
+- **解決 (案 0 採用)**: hint メッセージから `'%s' bookmark/branch にいます` の `cur` 表示を削除し、`is on-default-branch` が false という事実のみで gate する形に変更。`vcs get current-branch` の呼び出し自体を 5 リポすべての justfile から削除した (= ambiguous fallback の論点が消滅)。
+- 設計上の根拠: jj では bookmark が無い change が普通であり、`is on-default-branch` が「祖先 bookmark が default と一致するか」を判定すれば gate として十分機能する。`cur` 名は装飾情報で、利用者は `jj st` / `git branch --show-current` で自分の場所を確認できる。
+- ライブラリ拡張 (= `--fallback` / `--no-error` / `--verbose`) は当面不要。別ユースケースで `current-branch` が要る場面が出たら再検討。
 
 ### 3. `git push . <rev>:refs/heads/<default>` は `receive.denyCurrentBranch=refuse` で reject される
 

@@ -73,9 +73,8 @@ ensure-clean:
 [script]
 check-on-default-branch:
     if ! bump-semver vcs is on-default-branch; then
-        cur=$(bump-semver vcs get current-branch 2>/dev/null || echo "(ambiguous)")
         bn=$(bump-semver vcs get default-branch)
-        printf >&2 "⚠ 現在 '%s' bookmark/branch にいます。%s に合流してから push してください\n  1. just sync         # %s@origin に rebase\n  2. just promote      # %s bookmark を current commit に forward\n  3. %s ワークスペースに移動して just push\n" "$cur" "$bn" "$bn" "$bn" "$bn"
+        printf >&2 "⚠ default branch (%s) に合流してから push してください\n  1. just sync         # %s@origin に rebase\n  2. just promote      # %s bookmark を current commit に forward\n  3. %s ワークスペースに移動して just push\n" "$bn" "$bn" "$bn" "$bn"
         exit 1
     fi
 

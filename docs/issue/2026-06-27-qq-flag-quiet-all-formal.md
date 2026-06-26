@@ -67,3 +67,37 @@ c. もし `-q -q` = `--quiet-all` が cobra の counting flag 機能由来で意
 
 - [ ] `-qq` の挙動 (= `--quiet-all` 相当) が help または docs に明示されている
 - [ ] 利用者が `-qq` を見て help を引いたとき由来が分かる
+
+## 追記 (2026-06-27, from grapheme.mbt session acad9f77...)
+
+grapheme.mbt 側で justfile + publish.yml の `bump-semver` 呼び出し 7 箇所を意図単位でレビューした結果が来た:
+
+- **5 箇所は `--quiet` で十分** (value 取得経路、error は早期 fail させたい)
+- **2 箇所は意図的に `-qq`** (exit code で分岐する用途、自前で error 出すので bump-semver の stderr 不要)
+- 機械的コピペで `-qq` を撒いていたのが「意図に応じて使い分け」に綺麗に整理された
+
+## 結論 (= 当事者推奨の優先順)
+
+**提案 a (help 文 1 行追記) で十分**:
+- 「-qq = -q を 2 つ重ねた強い quiet」は Unix 慣習 (git rev-parse / grep -qq) で素直に通じる
+- 提案 c (formal alias 化 via cobra) はメンテコストの割に得るものが少ない (既に動いてる)
+- help に「-qq は --quiet-all 相当 = error も silence」を 1 行入れるだけで利用側の意図レビュー判断材料になる、安価で効く
+- 提案 b (README quiet section) は a があれば不要、好みで追加
+
+## 具体的な help 文案 (grapheme.mbt 提案、そのまま採用候補)
+
+```
+-q, --quiet         suppress stdout and hints (get keeps its value);
+                    repeat (-qq) for --quiet-all behavior
+    --quiet-all     suppress stdout, hints, and errors (get keeps its value; use with caution)
+```
+
+## 実装範囲
+
+- src/help.go or cobra help text の該当 flag definition で help string を更新
+- 全 sub-command で `-q` を持つ箇所 (get / compare / 他) すべてに同じ文言追加するか検討 (= 一貫性)
+- README / docs/ には optional で追記
+
+## 関連
+
+- v0.42.0 同梱候補 (= push-wip / default-branch-path 機能群と一緒に release)

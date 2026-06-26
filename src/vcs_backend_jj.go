@@ -1031,6 +1031,88 @@ func (j *jjBackend) DefaultBranch() (string, error) {
 	}
 }
 
+// DefaultBranchPath returns the absolute path to the workspace whose
+// nearest bookmark to @ equals DefaultBranch(). See the interface
+// comment on DefaultBranchPath for the full contract.
+//
+// Implementation: `jj workspace list -T '...'` emits one line per
+// workspace with name + root + @-change_id. For each workspace, a second
+// `jj log -r 'heads(::<change_id> & bookmarks())'` resolves its current
+// branch (= same query CurrentBranch uses). Candidates whose current
+// branch == DefaultBranch() are tie-broken via pickDefaultBranchPath.
+//
+// The N+1 query shape is acceptable because workspace counts are tiny
+// (typically 2-5); a single revset union query would lose the workspace
+// ↔ bookmark mapping needed for the tie-break.
+func (j *jjBackend) DefaultBranchPath() (string, error) {
+	def, err := j.DefaultBranch()
+	if err != nil {
+		return "", err
+	}
+	// Template fields: name, absolute root path, @-change_id (tab-separated).
+	out, err := runBackendCmd("jj", "workspace", "list",
+		"-T", `self.name() ++ "\t" ++ self.root() ++ "\t" ++ self.target().change_id() ++ "\n"`)
+	if err != nil {
+		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	var candidates []defaultBranchPathCandidate
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		name, root, changeID := fields[0], fields[1], fields[2]
+		if name == "" || root == "" || changeID == "" {
+			continue
+		}
+		bookmark, berr := jjNearestBookmark(changeID)
+		if berr != nil {
+			// A workspace whose nearest-bookmark query fails (e.g. abandoned
+			// change) is skipped rather than aborting the entire lookup —
+			// the other workspaces may still resolve cleanly.
+			continue
+		}
+		if bookmark == def {
+			candidates = append(candidates, defaultBranchPathCandidate{
+				name: name,
+				path: root,
+			})
+		}
+	}
+	return pickDefaultBranchPath(candidates, def)
+}
+
+// jjNearestBookmark returns the unique bookmark name on the nearest
+// bookmark-bearing ancestor of `changeID` (= the same `heads(::X &
+// bookmarks())` query CurrentBranch uses, parameterised on X). Returns
+// "" when zero or multiple bookmarks match (ambiguous — caller treats
+// as "not on default" rather than erroring).
+func jjNearestBookmark(changeID string) (string, error) {
+	out, err := runBackendCmd("jj", "log",
+		"-r", "heads(::"+changeID+" & bookmarks())",
+		"--no-graph",
+		"-T", `bookmarks.map(|b| b.name()).join("\n") ++ "\n"`)
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, 4)
+	for _, line := range strings.Split(string(out), "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		names = append(names, s)
+	}
+	if len(names) != 1 {
+		return "", nil // zero or multiple → ambiguous, not on a uniquely-named bookmark
+	}
+	return names[0], nil
+}
+
 // IsOnDefaultBranch reports whether the bookmark unique to @'s ancestor
 // head equals DefaultBranch(). Ambiguous current branch (no bookmark, or
 // multiple bookmarks at head) is reported as "not on default" (false, nil)
@@ -1068,6 +1150,43 @@ func (j *jjBackend) Promote(opts promoteOpts) error {
 		// "Refusing to move bookmark backwards" / "would move backwards".
 		if strings.Contains(joined, "backwards") || strings.Contains(joined, "Refusing to move") {
 			return &exitErr{code: exitCodeNonFastForward, msg: joined}
+		}
+		return &exitErr{code: exitCodeVCSExec, msg: joined}
+	}
+	writePushDiagnostic(opts.Stdout, stderr)
+	return nil
+}
+
+// BookmarkSet writes the named jj bookmark so it points at opts.Rev.
+// `jj bookmark set` creates the bookmark if absent and is forward-only by
+// default; opts.AllowBackwards adds `--allow-backwards` to permit non-FF
+// moves.
+func (j *jjBackend) BookmarkSet(opts bookmarkSetOpts) error {
+	rev := opts.Rev
+	if rev == "" {
+		rev = "@"
+	}
+	rev = translateRev(rev, vcsJj)
+	args := []string{"bookmark", "set", opts.Name, "-r", rev}
+	if opts.AllowBackwards {
+		args = append(args, "--allow-backwards")
+	}
+	stdout, stderr, code, runErr := runBackendCapture("jj", args...)
+	if runErr != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: runErr.Error()}
+	}
+	if code != 0 {
+		joined := strings.TrimSpace(stderr)
+		if joined == "" {
+			joined = strings.TrimSpace(stdout)
+		}
+		// jj surfaces backwards-move rejections as
+		// "Refusing to move bookmark backwards" / "would move backwards".
+		if strings.Contains(joined, "backwards") || strings.Contains(joined, "Refusing to move") {
+			return &exitErr{
+				code: exitCodeNonFastForward,
+				msg:  joined + " (use --allow-backwards to override)",
+			}
 		}
 		return &exitErr{code: exitCodeVCSExec, msg: joined}
 	}

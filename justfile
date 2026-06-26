@@ -62,48 +62,42 @@ ci: lint test build
 ensure-clean:
     bump-semver vcs is clean
 
-# fail with a sync→promote→push hint when the current bookmark / branch
-# is not the default (DR-0038 dogfood). We gate on the *branch* (not
-# IsWorktree) because the jj convention used here places the long-lived
-# `main` workspace as a *secondary* workspace — IsWorktree returns true
-# there too, so a worktree-based gate would block legitimate pushes from
-# `main`. The on-default-branch flip matches the actual question: "is
-# this the bookmark I should be pushing?"
+# fail if the current bookmark / branch is not the default. DR-0038 で確定:
+# IsWorktree でなく on-default-branch を gate にする (= jj 運用で main
+# workspace が secondary worktree でも push を妨げない)。
 [private]
-[script]
 check-on-default-branch:
-    if ! bump-semver vcs is on-default-branch; then
-        bn=$(bump-semver vcs get default-branch)
-        printf >&2 "⚠ default branch (%s) に合流してから push してください\n  1. just sync         # %s@origin に rebase\n  2. just promote      # %s bookmark を current commit に forward\n  3. %s ワークスペースに移動して just push\n" "$bn" "$bn" "$bn" "$bn"
-        exit 1
-    fi
+    bump-semver vcs is on-default-branch
 
 # 現在の worktree を default branch (= origin/<default>) に rebase (DR-0038)
 sync:
     bump-semver vcs sync --onto $(bump-semver vcs get default-branch)@origin
 
-# default branch を現在の commit に forward (DR-0038、push しない)
+# secondary worktree で作業した change を default branch に合流させる時、sync の後で default branch bookmark/ref を @ に forward (ref を動かすだけで push はしない、push は `just push` で)。
 promote:
     bump-semver vcs promote
 
-# fail if bump-trigger-paths changed since origin/main but VERSION was not bumped
+# fail if bump-trigger-paths changed since default-branch@origin but VERSION was not bumped
 # (DR-0033 dogfood: test 専用の追加では VERSION bump を要求しない)
 check-version-bumped: (_check-version-bumped "src/" "go.mod" "go.sum")
 
-# (helper) diff があれば VERSION が origin/main より上がっているか検証
+# (helper) diff があれば VERSION が default-branch@origin より上がっているか検証
 # `--excludes glob:src/**/*_test.go` で test 専用変更を bump-trigger から除外
 # (= DR-0033、literal `src/` は内部で glob:src/**/* 扱いになるので exclude が効く)
 [private]
 [script]
 _check-version-bumped *target_paths:
-    if ! bump-semver vcs diff -q main@origin -- "$@" --excludes 'glob:src/**/*_test.go'; then
-        bump-semver compare gt VERSION vcs:main@origin
+    bn=$(bump-semver vcs get default-branch)
+    if ! bump-semver vcs diff -q "${bn}@origin" -- "$@" --excludes 'glob:src/**/*_test.go'; then
+        bump-semver compare gt VERSION "vcs:${bn}@origin"
     fi
 
-# fail if VERSION is not greater than the latest release (origin/main の VERSION)
+# fail if VERSION is not greater than the latest release (default-branch@origin の VERSION)
 [private]
+[script]
 check-against-latest-release:
-    bump-semver compare gt VERSION vcs:origin/main
+    bn=$(bump-semver vcs get default-branch)
+    bump-semver compare gt VERSION "vcs:${bn}@origin"
 
 # translation pair freshness check via `bump-semver vcs outdated`
 [private]
@@ -117,10 +111,40 @@ bump-version level="patch": ensure-clean
     bump-semver "$1" VERSION --write --quiet
     bump-semver vcs commit -m "Release v$(bump-semver get VERSION)" VERSION
 
-# push to origin/main with gates
+# push default branch to origin with full release gates (release 専用; check-on-default-branch + ci + outdated-translations + version-bumped)
 push: check-on-default-branch ci check-outdated-translations check-version-bumped
-    bump-semver vcs push --branch main --jj-bookmark-auto-advance
-    @echo "[hint] gh-monitor:watch-workflow --sha $(bump-semver vcs get commit-id --rev main) --on-success release.yml 'just on-success-release' kawaz/bump-semver"
+    bump-semver vcs push --branch "$(bump-semver vcs get default-branch)" --jj-bookmark-auto-advance
+    cmux-msg notify --self --text "Monitor で 'just watch' を起動して" 2>/dev/null || true
+
+# release.yml の完了を SHA-pinned watch (push 後の `cmux-msg notify --self` で AI に起動指示が届く)
+watch:
+    watch-workflow.sh --sha $(bump-semver vcs get commit-id --rev "$(bump-semver vcs get default-branch)") --on-success release.yml 'just on-success-release' kawaz/bump-semver
+
+# push the current feature bookmark/branch to origin (feature 用; ensure-clean + ci のみ、release ゲート無し)
+[script]
+push-wip: ensure-clean ci
+    # bookmark 決定:
+    # - ユニークな current-branch → 採用
+    # - jj で bookmark 不在 / ambiguous → workspace 名で auto-set (default-branch と衝突なら fail)
+    # - git detached HEAD → fail (vcs サブコマンドの stderr に任せる)
+    bn=$(bump-semver vcs get default-branch)
+    if cur=$(bump-semver vcs get current-branch 2>/dev/null); then
+        target="$cur"
+    else
+        rc=$?
+        if [ "$rc" -eq 4 ] && bump-semver vcs is jj; then
+            # jj: ambiguous or 不在 → workspace 名を採用
+            ws=$(bump-semver vcs get worktree-name)
+            [ -n "$ws" ] && [ "$ws" != "$bn" ] || exit 1
+            bump-semver vcs bookmark set "$ws" -r @
+            target="$ws"
+        else
+            exit "$rc"
+        fi
+    fi
+    # default branch を push しようとしているなら release 経路 (just push) へ
+    [ "$target" != "$bn" ] || exit 1
+    bump-semver vcs push --branch "$target" --jj-bookmark-auto-advance
 
 # release.yml workflow が success になった時に AI が実行する action
 # (watch-workflow の `--on-success release.yml 'just on-success-release'` 経由で

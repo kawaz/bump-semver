@@ -324,6 +324,34 @@ type vcsBackend interface {
 	// when none exist.
 	DefaultBranch() (string, error)
 
+	// DefaultBranchPath returns the absolute path to the worktree (git) /
+	// workspace (jj) that currently has the default branch checked out.
+	//
+	// Resolution: "which worktree's current-branch equals DefaultBranch()?":
+	//
+	//   - git: iterate `git worktree list --porcelain`, picking entries
+	//     whose `branch refs/heads/<name>` matches DefaultBranch().
+	//   - jj: iterate `jj workspace list`, picking entries whose nearest
+	//     bookmark to the workspace's @ equals DefaultBranch() — same
+	//     semantic CurrentBranch() uses for the current workspace.
+	//
+	// Tie-break when multiple candidates match (post-`workspace add`
+	// window where both share @-'s bookmark, or two linked git worktrees
+	// both checking out the default branch):
+	//
+	//   - Exactly one candidate's workspace / worktree name equals the
+	//     default-branch name (e.g. workspace "main" when DefaultBranch()
+	//     == "main") → that candidate wins (kawaz convention: the
+	//     workspace named after the branch is the source of truth).
+	//   - Otherwise *exitErr{code: exitCodeNonFastForward (5)} —
+	//     distinct from "no match" so callers can tell apart absence vs
+	//     ambiguity.
+	//
+	// Returns *exitErr{code: exitCodeAmbiguous (4)} when no worktree has
+	// the default branch checked out (= "promote first, then come back").
+	// VCS subprocess failure surfaces as *exitErr{code: exitCodeVCSExec}.
+	DefaultBranchPath() (string, error)
+
 	// IsOnDefaultBranch reports whether the current branch / bookmark
 	// equals the default branch.
 	//
@@ -357,6 +385,32 @@ type vcsBackend interface {
 	// as *exitErr with the corresponding code.
 	Promote(opts promoteOpts) error
 
+	// BookmarkSet writes the named branch (git) / bookmark (jj) so it
+	// points at opts.Rev. Unlike Promote (which targets the default branch
+	// only and is always FF-only), BookmarkSet names the target ref
+	// explicitly and accepts opts.AllowBackwards to permit non-FF moves.
+	// The intended use cases:
+	//
+	//   - WIP feature bookmark: `vcs bookmark set my-feature -r @` from
+	//     just push-wip to declare "this bookmark sits on the current
+	//     commit" before push.
+	//   - Bookmark recovery: after a manual amend / rebase that left the
+	//     bookmark behind, `--allow-backwards` lets the user re-anchor it.
+	//
+	//   - git: `git update-ref refs/heads/<name> <sha>` with a CAS old-SHA
+	//     when the ref exists. Without --allow-backwards the dispatcher
+	//     enforces FF via `git merge-base --is-ancestor`; same shape as
+	//     Promote. Bypasses receive.denyCurrentBranch the same way (= the
+	//     other worktree's index/workdir aren't touched).
+	//   - jj: `jj bookmark set <name> -r <rev>` (forward-only by default),
+	//     plus `--allow-backwards` when opts.AllowBackwards is set. The
+	//     create vs move distinction is handled by jj itself (`set` creates
+	//     if absent).
+	//
+	// Errors: non-FF without --allow-backwards → *exitErr{exitCodeNonFastForward}.
+	// VCS-exec failures (bad rev, ref-write race) → *exitErr{exitCodeVCSExec}.
+	BookmarkSet(opts bookmarkSetOpts) error
+
 	// Sync rebases the current worktree / workspace onto opts.Onto. The
 	// `--onto` is required (no default-推論 — the caller names it
 	// explicitly to keep the side-effect predictable).
@@ -380,6 +434,30 @@ type promoteOpts struct {
 	// Stdout / Stderr receive the underlying tool's diagnostic output.
 	// nil writers are silently ignored — backend tests that only assert
 	// exit semantics can leave them unset.
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// bookmarkSetOpts collects the per-call inputs to BookmarkSet. Mirrors the
+// struct shape of promoteOpts so the two verbs share extension surface.
+type bookmarkSetOpts struct {
+	// Name is the branch (git) / bookmark (jj) name to write. Required;
+	// the dispatcher validates non-empty and screens for ref-name shape
+	// problems (leading `-`, whitespace, refs/ prefix) before reaching here.
+	Name string
+
+	// Rev is the revision the bookmark should point at. Empty → backend
+	// default (git: HEAD, jj: @-). The same `@` ↔ HEAD translation that
+	// runs for `vcs get commit-id` applies here.
+	Rev string
+
+	// AllowBackwards permits non-fast-forward moves (= the new Rev is not
+	// a descendant of the current ref tip). Without it, a backwards move
+	// is *exitErr{exitCodeNonFastForward}.
+	AllowBackwards bool
+
+	// Stdout / Stderr receive the underlying tool's diagnostic output.
+	// nil writers are silently ignored.
 	Stdout io.Writer
 	Stderr io.Writer
 }
@@ -825,6 +903,60 @@ func isOnDefaultBranchCommon(b vcsBackend) (bool, error) {
 		return false, err
 	}
 	return cur == def, nil
+}
+
+// defaultBranchPathCandidate names one worktree / workspace candidate for
+// DefaultBranchPath resolution. `name` is the worktree dir basename (git)
+// / workspace name (jj); `path` is the absolute filesystem path.
+type defaultBranchPathCandidate struct {
+	name string
+	path string
+}
+
+// pickDefaultBranchPath applies the DefaultBranchPath tie-break rule to a
+// pre-filtered list of candidates (= worktrees / workspaces whose
+// current-branch already equals `defaultBranch`). Returns the picked path
+// or an *exitErr with the right code:
+//
+//   - len == 0 → exit 4 (no worktree has the default branch checked out)
+//   - len == 1 → that path
+//   - len >  1 → if exactly one candidate's name == defaultBranch, that
+//     candidate wins; otherwise exit 5 (ambiguous, kawaz tie-break failed)
+//
+// The exit-code split between "no match" (4) and "ambiguous" (5) is
+// deliberate: callers in scripts can branch on "promote first" vs
+// "disambiguate manually". See DefaultBranchPath interface comment for
+// the full rationale.
+func pickDefaultBranchPath(candidates []defaultBranchPathCandidate, defaultBranch string) (string, error) {
+	switch len(candidates) {
+	case 0:
+		return "", &exitErr{
+			code: exitCodeAmbiguous,
+			msg:  fmt.Sprintf("default-branch-path: no worktree has %q checked out", defaultBranch),
+		}
+	case 1:
+		return candidates[0].path, nil
+	}
+	// Tie-break: workspace / worktree name == default branch name wins.
+	var named []defaultBranchPathCandidate
+	for _, c := range candidates {
+		if c.name == defaultBranch {
+			named = append(named, c)
+		}
+	}
+	if len(named) == 1 {
+		return named[0].path, nil
+	}
+	names := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		names = append(names, c.name)
+	}
+	return "", &exitErr{
+		code: exitCodeNonFastForward,
+		msg: fmt.Sprintf(
+			"default-branch-path: %d worktrees have %q checked out (%s); no unique tie-break (none / multiple named %q)",
+			len(candidates), defaultBranch, strings.Join(names, ", "), defaultBranch),
+	}
 }
 
 // parseEpochOrZero parses s as a unix-epoch integer. Returns 0 on parse

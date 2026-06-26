@@ -295,4 +295,28 @@ func TestRun_VcsGet_GlobalQuietStillAccepted(t *testing.T) {
 	})
 }
 
+// TestRun_VcsGet_DefaultBranchPath_Git: end-to-end dispatch from CLI
+// argv through the git backend — verifies the new key registers in
+// vcsGetKeys, dispatches to backend.DefaultBranchPath(), and prints the
+// resolved absolute path to stdout.
+func TestRun_VcsGet_DefaultBranchPath_Git(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout bytes.Buffer
+		err := run([]string{"vcs", "get", "default-branch-path"}, bytes.NewReader(nil), &stdout, &bytes.Buffer{})
+		if err != nil {
+			t.Fatalf("vcs get default-branch-path: %v", err)
+		}
+		got, _ := filepath.EvalSymlinks(strings.TrimSpace(stdout.String()))
+		want, _ := filepath.EvalSymlinks(dir)
+		if got != want {
+			t.Errorf("default-branch-path = %q, want %q", got, want)
+		}
+	})
+}
+
 // --- DR-0020 PR-5: vcs fetch / vcs push dispatcher tests ------------------

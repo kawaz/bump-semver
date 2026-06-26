@@ -32,9 +32,11 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 		return runVcsCmdPromote(args, stdout, stderr)
 	case "sync":
 		return runVcsCmdSync(args, stdout, stderr)
+	case "bookmark":
+		return runVcsCmdBookmark(args, stdout, stderr)
 	default:
 		return emitVcsUsage(stderr, args,
-			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag / outdated / promote / sync)", args.vcsVerb))
+			fmt.Errorf("unknown vcs verb: %s (expected: get / is / diff / commit / fetch / push / tag / outdated / promote / sync / bookmark)", args.vcsVerb))
 	}
 }
 
@@ -43,7 +45,7 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 //
 // DR-0032: latest-tag / latest-release replace the v0.29.0 `vcs tag latest
 // --source <tag|release>` (= source 軸を verb 名に畳む)。
-var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release", "worktree-name", "default-branch"}
+var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release", "worktree-name", "default-branch", "default-branch-path"}
 
 // runVcsCmdGet implements `vcs get <key>`.
 //
@@ -176,6 +178,13 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 			return emitVcsErr(stderr, args, err)
 		}
 		emit(name)
+		return nil
+	case "default-branch-path":
+		path, err := b.DefaultBranchPath()
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		emit(path)
 		return nil
 	}
 	// Unreachable: key was validated against vcsGetKeys above.
@@ -847,6 +856,107 @@ func runVcsCmdTagDelete(args cliArgs, stdout, stderr io.Writer) error {
 		opts.Stderr = stderr
 	}
 	if err := b.TagDelete(opts); err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	return nil
+}
+
+// runVcsCmdBookmark dispatches `vcs bookmark <sub-verb>`. Today the only
+// supported sub-verb is `set`; the verb is shaped as a two-tier parent
+// (mirroring `vcs tag`) so future bookmark verbs (list / delete) land here
+// without restructuring.
+//
+// Exit codes (DR-0020):
+//
+//   - 0  success (incl. idempotent no-op when NAME already at REV)
+//   - 2  usage error (sub-verb missing/unknown, NAME shape problem)
+//   - 3  VCS subprocess error (unresolvable REV, ref-write race, not a repo)
+//   - 5  non-fast-forward without --allow-backwards
+func runVcsCmdBookmark(args cliArgs, stdout, stderr io.Writer) error {
+	switch args.vcsBookmark.SubVerb {
+	case "set":
+		return runVcsCmdBookmarkSet(args, stdout, stderr)
+	default:
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("unknown vcs bookmark sub-verb: %q (expected: set)", args.vcsBookmark.SubVerb))
+	}
+}
+
+// validBookmarkName screens for bad NAME values before they reach the
+// backend. Shares its concerns with validTagName: empty / whitespace /
+// `refs/`-prefix / leading-`-` are all rejected upfront so a malformed
+// NAME cannot reach `git update-ref <ref> ...` or `jj bookmark set NAME`
+// as either a malformed ref or a leading-flag injection. More aggressive
+// checks (full git check-ref-format) would be over-engineering for the
+// cases users actually hit.
+func validBookmarkName(name string) error {
+	if name == "" {
+		return fmt.Errorf("NAME must not be empty")
+	}
+	if strings.ContainsAny(name, " \t\n\r") {
+		return fmt.Errorf("NAME %q contains whitespace (not a valid ref name)", name)
+	}
+	if strings.HasPrefix(name, "refs/") {
+		return fmt.Errorf("NAME %q must not start with refs/ (the branch-ref prefix is added automatically)", name)
+	}
+	// 引数インジェクション対策 (C-1): a leading-`-` NAME would be parsed by
+	// `jj bookmark set <name> ...` / `git update-ref refs/heads/<name>` as a
+	// flag (or via the refs/heads/ prefix become refs/heads/-flag which jj
+	// would parse). Reject it explicitly.
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("NAME %q must not start with '-' (would be parsed as a git/jj option)", name)
+	}
+	return nil
+}
+
+// runVcsCmdBookmarkSet implements `vcs bookmark set NAME [-r/--rev REV]
+// [--allow-backwards]`.
+//
+// Grammar requirements:
+//   - NAME is the sole positional, required. No auto-derivation (e.g. from
+//     the current worktree name) — explicit is safer than guessed.
+//   - --rev defaults to "HEAD" (git) / "@" (jj). The backend translates @ ↔
+//     HEAD as needed via translateRev (DR-0031).
+//   - --allow-backwards opts into non-FF moves (= recovery / rewind case).
+//     Without it, a non-FF move is exit 5.
+func runVcsCmdBookmarkSet(args cliArgs, stdout, stderr io.Writer) error {
+	if len(args.vcsArgs) == 0 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs bookmark set: NAME is required (usage: vcs bookmark set NAME [-r REV])"))
+	}
+	if len(args.vcsArgs) > 1 {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs bookmark set: takes exactly one NAME, got %d", len(args.vcsArgs)))
+	}
+	name := args.vcsArgs[0]
+	if err := validBookmarkName(name); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs bookmark set: %w", err))
+	}
+	rev := derefOr(args.vcsBookmark.Rev, "")
+	if args.vcsBookmark.Rev != nil && rev == "" {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("vcs bookmark set: --rev value must not be empty"))
+	}
+	// 引数インジェクション対策 (C-1): leading-`-` rev would reach
+	// `git rev-parse <rev>` / `jj bookmark set NAME -r <rev>` as a flag.
+	if err := validateUserRev(rev); err != nil {
+		return emitVcsUsage(stderr, args, fmt.Errorf("vcs bookmark set: %w", err))
+	}
+	vcsOverride, _ := parseVcsOverride(derefOr(args.vcsBase.Override, "")) // validated in validateVcsOverride
+	b, err := newVcsBackend(vcsOverride)
+	if err != nil {
+		return emitVcsErr(stderr, args, err)
+	}
+	opts := bookmarkSetOpts{
+		Name:           name,
+		Rev:            rev,
+		AllowBackwards: args.vcsBookmark.AllowBackwards,
+	}
+	if !args.output.Verbosity.ShouldSuppressStdout() {
+		opts.Stdout = stdout
+		opts.Stderr = stderr
+	}
+	if err := b.BookmarkSet(opts); err != nil {
 		return emitVcsErr(stderr, args, err)
 	}
 	return nil

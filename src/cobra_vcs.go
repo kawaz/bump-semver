@@ -93,6 +93,7 @@ func buildVcsCmd(stdin io.Reader, stdout, stderr io.Writer) (*cobra.Command, *cl
 		newVcsOutdatedCmd(&args, stdout, stderr),
 		newVcsPromoteCmd(&args, stdout, stderr),
 		newVcsSyncCmd(&args, stdout, stderr),
+		newVcsBookmarkCmd(&args, stdout, stderr),
 	)
 	return vcsCmd, &args
 }
@@ -410,6 +411,62 @@ func newVcsSyncCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 	}
 	cmd.Flags().Var(newOnceString("--onto", &args.vcsSync.Onto), "onto", "target `REF` to rebase onto (required)")
 	applyVcsVerbHelp(cmd)
+	return cmd
+}
+
+// --- vcs bookmark (two-tier: set; future: list / delete) -------------------
+
+func newVcsBookmarkCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "bookmark",
+		Short:         "manage branches/bookmarks (set)",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		// `vcs bookmark` (no sub-verb) → bookmark help; `vcs bookmark
+		// <unknown>` → dispatcher emits the "unknown sub-verb" usage error.
+		RunE: func(cmd *cobra.Command, posArgs []string) error {
+			if len(posArgs) == 0 {
+				return cmd.Help()
+			}
+			if err := validateVcsOverride(stderr, *args); err != nil {
+				return err
+			}
+			args.vcsVerb = "bookmark"
+			args.vcsBookmark.SubVerb = posArgs[0]
+			args.vcsArgs = posArgs[1:]
+			return runVcsCmdBookmark(*args, stdout, stderr)
+		},
+	}
+	setHelp(cmd, vcsBookmarkLong, vcsBookmarkExitCodes, "")
+	cmd.AddCommand(newVcsBookmarkSetCmd(args, stdout, stderr))
+	return cmd
+}
+
+func newVcsBookmarkSetCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:           "set",
+		Short:         "create or move a branch/bookmark to a revision",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, posArgs []string) error {
+			if bareVerb(cmd, posArgs) {
+				return cmd.Help()
+			}
+			if err := validateVcsOverride(stderr, *args); err != nil {
+				return err
+			}
+			args.vcsVerb = "bookmark"
+			args.vcsBookmark.SubVerb = "set"
+			args.vcsArgs = posArgs
+			return runVcsCmdBookmarkSet(*args, stdout, stderr)
+		},
+	}
+	f := cmd.Flags()
+	// -r shorthand mirrors jj's own `jj bookmark set NAME -r REV`; the
+	// justfile's push-wip path calls `bump-semver vcs bookmark set "$ws" -r @`.
+	f.VarP(newOnceString("--rev", &args.vcsBookmark.Rev), "rev", "r", "target `REV` (default: @ / HEAD)")
+	f.BoolVar(&args.vcsBookmark.AllowBackwards, "allow-backwards", false, "permit a non-fast-forward move (default: FF-only)")
+	setHelp(cmd, vcsBookmarkSetLong, vcsBookmarkSetExitCodes, vcsBookmarkSetExamples)
 	return cmd
 }
 

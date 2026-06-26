@@ -4,6 +4,11 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.42.0
+
+- Added `vcs bookmark set NAME [-r/--rev REV] [--allow-backwards]` for the `just push-wip` path: create-or-move a branch (git) / bookmark (jj) explicitly named by the caller. Defaults to HEAD (git) / `@` (jj); fast-forward-only by default, with `--allow-backwards` for recovery / rewind cases. Idempotent same-rev sets are exit 0. Non-FF without `--allow-backwards` is exit 5 (mirrors `vcs promote`). git path bypasses `receive.denyCurrentBranch` via `update-ref` (same trick as `vcs promote`) so it works across linked worktrees.
+- Added `vcs get default-branch-path` — returns the absolute path of the worktree (git) / workspace (jj) that currently has the default branch checked out. Tie-break: when multiple worktrees match, the one whose dir basename (git) / workspace name (jj) equals the default branch name wins; otherwise exit 5. No matching worktree → exit 4. Symmetric counterpart to `vcs get default-branch` for callers that need the canonical worktree path (e.g. `cd "$(bump-semver vcs get default-branch-path)" && just bump-version`).
+
 ## v0.41.0
 
 - Added MoonBit module manifest auto-detect: `moon.mod` (new DSL format, text+regex) and `moon.mod.json` (legacy JSON, `$.version` / `$.name`). Verified against `moon 0.1.20260618` fresh `moon new` output and against in-tree `~/.moon/lib/core/moon.mod`. The DSL regex picks only top-level `^\s*version = "..."` so the bespoke `import { ... }` / `options( ... )` blocks pass through untouched.

@@ -643,6 +643,70 @@ func (g *gitBackend) DefaultBranch() (string, error) {
 	return resolveDefaultBranchViaGit()
 }
 
+// DefaultBranchPath returns the absolute path to the worktree that
+// currently has the default branch checked out. See the interface
+// comment on DefaultBranchPath for the full contract.
+//
+// Implementation: parse `git worktree list --porcelain` (one record per
+// blank-line-separated paragraph; each record has a `worktree <path>`
+// header and a `branch refs/heads/<name>` line when on a branch). Filter
+// to records whose branch matches DefaultBranch(), then apply the shared
+// tie-break (pickDefaultBranchPath).
+func (g *gitBackend) DefaultBranchPath() (string, error) {
+	def, err := g.DefaultBranch()
+	if err != nil {
+		return "", err
+	}
+	out, err := runBackendCmd("git", "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	candidates := parseGitWorktreesForBranch(string(out), def)
+	return pickDefaultBranchPath(candidates, def)
+}
+
+// parseGitWorktreesForBranch extracts worktree entries from `git worktree
+// list --porcelain` output that have `defaultBranch` checked out. Each
+// porcelain record looks like:
+//
+//	worktree /abs/path
+//	HEAD <40-char-sha>
+//	branch refs/heads/<name>
+//
+// Records are blank-line-separated; the last record may have no trailing
+// blank line. Detached HEAD records carry `detached` instead of `branch`;
+// bare records carry `bare`. Only `branch refs/heads/<defaultBranch>` is a
+// candidate.
+func parseGitWorktreesForBranch(out, defaultBranch string) []defaultBranchPathCandidate {
+	want := "refs/heads/" + defaultBranch
+	var candidates []defaultBranchPathCandidate
+	var curPath, curBranch string
+	flush := func() {
+		if curPath != "" && curBranch == want {
+			candidates = append(candidates, defaultBranchPathCandidate{
+				name: filepath.Base(curPath),
+				path: curPath,
+			})
+		}
+		curPath = ""
+		curBranch = ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			flush()
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			curPath = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "branch "):
+			curBranch = strings.TrimPrefix(line, "branch ")
+		}
+	}
+	flush() // tail record without trailing blank line
+	return candidates
+}
+
 // IsOnDefaultBranch reports whether CurrentBranch() == DefaultBranch().
 // Detached HEAD (ambiguous current) is "not on default" rather than an
 // error — the predicate's contract is a boolean.
@@ -711,6 +775,61 @@ func (g *gitBackend) Promote(opts promoteOpts) error {
 		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
 	}
 	writePushDiagnostic(opts.Stdout, fmt.Sprintf("Moved %s to %s", def, sha[:12]))
+	return nil
+}
+
+// BookmarkSet writes refs/heads/<Name> so it points at the SHA opts.Rev
+// resolves to. Mirrors Promote's update-ref approach (= bypasses
+// receive.denyCurrentBranch for cross-worktree updates) but takes Name
+// explicitly and accepts opts.AllowBackwards for non-FF moves.
+func (g *gitBackend) BookmarkSet(opts bookmarkSetOpts) error {
+	rev := opts.Rev
+	if rev == "" {
+		rev = "HEAD"
+	}
+	sha, err := resolveGitRev(rev)
+	if err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	ref := "refs/heads/" + opts.Name
+	// Capture the current SHA (if present) so update-ref can pin the
+	// expected old value — that turns the write into a compare-and-swap,
+	// defending against a concurrent move by another worktree between
+	// this read and the write.
+	curOut, curErr := runBackendCmd("git", "rev-parse", "--verify", ref)
+	exists := curErr == nil
+	curSHA := strings.TrimSpace(string(curOut))
+	if exists && curSHA == sha {
+		// Already there — no-op.
+		writePushDiagnostic(opts.Stdout, fmt.Sprintf("%s already at %s", opts.Name, sha[:12]))
+		return nil
+	}
+	if exists && !opts.AllowBackwards {
+		// FF check: is curSHA an ancestor of sha?
+		code, err := runBackendExitCode("git", "merge-base", "--is-ancestor", curSHA, sha)
+		if err != nil {
+			return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		if code != 0 {
+			return &exitErr{
+				code: exitCodeNonFastForward,
+				msg: fmt.Sprintf("bookmark set: %s (%s) is not an ancestor of %s (%s); would be non-fast-forward (use --allow-backwards to override)",
+					opts.Name, curSHA[:12], rev, sha[:12]),
+			}
+		}
+	}
+	args := []string{"update-ref", ref, sha}
+	if exists {
+		args = append(args, curSHA)
+	}
+	if _, err := runBackendCmd("git", args...); err != nil {
+		return &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	if exists {
+		writePushDiagnostic(opts.Stdout, fmt.Sprintf("Moved %s to %s", opts.Name, sha[:12]))
+	} else {
+		writePushDiagnostic(opts.Stdout, fmt.Sprintf("Created %s at %s", opts.Name, sha[:12]))
+	}
 	return nil
 }
 

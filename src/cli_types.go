@@ -191,6 +191,19 @@ type vcsSyncOpts struct {
 	Onto *string
 }
 
+// vcsBookmarkOpts groups verb-local flags for `vcs bookmark` (two-tier verb
+// like `vcs tag`). SubVerb captures argv[2] ("set" today; future "delete" /
+// "list" land here without restructuring).
+//
+// Rev / AllowBackwards are scoped to `vcs bookmark set`. The dispatcher
+// validates them only on that sub-verb; setting them on other sub-verbs (or
+// the bare parent) is an exit-2 usage error.
+type vcsBookmarkOpts struct {
+	SubVerb        string
+	Rev            *string
+	AllowBackwards bool
+}
+
 // vcsGetOpts captures flags for `vcs get`:
 //   - LatestRepository / LatestIncludePre — `vcs get latest-{tag,release}` (DR-0032)
 //   - Rev — `vcs get commit-id` target rev (nil = backend default: `@` for jj /
@@ -225,6 +238,7 @@ type cliArgs struct {
 	vcsGet      vcsGetOpts
 	vcsOutdated vcsOutdatedOpts
 	vcsSync     vcsSyncOpts
+	vcsBookmark vcsBookmarkOpts
 	glob        globOpts
 
 	// ruleBlocks captures DR-0029 user-defined rule blocks (--define-rule).

@@ -248,12 +248,18 @@ Keys:
                    default workspace.
   default-branch   Canonical default branch name (main / master / trunk).
                    Resolved from 'refs/remotes/origin/HEAD' when set,
-                   falling back to a local probe.`
+                   falling back to a local probe.
+  default-branch-path
+                   Absolute path of the worktree (git) / workspace (jj)
+                   that currently has the default branch checked out.
+                   Tie-break: workspace named after the default branch
+                   wins; otherwise exit 5. No matching worktree → exit 4.`
 
 const vcsGetExitCodes = `  0   success (value printed on stdout, single line)
   2   usage error (key missing / unknown / multiple keys given)
   3   VCS subprocess error (not a repo, command failed)
-  4   ambiguous answer`
+  4   ambiguous answer (incl. default-branch-path: no worktree has it)
+  5   default-branch-path: multiple worktrees have it and no unique tie-break`
 
 const vcsGetExamples = `  bump-semver vcs get root                    # /path/to/repo
   bump-semver vcs get backend                 # git  (or jj)
@@ -264,6 +270,7 @@ const vcsGetExamples = `  bump-semver vcs get root                    # /path/to
   bump-semver vcs get latest-release          # largest stable GH Release
   bump-semver vcs get worktree-name           # 'feature-x' (linked wt); "" on main
   bump-semver vcs get default-branch          # main / master / trunk
+  bump-semver vcs get default-branch-path     # /abs/path/to/main-worktree
   ROOT=$(bump-semver vcs get root) || exit    # capture for further use`
 
 const vcsIsLong = `bump-semver vcs is — test a VCS predicate
@@ -603,6 +610,65 @@ const vcsSyncExamples = `  bump-semver vcs sync --onto main              # rebas
   bump-semver vcs sync --onto origin/main       # rebase onto remote main
   bump-semver vcs sync --onto $(bump-semver vcs get default-branch)`
 
+const vcsBookmarkLong = `bump-semver vcs bookmark — manage branches/bookmarks (set)
+
+Usage:
+  bump-semver vcs bookmark <command> [args...]
+
+See 'bump-semver vcs bookmark <command> --help' for arguments and options.
+For the default-branch-only forward move use 'vcs promote'.
+
+Notes:
+  - The verb deliberately covers only the operations 'just push' / 'just
+    push-wip' need today. 'list' / 'delete' are intentionally NOT provided
+    — use 'git branch' / 'jj bookmark list' for inspection.
+  - 'bookmark' is the canonical name across both backends. On git the
+    underlying ref is refs/heads/<NAME> (a branch); on jj it is a bookmark.`
+
+const vcsBookmarkExitCodes = `  0   success (incl. idempotent no-op when NAME already at REV)
+  2   usage error (sub-verb missing / unknown, NAME shape problem)
+  3   VCS subprocess error (unresolvable REV, ref-write race, not a repo)
+  5   non-fast-forward without --allow-backwards`
+
+const vcsBookmarkSetLong = `bump-semver vcs bookmark set — create or move a branch/bookmark
+
+Usage:
+  bump-semver vcs bookmark set NAME [-r/--rev REV] [--allow-backwards]
+
+Arguments:
+  NAME             Branch (git) / bookmark (jj) name. Required. Must not be
+                   empty, must not contain whitespace, must not start with
+                   "refs/" (the "refs/heads/" prefix is added automatically
+                   on git).
+
+Behaviour:
+  - absent ref           → create at REV.
+  - ref already at REV   → no-op (idempotent).
+  - ref at older commit  → forward to REV (FF move).
+  - ref at unrelated/newer commit → exit 5, unless --allow-backwards is set,
+                                    in which case the ref is moved unconditionally.
+
+Notes:
+  - git: 'git update-ref refs/heads/<NAME> <SHA>' with an explicit FF check
+    via 'git merge-base --is-ancestor'. Bypasses receive.denyCurrentBranch
+    so it works even when another worktree has NAME checked out (the other
+    worktree shows "branch is ahead" until pulled / reset).
+  - jj:  'jj bookmark set <NAME> -r <REV>'. jj's set is forward-only by
+    default; --allow-backwards adds the same-named flag to the underlying
+    invocation.
+  - REV defaults to HEAD (git) / @ (jj). Cross-backend forms ('origin/main'
+    ↔ 'main@origin') are translated automatically (DR-0031).`
+
+const vcsBookmarkSetExitCodes = `  0   success (incl. idempotent no-op when NAME already at REV)
+  2   usage error (NAME missing / bad shape, --rev value empty)
+  3   VCS subprocess error (unresolvable REV, ref-write race, not a repo)
+  5   non-fast-forward (the move is backwards / unrelated) — pass
+      --allow-backwards to override.`
+
+const vcsBookmarkSetExamples = `  bump-semver vcs bookmark set my-feature -r @
+  bump-semver vcs bookmark set my-feature             # default REV = @ / HEAD
+  bump-semver vcs bookmark set my-feature -r HEAD~1 --allow-backwards`
+
 // applyVcsVerbHelp attaches the prose for a vcs child command, keyed by
 // its Use name. The two-tier `tag` children are handled separately.
 func applyVcsVerbHelp(cmd *cobra.Command) {
@@ -625,6 +691,8 @@ func applyVcsVerbHelp(cmd *cobra.Command) {
 		setHelp(cmd, vcsPromoteLong, vcsPromoteExitCodes, vcsPromoteExamples)
 	case "sync":
 		setHelp(cmd, vcsSyncLong, vcsSyncExitCodes, vcsSyncExamples)
+	case "bookmark":
+		setHelp(cmd, vcsBookmarkLong, vcsBookmarkExitCodes, "")
 	}
 }
 

@@ -186,6 +186,8 @@ func TestResolveRule_SuffixStripped_AllFormats(t *testing.T) {
 		{"build.zig.zon.bak", ".{\n    .version = \"1.2.3\",\n}\n", "build.zig.zon", 1, ".bak"},
 		// mix.exs (confidence 2 → 1)
 		{"mix.exs.20260510", "    version: \"1.2.3\",\n", "mix.exs", 1, ".20260510"},
+		// moon.mod (confidence 3 → 2)
+		{"moon.mod.bak", "name = \"kawaz/x\"\nversion = \"1.2.3\"\n", "moon.mod", 2, ".bak"},
 	}
 	for _, c := range cases {
 		rule, insp, err := resolveRule(c.path, []byte(c.content))

@@ -233,6 +233,8 @@ func TestDetectHandler_RegexFormatPaths(t *testing.T) {
 		"deps/mix.exs",
 		"build.sbt",
 		"sub/build.sbt",
+		"moon.mod",
+		"sub/moon.mod",
 		// glob rules (confidence 1)
 		"Release.xcconfig",
 		"configs/Debug.xcconfig",
@@ -438,6 +440,7 @@ func TestResolveRule_RegexFormatConfidence(t *testing.T) {
 		{"build.zig.zon", ".{\n    .version = \"1.2.3\",\n}\n", "build.zig.zon", 2},
 		{"mix.exs", "    version: \"1.2.3\",\n", "mix.exs", 2},
 		{"build.sbt", "version := \"1.2.3\"\n", "build.sbt", 2},
+		{"moon.mod", "name = \"kawaz/x\"\nversion = \"1.2.3\"\n", "moon.mod", 3},
 		{"Release.xcconfig", "MARKETING_VERSION = 1.2.3\n", "*.xcconfig (fallback)", 1},
 		{"MyPod.podspec", "s.version = '1.2.3'\n", "*.podspec (fallback)", 1},
 		{"foo.nimble", "version = \"1.2.3\"\n", "*.nimble (fallback)", 1},

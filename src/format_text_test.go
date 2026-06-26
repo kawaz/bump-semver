@@ -234,6 +234,58 @@ func TestRegexReplace_BuildZigZon(t *testing.T) {
 	}
 }
 
+// --- moon.mod ------------------------------------------------------------
+
+// TestRegexInspect_MoonMod parses MoonBit's `moon.mod` (basename rule,
+// confidence 3). The format mixes TOML-style key=value with bespoke
+// `import { ... }` / `options( ... )` blocks; only top-level keys are
+// scanned, so non-TOML structures don't interfere.
+func TestRegexInspect_MoonMod(t *testing.T) {
+	t.Parallel()
+	in := []byte(`// MoonBit module manifest
+name = "kawaz/timespec"
+
+version = "0.2.1"
+
+readme = "README.md"
+
+keywords = [ "time", "parser" ]
+
+import {
+  "moonbitlang/core"
+}
+
+options(
+  source: "src",
+)
+`)
+	insp, err := inspectVia("moon.mod", in)
+	if err != nil {
+		t.Fatalf("Inspect error: %v", err)
+	}
+	if insp.Versions[0].Value != "0.2.1" {
+		t.Errorf("Versions = %+v", insp.Versions)
+	}
+	if len(insp.Names) != 1 || insp.Names[0].Value != "kawaz/timespec" {
+		t.Errorf("Names = %+v, want kawaz/timespec", insp.Names)
+	}
+}
+
+func TestRegexReplace_MoonMod(t *testing.T) {
+	t.Parallel()
+	in := []byte("name = \"kawaz/x\"\nversion = \"0.2.1\"\n")
+	out, err := replaceVia("moon.mod", in, "0.2.1", "0.3.0")
+	if err != nil {
+		t.Fatalf("Replace error: %v", err)
+	}
+	if !strings.Contains(string(out), `version = "0.3.0"`) {
+		t.Errorf("version not bumped:\n%s", string(out))
+	}
+	if !strings.Contains(string(out), `name = "kawaz/x"`) {
+		t.Errorf("name line lost:\n%s", string(out))
+	}
+}
+
 // --- gemspec -------------------------------------------------------------
 
 // TestRegexInspect_Gemspec mirrors the podspec test against a Ruby

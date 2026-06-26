@@ -313,6 +313,30 @@ var rules = []CandidateRule{
 		Format:       "text",
 		VersionRegex: `(?m)^version\s*=\s*['"]([^'"]+)['"]`,
 	},
+	{
+		// MoonBit module manifest (new DSL format, no extension).
+		// TOML-ish key-value at top level with `//` line comments and
+		// bespoke `import { ... }` / `options( ... )` blocks that a
+		// real TOML parser rejects. Only the top-level `version = "X"`
+		// line is needed; double quotes are the only valid string form.
+		Name:         "moon.mod",
+		Basename:     "moon.mod",
+		Confidence:   3,
+		Format:       "text",
+		VersionRegex: `(?m)^\s*version\s*=\s*"([^"]+)"`,
+		NameRegex:    `(?m)^\s*name\s*=\s*"([^"]+)"`,
+	},
+	{
+		// MoonBit module manifest (legacy JSON format). `moon fmt`
+		// migrates this to the new `moon.mod` above; bump-semver keeps
+		// both rules so projects mid-migration continue to work.
+		Name:         "moon.mod.json",
+		Basename:     "moon.mod.json",
+		Confidence:   3,
+		Format:       "json",
+		NamePaths:    []string{".name"},
+		VersionPaths: []string{".version"},
+	},
 
 	// --- DR-0012: regex format rules (glob, confidence 1) --------------
 	//

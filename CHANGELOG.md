@@ -4,6 +4,10 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.41.0
+
+- Added MoonBit module manifest auto-detect: `moon.mod` (new DSL format, text+regex) and `moon.mod.json` (legacy JSON, `$.version` / `$.name`). Verified against `moon 0.1.20260618` fresh `moon new` output and against in-tree `~/.moon/lib/core/moon.mod`. The DSL regex picks only top-level `^\s*version = "..."` so the bespoke `import { ... }` / `options( ... )` blocks pass through untouched.
+
 ## v0.40.1
 
 - Fix: `vcs promote` の bare 実行 (= 引数なし、`--help` なし) が help を表示するだけで実際の bookmark 移動が走らなかった bug を修正。v0.40.0 dogfood で発覚。

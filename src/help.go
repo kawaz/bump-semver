@@ -106,6 +106,8 @@ Supported file formats (auto-detected by basename):
   *.toml             TOML, top-level version  (and optional name) 
   v.mod / build.zig.zon / mix.exs / build.sbt        text + regex (basename)
   build.gradle / build.gradle.kts                    text + regex (basename)
+  moon.mod           MoonBit module (DSL), top-level version = "X" (and name)
+  moon.mod.json      MoonBit module (legacy JSON), $.version (and $.name)
   *.xcconfig / *.podspec / *.nimble / *.gemspec      text + regex (fallback)
   *.cabal / *.spec                                   text + regex (fallback)
   *.csproj / *.fsproj / *.vbproj                     XML element, /Project/PropertyGroup/Version

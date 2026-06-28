@@ -1,6 +1,6 @@
 ---
 title: -qq の挙動を help / docs に formal 化 (現状 undocumented alias)
-status: open
+status: resolved
 category: request
 created: 2026-06-27T01:39:37+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-06-29T04:53:20+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented"]
 blocked_by:
 origin: 依頼元プロジェクト (grapheme.mbt / timespec.mbt セッション)
 ---

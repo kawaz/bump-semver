@@ -185,6 +185,23 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Generate per-binary .sha256
+        run: |
+          set -euo pipefail
+          # Per-binary <name>.sha256 sidecar (one per artifact).
+          # Format = GNU coreutils `sha256sum` output (= "<hash>  <filename>"),
+          # so users verify a single binary with:
+          #   sha256sum -c bump-semver-linux-amd64.sha256
+          # Picked over a single SHA256SUMS manifest because most users only
+          # need to verify the one binary they downloaded; pairing each binary
+          # with its own .sha256 keeps that the cheap path. Convention matches
+          # ripgrep / starship / zellij (Rust 系 canonical).
+          for f in bump-semver-*; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "${f}.sha256"
+          done
+          ls -lh bump-semver-*.sha256
+
       - name: Create release with tag
         env:
           GH_TOKEN: ${{ github.token }}

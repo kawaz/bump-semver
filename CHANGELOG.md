@@ -4,6 +4,11 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.43.0
+
+- Hardened the release.yml semver gate to `latest-release` + `latest-tag` parallel check (DR-0039). `gh release create` does not push the git tag to origin (cli/cli#4357), so `vcs get latest-tag` alone can stale-read and let a downgrade slip through. The new pattern evaluates both axes without short-circuiting and fails the workflow if either gate is not strictly greater than the current VERSION. Verified against kawaz/die's downgrade incident (v0.0.2 climbing over v0.1.x via `--latest=automatic`'s date-priority); same fix template was filed as an issue against 10 other kawaz repos for canonical sync.
+- Added per-binary `.sha256` sidecar attachment to the release job (one `<asset>.sha256` per binary, GNU coreutils `sha256sum` format). Users can verify a single platform binary with `sha256sum -c bump-semver-linux-amd64.sha256` without downloading a separate manifest. Convention follows ripgrep / starship / zellij (Rust 系 canonical); justified over a single `SHA256SUMS` because most users only verify the one binary for their platform.
+
 ## v0.42.0
 
 - Added `vcs bookmark set NAME [-r/--rev REV] [--allow-backwards]` for the `just push-wip` path: create-or-move a branch (git) / bookmark (jj) explicitly named by the caller. Defaults to HEAD (git) / `@` (jj); fast-forward-only by default, with `--allow-backwards` for recovery / rewind cases. Idempotent same-rev sets are exit 0. Non-FF without `--allow-backwards` is exit 5 (mirrors `vcs promote`). git path bypasses `receive.denyCurrentBranch` via `update-ref` (same trick as `vcs promote`) so it works across linked worktrees.

@@ -104,7 +104,10 @@ Supported file formats (auto-detected by basename):
   *.json             JSON, $.version (and optional $.name)
   *.yaml / *.yml     YAML, top-level .version (and optional .name)
   *.toml             TOML, top-level version  (and optional name) 
-  v.mod / build.zig.zon / mix.exs / build.sbt        text + regex (basename)
+  build.zig.zon      Zig project manifest, top-level .version = "X" (and .name)
+  v.mod              V module manifest, top-level version: 'X' (and name)
+  mix.exs            Elixir mix project, version: "X"
+  build.sbt          Scala SBT build, version := "X"
   build.gradle / build.gradle.kts                    text + regex (basename)
   moon.mod           MoonBit module (DSL), top-level version = "X" (and name)
   moon.mod.json      MoonBit module (legacy JSON), $.version (and $.name)

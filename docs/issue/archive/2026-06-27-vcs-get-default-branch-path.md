@@ -1,6 +1,6 @@
 ---
 title: vcs get default-branch-path 追加
-status: open
+status: resolved
 category: request
 created: 2026-06-27T01:36:18+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-06-29T04:59:47+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---

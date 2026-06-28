@@ -67,53 +67,59 @@ jobs:
             exit 1
           fi
 
-          # 既存 tag より大きいか検証 (二重リリース防止)
-          # `vcs get latest-tag` は SemVer-parseable な tag のみ filter して
-          # 最大を返す (DR-0032, v0.32.0+ — DR-0020 PR-Tag-Latest の `vcs tag
-          # latest` を source 軸 verb 名畳み込みで再整理した後継)。
-          # --include-prerelease は旧 `vcs:latest-tag()` の byte-identical
-          # 移行 (旧実装は prerelease を含めていた) — README/UPGRADING で
-          # 案内している移行手順と整合させるためここでも明示する。
+          # ---- semver gate (= release.yml canonical pattern) ----
           #
-          # exit code 取り扱い:
-          #   - 初回 release で tag が 1 件もない → exit 3 ("no semver-
-          #     compatible tags found") → bootstrap として通過
-          #   - **v0.31.x ← v0.32.0 移行直後の 1 回限りの transient**:
-          #     check-version job は「直前リリース版バイナリ」を install して
-          #     dogfood する (= v0.31.x を使う、本リリースを検証する用)。
-          #     v0.31.x は `vcs get latest-tag` を知らず unknown get key で
-          #     exit 2 を返す → 同じ bootstrap 分岐に流れ、二重 release は
-          #     下の `gh release view` チェックが防ぐ。次の release 以降は
-          #     v0.32.0+ が install されるため通常分岐に乗る。
-          set +e
-          LATEST=$(bump-semver vcs get latest-tag --include-prerelease --vcs git 2>/dev/null)
-          LATEST_EXIT=$?
-          set -e
-          if [ "$LATEST_EXIT" -ne 0 ]; then
-            echo "vcs get latest-tag exited ${LATEST_EXIT} (no SemVer tags yet, or old binary; see workflow comment); assuming first release"
+          # CURRENT_VERSION が「過去の release / tag いずれよりも大」を
+          # 並列 check する。両 source を **短絡せず** 評価し、どちらかの
+          # gate を越えなかったら release を作らない:
+          #   - latest-release: GH の release 一覧 (= 過去リリース済 versions)
+          #   - latest-tag    : git tag (= origin の git ref)
+          #
+          # なぜ両方必要か (= `latest-tag` 単独では不足):
+          #   - `gh release create` は GH 内部に release + tag object を作るが
+          #     **origin の git ref には tag を push しない** (cli/cli#4357)。
+          #     よって `actions/checkout` 後の `vcs get latest-tag` は
+          #     **GH の最新 release より古い tag を返すケース**がある。
+          #   - そのギャップを `latest-release` が埋める (= GH 経路で過去最高を取る)。
+          #
+          # なぜ `gh` の `--latest=automatic` 自動判定に任せないか:
+          #   - `--latest=automatic` は date を含むスコアリング (= SemVer 厳格でない)
+          #     で、後発の小 version が Latest に昇格する観測あり (kawaz/die 実機:
+          #     v0.1.x 既存の上に後発 v0.0.2 が Latest 取った)。
+          #   - homebrew tap 更新等の後段経路は「現 push version」を信用するため、
+          #     check-version 段階で **gate して release を作らせない** のが正解。
+          #
+          # 初回 release / 移行期の bootstrap:
+          #   - latest-release / latest-tag のどちらも空 (= exit 非 0) はあり得る。
+          #     その軸の gate は skip、他方の軸だけで判定する。両方空なら完全 bootstrap。
+          #   - 古い binary (e.g. v0.31.x ← v0.32.0 移行直後) の transient は
+          #     `vcs get latest-tag` が unknown get key で exit 2 を返す → bootstrap
+          #     扱いに流れる、二重 release は最終の `gh release view` が防ぐ。
+          FAIL=0
+          if LATEST_REL=$(bump-semver vcs get latest-release --repository "$REPO" 2>/dev/null); then
+            echo "latest-release: ${LATEST_REL}"
+            if ! bump-semver compare gt "$CURRENT_VERSION" "$LATEST_REL" -qq; then
+              echo "::error::v${CURRENT_VERSION} is not greater than latest GH release v${LATEST_REL}"
+              FAIL=1
+            fi
           else
-            set +e
-            bump-semver compare gt VERSION "$LATEST"
-            CMP_EXIT=$?
-            set -e
-            case "$CMP_EXIT" in
-              0)
-                # VERSION > latest tag: release 続行
-                ;;
-              1)
-                # VERSION <= latest tag: 既にリリース済 or 巻き戻し
-                echo "changed=false" >> "$GITHUB_OUTPUT"
-                echo "Version v${CURRENT_VERSION} is not greater than latest tag ${LATEST}; skipping release."
-                exit 0
-                ;;
-              *)
-                echo "::error::Unexpected exit code from bump-semver compare: ${CMP_EXIT}"
-                exit 1
-                ;;
-            esac
+            echo "latest-release: (none yet); bootstrap"
+          fi
+          if LATEST_TAG=$(bump-semver vcs get latest-tag --include-prerelease --vcs git 2>/dev/null); then
+            echo "latest-tag: ${LATEST_TAG}"
+            if ! bump-semver compare gt "$CURRENT_VERSION" "$LATEST_TAG" -qq; then
+              echo "::error::v${CURRENT_VERSION} is not greater than latest git tag v${LATEST_TAG}"
+              FAIL=1
+            fi
+          else
+            echo "latest-tag: (none yet, or transient migration); bootstrap"
+          fi
+          if [ "$FAIL" = "1" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
 
-          # gh release で既存確認 (compare で通っても念のため)
+          # gh release で既存確認 (= 同 version 重複の最終 guard)
           if gh release view "v${CURRENT_VERSION}" --repo "$REPO" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Version unchanged: v${CURRENT_VERSION} already released"

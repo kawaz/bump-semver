@@ -90,3 +90,77 @@ bump-semver の release.yml は **kawaz/* バイナリ配布リポの canonical 
 - die v0.3.4 release (= 実装後): https://github.com/kawaz/die/releases/tag/v0.3.4
 - die release.yml の該当 commit: da521759 (`feat(release): attach SHA256SUMS manifest to every release`)
 - kawaz/die session 911732b3-2e6b-4733-b035-5974e5f3f67f の本日後半 (2026-06-29 00 時頃 +)
+
+---
+
+## 追記 (kawaz 指摘 + 6 言語調査) 2026-06-29: 提案を per-binary `.sha256` に変更
+
+最初の起票で SHA256SUMS (manifest 1 file) を推したが、kawaz から「`.sha256` 別ファイルの方がメジャーじゃない?」と指摘され、6 言語 (Rust / Go / Zig / MoonBit / OCaml / Haskell) × 計 30 OSS で実態調査した結果、**per-binary `.sha256` の方が die 用途には合う** という結論に。
+
+### 調査結果サマリ
+
+| 形式 | 個数 | 主な採用先 |
+|---|---|---|
+| hash 無し | 16 (53%) | 過半数 (= bat / fd / eza / pandoc / shellcheck etc.)、業界標準ではない事が判明 |
+| `checksums.txt` | 6 (20%) | Go 系ほぼ独占 = GoReleaser default |
+| per-binary `.sha256` | 6 (20%) | Rust + Haskell 系 (ripgrep / starship / zellij / stack / hadolint) |
+| `SHA256SUMS` | 2 (7%) | Zig (bun) / Haskell (HLS)、マイナー |
+
+### per-binary を選んだ理由
+
+- 利用者の現実 flow = 「自分の platform 用 binary 1 つだけ DL → verify」、manifest 全文 DL は無駄
+- `<binary>` + `<binary>.sha256` の pair が GitHub UI で隣に並ぶ (= 見つけやすい)
+- Rust 系の主要 binary 配布と pattern を揃える (= kawaz/* も Zig だが、配布対象 user 層は Rust 系 CLI 利用者と重なる)
+- Asset 数が倍になっても GitHub Release page は Assets section collapsible なので UI 問題なし
+
+### die 側の実装 (= v0.3.5 で導入済)
+
+release.yml の release job:
+
+```yaml
+- uses: actions/download-artifact@v4
+  with:
+    merge-multiple: true
+- name: Generate per-binary .sha256
+  run: |
+    set -euo pipefail
+    # Per-binary <name>.sha256 sidecar files (one per artifact).
+    # Format = GNU coreutils `sha256sum` output, verifiable with:
+    #   sha256sum -c die-linux-amd64.sha256
+    for f in die-*; do
+      [ -f "$f" ] || continue
+      sha256sum "$f" > "${f}.sha256"
+    done
+    ls -lh die-*.sha256
+- name: Create release with tag
+  ...
+  run: |
+    ...
+    # die-* glob naturally includes both binaries and .sha256 sidecars
+    gh release create "v${VERSION}" \
+      --repo "$REPO" \
+      ...
+      die-*
+```
+
+利点:
+- glob (`die-*`) 1 個で binary + sidecar 両方 upload
+- 既存の SHA256SUMS step より少しシンプル (= manifest 生成 + 引数追加の組ではなく、sidecar loop のみ)
+
+### bump-semver canonical への展開で考えるべき点
+
+- binary 名 prefix (`die-*` / `bump-semver-*` / etc.) は repo ごとに違う、テンプレ化時は変数化または各 repo で書き換え前提
+- ripgrep 等の Rust 系で **`<file>.sha256` 形式 (= GNU coreutils 形式)** が標準なので、`shasum -a 256` (macOS) や `sha256sum` (Linux) どちらでも互換
+- 利用者向け doc / README に「verify path 例」を提示すると親切:
+
+  ```sh
+  curl -sLO https://github.com/<owner>/<repo>/releases/latest/download/<binary>
+  curl -sLO https://github.com/<owner>/<repo>/releases/latest/download/<binary>.sha256
+  sha256sum -c <binary>.sha256
+  ```
+
+### reference
+
+- die v0.3.4 (= SHA256SUMS 形式の最後の release): https://github.com/kawaz/die/releases/tag/v0.3.4
+- die v0.3.5 (= per-binary 形式の最初の release): https://github.com/kawaz/die/releases/tag/v0.3.5
+- die release.yml commit (per-binary 切替): 7a29b247 (`feat(release): switch from single SHA256SUMS to per-binary .sha256 sidecars`)

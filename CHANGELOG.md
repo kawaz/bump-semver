@@ -4,6 +4,11 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.44.0
+
+- Documented `-qq` as a formal shorthand for `--quiet-all` in the verbosity flag help (= the rewrite from the `-qq` token to `--quiet-all` already existed in `normalizeQuietAll`; only the help text mentioned nothing). Reported by the kawaz/die / kawaz/grapheme.mbt sessions: users were copy-pasting `-qq` from canonical repos without knowing it silences errors too, risking silent CI failures.
+- Re-shuffled the `--help-full` "Supported file formats" listing so manifests with bespoke project semantics (`build.zig.zon`, `v.mod`, `mix.exs`, `build.sbt`) appear on their own line with the actual field they extract, instead of being collapsed into a `text + regex (basename)` group line. The collapsed format was reading as "not first-class" to consumers of canonical references (= kawaz/die feedback during dogfood).
+
 ## v0.43.0
 
 - Hardened the release.yml semver gate to `latest-release` + `latest-tag` parallel check (DR-0039). `gh release create` does not push the git tag to origin (cli/cli#4357), so `vcs get latest-tag` alone can stale-read and let a downgrade slip through. The new pattern evaluates both axes without short-circuiting and fails the workflow if either gate is not strictly greater than the current VERSION. Verified against kawaz/die's downgrade incident (v0.0.2 climbing over v0.1.x via `--latest=automatic`'s date-priority); same fix template was filed as an issue against 10 other kawaz repos for canonical sync.

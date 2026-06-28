@@ -1,11 +1,11 @@
 ---
 title: release.yml canonical pattern に SHA256SUMS 添付を組み込む提案
-status: open
+status: wip
 category: design
 created: 2026-06-29T01:08:05+09:00
 last_read: 2026-06-29T01:28:53+09:00
 open_entered: 2026-06-29T01:08:05+09:00
-wip_entered:
+wip_entered: 2026-06-29T01:30:07+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:

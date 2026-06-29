@@ -762,8 +762,8 @@ func (g *gitBackend) Promote(opts promoteOpts) error {
 		if code != 0 {
 			return &exitErr{
 				code: exitCodeNonFastForward,
-				msg: fmt.Sprintf("promote: %s (%s) is not an ancestor of %s (%s); would be non-fast-forward",
-					def, defSHA[:12], rev, sha[:12]),
+				msg: fmt.Sprintf("promote: %s (%s) is not an ancestor of %s (%s); would be non-fast-forward (run `bump-semver vcs sync --onto %s@origin` first)",
+					def, defSHA[:12], rev, sha[:12], def),
 			}
 		}
 	}

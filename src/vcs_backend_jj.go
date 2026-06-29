@@ -1146,9 +1146,16 @@ func (j *jjBackend) Promote(opts promoteOpts) error {
 		if joined == "" {
 			joined = strings.TrimSpace(stdout)
 		}
-		// jj 0.42 surfaces backwards-move rejections as
-		// "Refusing to move bookmark backwards" / "would move backwards".
+		// jj 0.42 surfaces backwards / sideways rejections as
+		// "Refusing to move bookmark backwards or sideways: <name>". jj's own
+		// hint (= `--allow-backwards`) is replaced with bump-semver's sync
+		// recommendation so the caller sees the canonical recovery path.
 		if strings.Contains(joined, "backwards") || strings.Contains(joined, "Refusing to move") {
+			def, dErr := j.DefaultBranch()
+			if dErr == nil {
+				joined = fmt.Sprintf("%s (run `bump-semver vcs sync --onto %s@origin` first)",
+					strings.SplitN(joined, "\n", 2)[0], def)
+			}
 			return &exitErr{code: exitCodeNonFastForward, msg: joined}
 		}
 		return &exitErr{code: exitCodeVCSExec, msg: joined}

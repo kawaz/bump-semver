@@ -4,6 +4,11 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.45.0
+
+- `vcs promote`: non-fast-forward 拒否時の error message に sync 推奨 hint を追加。jj backend は sideways move (= default が祖先でも子孫でもない) も既に exit 5 で reject していたが、jj 自身の hint (`--allow-backwards`) を bump-semver の canonical recovery path (`vcs sync --onto <default>@origin`) に置き換え。git backend も既存の merge-base ancestor check に同じ hint を組み込み。`vcs promote` の祖先 guard 自体は既存仕様で機能していた (DR-0038 dogfood 観察)、本 release は文言改善に閉じる。
+- Test hygiene cleanup: `cmd_vcs_outdated_test.go` の bare `t.Skip()` 25 箇所を file 内 convention に揃えて `t.Skip("git not installed")` / `t.Skip("git+jj fixture requires both binaries")` に統一。`cmd_source_leak_test.go` の darwin polling-with-sleep idiom (= 非子プロセス PID-liveness の検出) に design rationale コメントを追記し、`default-convergence-guard` の polling 安易採用禁則と混同されないよう明示化。test-failure-no-tampering rule 改訂版に対する全 *_test.go audit (= 59 ファイル) の結果、改変パターン (入力書換 / assert 緩和 / 観測根拠なし timeout 延長 / 暗黙 skip / 削除) 該当 0 件、本 release は hygiene drift 限定の正規化に閉じる。
+
 ## v0.44.0
 
 - Documented `-qq` as a formal shorthand for `--quiet-all` in the verbosity flag help (= the rewrite from the `-qq` token to `--quiet-all` already existed in `normalizeQuietAll`; only the help text mentioned nothing). Reported by the kawaz/die / kawaz/grapheme.mbt sessions: users were copy-pasting `-qq` from canonical repos without knowing it silences errors too, risking silent CI failures.

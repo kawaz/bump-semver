@@ -1,6 +1,6 @@
 ---
 title: promote ガード追加 (祖先に default branch が居ない時)
-status: wip
+status: resolved
 category: request
 created: 2026-06-27T01:36:22+09:00
 last_read: 2026-06-29T05:01:39+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-06-29T09:13:46+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-06-29T09:17:17+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---

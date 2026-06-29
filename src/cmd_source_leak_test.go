@@ -69,6 +69,9 @@ func TestResolveCmdInput_Timeout_KillsGrandchild(t *testing.T) {
 
 	// Give the kill signal time to propagate, then verify the process is gone.
 	// syscall.Kill(pid, 0) returns ESRCH once the process no longer exists.
+	// Design rationale: darwin has no event primitive (kqueue NOTE_EXIT) for
+	// non-child PID liveness; polling-with-sleep is the conventional idiom
+	// here, not a default-convergence fallback.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {

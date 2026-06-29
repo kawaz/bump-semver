@@ -855,7 +855,7 @@ func TestRun_VcsOutdated_NoArgsHelp(t *testing.T) {
 func TestRun_VcsOutdated_StrictPlusExplain_ExitZero(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -875,7 +875,7 @@ func TestRun_VcsOutdated_StrictPlusExplain_ExitZero(t *testing.T) {
 func TestRun_VcsOutdated_StrictPlusExplain_LitMissExitZero(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -892,7 +892,7 @@ func TestRun_VcsOutdated_StrictPlusExplain_LitMissExitZero(t *testing.T) {
 func TestRun_VcsOutdated_ExplainPlusMissing_TextContradictsExit(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")
@@ -921,7 +921,7 @@ func TestRun_VcsOutdated_ExplainPlusMissing_TextContradictsExit(t *testing.T) {
 func TestRun_VcsOutdated_StrictShortCircuitsStaleRow(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -947,7 +947,7 @@ func TestRun_VcsOutdated_StrictShortCircuitsStaleRow(t *testing.T) {
 func TestRun_VcsOutdated_GlobEmptyBodyRejected(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -965,7 +965,7 @@ func TestRun_VcsOutdated_GlobEmptyBodyRejected(t *testing.T) {
 func TestRun_VcsOutdated_ToGlobEmptyBodyRejected(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -984,7 +984,7 @@ func TestRun_VcsOutdated_ToGlobEmptyBodyRejected(t *testing.T) {
 func TestRun_VcsOutdated_EmptyToCharacterization(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1006,7 +1006,7 @@ func TestRun_VcsOutdated_EmptyToCharacterization(t *testing.T) {
 func TestRun_VcsOutdated_TrailingPairSeparator(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1024,7 +1024,7 @@ func TestRun_VcsOutdated_TrailingPairSeparator(t *testing.T) {
 func TestRun_VcsOutdated_LeadingPairSeparator(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1042,7 +1042,7 @@ func TestRun_VcsOutdated_LeadingPairSeparator(t *testing.T) {
 func TestRun_VcsOutdated_OnlyPairSeparator(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1060,7 +1060,7 @@ func TestRun_VcsOutdated_OnlyPairSeparator(t *testing.T) {
 func TestRun_VcsOutdated_MultiPairSameFrom(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1086,7 +1086,7 @@ func TestRun_VcsOutdated_MultiPairSameFrom(t *testing.T) {
 func TestRun_VcsOutdated_Pair2ErrorShortCircuits(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1112,7 +1112,7 @@ func TestRun_VcsOutdated_Pair2ErrorShortCircuits(t *testing.T) {
 func TestRun_VcsOutdated_UntrackedDerivedExit1(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	// Create derived on disk WITHOUT committing.
@@ -1137,7 +1137,7 @@ func TestRun_VcsOutdated_UntrackedDerivedExit1(t *testing.T) {
 func TestRun_VcsOutdated_UntrackedDerivedExplain(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	if err := os.WriteFile(filepath.Join(dir, "README-untracked.md"), []byte("u"), 0o644); err != nil {
@@ -1161,7 +1161,7 @@ func TestRun_VcsOutdated_UntrackedDerivedExplain(t *testing.T) {
 func TestRun_VcsOutdated_CrossSourceNotExcluded(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")
@@ -1234,7 +1234,7 @@ func TestRun_VcsOutdated_JjBackendStale(t *testing.T) {
 func TestRun_VcsOutdated_WrongVcsJjExit3(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() || !jjAvailable() {
-		t.Skip()
+		t.Skip("git+jj fixture requires both binaries")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")
@@ -1267,7 +1267,7 @@ func TestRun_VcsOutdated_WrongVcsJjExit3(t *testing.T) {
 func TestRun_VcsOutdated_StrictGlobZeroMatchExit0(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1285,7 +1285,7 @@ func TestRun_VcsOutdated_StrictGlobZeroMatchExit0(t *testing.T) {
 func TestRun_VcsOutdated_Dollar0InToExcluded(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1306,7 +1306,7 @@ func TestRun_VcsOutdated_Dollar0InToExcluded(t *testing.T) {
 func TestRun_VcsOutdated_GlobDotfileFlag(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")
@@ -1363,7 +1363,7 @@ func TestRun_VcsOutdated_GlobDotfileFlag(t *testing.T) {
 func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")
@@ -1400,7 +1400,7 @@ func TestRun_VcsOutdated_GlobIgnorecaseFlag(t *testing.T) {
 func TestRun_VcsOutdated_ExplainNoMatches(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1420,7 +1420,7 @@ func TestRun_VcsOutdated_ExplainNoMatches(t *testing.T) {
 func TestRun_VcsOutdated_OutOfRangeBackrefCleaned(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")
@@ -1451,7 +1451,7 @@ func TestRun_VcsOutdated_OutOfRangeBackrefCleaned(t *testing.T) {
 func TestRun_VcsOutdated_AmbiguousDollar10InTo(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1469,7 +1469,7 @@ func TestRun_VcsOutdated_AmbiguousDollar10InTo(t *testing.T) {
 func TestRun_VcsOutdated_NamedRefInTo(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := setupOutdatedGitRepo(t)
 	withCwd(t, dir, func() {
@@ -1489,7 +1489,7 @@ func TestRun_VcsOutdated_NamedRefInTo(t *testing.T) {
 func TestRun_VcsOutdated_EmptyAltBraceTOMissingExit1(t *testing.T) {
 	t.Parallel()
 	if !gitAvailable() {
-		t.Skip()
+		t.Skip("git not installed")
 	}
 	dir := t.TempDir()
 	runIn(t, dir, "git", "init", "-q", "-b", "main")

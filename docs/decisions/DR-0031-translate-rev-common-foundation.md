@@ -75,8 +75,8 @@ else:
 
 ### default rev
 
-- jj backend: `@`
-- git backend: `HEAD`
+Superseded by [DR-0040](./DR-0040-vcs-get-commit-id-default-rev-agnostic.md) — jj backend のデフォルトは `heads((::@-) & (~empty() | merges()))` (git `HEAD` と同じ「最新の固定コミット」概念)。
+
 - 関数 signature では `--rev` 省略は呼び出し側責任 (translateRev は non-empty rev を期待 = empty なら panic 防止のため pass-through 同等)
 
 ### 失敗時 exit code (= 既存規約に従う)

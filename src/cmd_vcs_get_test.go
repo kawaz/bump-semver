@@ -319,4 +319,33 @@ func TestRun_VcsGet_DefaultBranchPath_Git(t *testing.T) {
 	})
 }
 
+// TestRun_VcsGet_CommitID_ExplicitAtRev_Jj: DR-0040 changed the jj
+// backend's *default* rev away from the mutable working copy `@`, but
+// `--rev @` must still resolve to it explicitly — the old behaviour
+// stays reachable, just no longer the default.
+func TestRun_VcsGet_CommitID_ExplicitAtRev_Jj(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "UNCOMMITTED.txt"), "wip\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		var atOut, defaultOut bytes.Buffer
+		if err := run([]string{"vcs", "get", "commit-id", "--rev", "@"}, bytes.NewReader(nil), &atOut, &bytes.Buffer{}); err != nil {
+			t.Fatalf("vcs get commit-id --rev @: %v", err)
+		}
+		if err := run([]string{"vcs", "get", "commit-id"}, bytes.NewReader(nil), &defaultOut, &bytes.Buffer{}); err != nil {
+			t.Fatalf("vcs get commit-id: %v", err)
+		}
+		at := strings.TrimSpace(atOut.String())
+		def := strings.TrimSpace(defaultOut.String())
+		if at == def {
+			t.Errorf("--rev @ (%q) should differ from the new default (%q) — @ carries an uncommitted edit", at, def)
+		}
+	})
+}
+
 // --- DR-0020 PR-5: vcs fetch / vcs push dispatcher tests ------------------

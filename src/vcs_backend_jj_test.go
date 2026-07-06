@@ -1569,3 +1569,133 @@ func TestJjBackend_Push_AutoAdvance_Dirty(t *testing.T) {
 			strings.TrimSpace(string(wcCID)), strings.TrimSpace(string(bookmarkAfter)))
 	}
 }
+
+// --- DR-0040: CommitID default rev (git-agnostic "latest fixed commit") --
+
+// TestJjBackend_CommitID_Default_SkipsMutableWorkingCopy: the normal case
+// — @- is already a fixed, non-empty commit and @ carries an uncommitted
+// edit. The default rev must resolve to @- (git HEAD's jj analogue), not
+// to the mutable @ itself.
+func TestJjBackend_CommitID_Default_SkipsMutableWorkingCopy(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	if err := writeFile(filepath.Join(dir, "UNCOMMITTED.txt"), "wip\n"); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		atMinus, err := b.CommitID("@-")
+		if err != nil {
+			t.Fatalf("CommitID(@-): %v", err)
+		}
+		at, err := b.CommitID("@")
+		if err != nil {
+			t.Fatalf("CommitID(@): %v", err)
+		}
+		got, err := b.CommitID("")
+		if err != nil {
+			t.Fatalf("CommitID(\"\"): %v", err)
+		}
+		if got != atMinus {
+			t.Errorf("default = %q, want @- = %q", got, atMinus)
+		}
+		if got == at {
+			t.Errorf("default = %q, must not equal mutable @ = %q", got, at)
+		}
+	})
+}
+
+// TestJjBackend_CommitID_Default_SkipsEmptyAncestor: @- itself is an
+// empty, non-merge commit (a bare `jj new` with no edits/describe) — the
+// regression case a naive `@-`-only default would hit. The default must
+// walk back to the nearest non-empty ancestor instead of returning the
+// meaningless empty commit.
+func TestJjBackend_CommitID_Default_SkipsEmptyAncestor(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := setupJjRepo(t, nil, "1.0.0")
+	// @ (freshly empty from setupJjRepo) becomes the empty ancestor C
+	// once we advance past it; @-- becomes the real fixed commit B.
+	runIn(t, dir, "jj", "new")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		bSHA, err := b.CommitID("@--")
+		if err != nil {
+			t.Fatalf("CommitID(@--): %v", err)
+		}
+		emptyAncestorSHA, err := b.CommitID("@-")
+		if err != nil {
+			t.Fatalf("CommitID(@-): %v", err)
+		}
+		got, err := b.CommitID("")
+		if err != nil {
+			t.Fatalf("CommitID(\"\"): %v", err)
+		}
+		if got != bSHA {
+			t.Errorf("default = %q, want nearest non-empty ancestor B = %q", got, bSHA)
+		}
+		if got == emptyAncestorSHA {
+			t.Errorf("default = %q, must skip the empty @- ancestor = %q", got, emptyAncestorSHA)
+		}
+	})
+}
+
+// TestJjBackend_CommitID_Default_RescuesEmptyMerge: @- is an empty merge
+// commit (parents=2, tree matches the merge of parents). Dropping empty
+// commits via `~empty()` alone would exclude the merge and leave two
+// ancestor heads (its parents) — ambiguous. `merges()` must rescue it so
+// the default still resolves to the single merge commit.
+func TestJjBackend_CommitID_Default_RescuesEmptyMerge(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := jjMergeFixture(t, "")
+	runIn(t, dir, "jj", "new")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		mergeSHA, err := b.CommitID("@-")
+		if err != nil {
+			t.Fatalf("CommitID(@-): %v", err)
+		}
+		got, err := b.CommitID("")
+		if err != nil {
+			t.Fatalf("CommitID(\"\"): %v", err)
+		}
+		if got != mergeSHA {
+			t.Errorf("default = %q, want empty merge @- = %q (rescued via merges())", got, mergeSHA)
+		}
+	})
+}
+
+// TestJjBackend_CommitID_Default_EvilMergeNonEmpty: @- is a merge commit
+// carrying an extra tree edit (parents=2, non-empty). Already non-empty,
+// so the merges() rescue is a no-op here — the default simply resolves
+// to @- like the normal case.
+func TestJjBackend_CommitID_Default_EvilMergeNonEmpty(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() || !jjAvailable() {
+		t.Skip("git+jj fixture requires both binaries")
+	}
+	dir := jjMergeFixture(t, "EVIL.txt")
+	runIn(t, dir, "jj", "new")
+	withCwd(t, dir, func() {
+		b := &jjBackend{}
+		mergeSHA, err := b.CommitID("@-")
+		if err != nil {
+			t.Fatalf("CommitID(@-): %v", err)
+		}
+		got, err := b.CommitID("")
+		if err != nil {
+			t.Fatalf("CommitID(\"\"): %v", err)
+		}
+		if got != mergeSHA {
+			t.Errorf("default = %q, want evil-merge @- = %q", got, mergeSHA)
+		}
+	})
+}

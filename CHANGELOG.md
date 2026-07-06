@@ -4,6 +4,10 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.46.0
+
+- **BREAKING**: `vcs get commit-id` のデフォルト rev (DR-0040) を backend-agnostic 化。jj backend は mutable working copy `@` の SHA を返していたが、git backend の `HEAD` (最後に固定されたコミット) と概念が食い違っていた (agnostic API を謳いながら backend ごとに別概念を返す設計バグ)。jj backend のデフォルトを `heads((::@-) & (~empty() | merges()))` (`@-` を起点に、空コミットを skip しつつ空マージは救済した最新の固定コミット) に変更、git backend は不変。旧挙動 (working copy `@` 自身の SHA) が必要な場合は `--rev @` を明示指定する。gh-monitor の push 後 CI watch (SHA pin) で `@` が空コミットのとき無関係な SHA を watch してしまう退行から発覚。
+
 ## v0.45.0
 
 - `vcs promote`: non-fast-forward 拒否時の error message に sync 推奨 hint を追加。jj backend は sideways move (= default が祖先でも子孫でもない) も既に exit 5 で reject していたが、jj 自身の hint (`--allow-backwards`) を bump-semver の canonical recovery path (`vcs sync --onto <default>@origin`) に置き換え。git backend も既存の merge-base ancestor check に同じ hint を組み込み。`vcs promote` の祖先 guard 自体は既存仕様で機能していた (DR-0038 dogfood 観察)、本 release は文言改善に閉じる。

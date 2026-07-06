@@ -14,10 +14,18 @@ func (j *jjBackend) Kind() string { return "jj" }
 
 // CommitID resolves rev to its 40-char commit SHA via
 // `jj log -r REV -T commit_id`, with the DR-0031 translateRev applied
-// so git-style `remote/bookmark` works too. Default rev when empty: "@".
+// so git-style `remote/bookmark` works too.
+//
+// Default rev when empty: heads((::@-) & (~empty() | merges())) — the
+// nearest fixed ancestor of the mutable working copy @, matching git's
+// HEAD semantics. Plain `@-` isn't enough: it can itself be an empty
+// commit (e.g. a bare `jj new`), so we walk back to the nearest
+// non-empty change. Empty merges are rescued via `merges()` because
+// dropping them (via `~empty()` alone) leaves >1 head in the ancestor
+// set with no single answer.
 func (j *jjBackend) CommitID(rev string) (string, error) {
 	if rev == "" {
-		rev = "@"
+		rev = "heads((::@-) & (~empty() | merges()))"
 	}
 	return resolveJjRev(rev)
 }

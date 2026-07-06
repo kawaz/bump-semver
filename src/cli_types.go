@@ -206,8 +206,9 @@ type vcsBookmarkOpts struct {
 
 // vcsGetOpts captures flags for `vcs get`:
 //   - LatestRepository / LatestIncludePre — `vcs get latest-{tag,release}` (DR-0032)
-//   - Rev — `vcs get commit-id` target rev (nil = backend default: `@` for jj /
-//     `HEAD` for git). translateRev (DR-0031) normalizes cross-backend forms.
+//   - Rev — `vcs get commit-id` target rev (nil = backend default: latest
+//     fixed commit — `HEAD` for git, nearest non-working-copy ancestor of
+//     `@` for jj). translateRev (DR-0031) normalizes cross-backend forms.
 type vcsGetOpts struct {
 	LatestRepository *string
 	LatestIncludePre bool

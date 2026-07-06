@@ -235,10 +235,11 @@ Keys:
                    git:  HEAD's symbolic-ref short name. Detached HEAD → exit 4.
                    jj:   The single bookmark naming heads(::@ & bookmarks()).
                          Zero / multiple bookmarks at the head → exit 4.
-  commit-id        40-char git commit SHA of --rev (default: @ for jj / HEAD
-                   for git). Accepts any backend-native rev (bookmark, tag,
-                   change-id, sha, HEAD~3, etc); cross-backend forms like
-                   origin/main ↔ main@origin are normalized.
+  commit-id        40-char git commit SHA of --rev (default: latest fixed
+                   commit — HEAD for git, nearest non-working-copy ancestor
+                   of @ for jj). Accepts any backend-native rev (bookmark,
+                   tag, change-id, sha, HEAD~3, etc); cross-backend forms
+                   like origin/main ↔ main@origin are normalized.
   latest-tag       Largest SemVer-parseable tag (cwd VCS or via --repository).
                    See 'vcs get latest-tag --help' for options.
   latest-release   Largest SemVer-parseable GitHub Release (gh CLI required).
@@ -264,7 +265,7 @@ const vcsGetExitCodes = `  0   success (value printed on stdout, single line)
 const vcsGetExamples = `  bump-semver vcs get root                    # /path/to/repo
   bump-semver vcs get backend                 # git  (or jj)
   bump-semver vcs get current-branch          # main
-  bump-semver vcs get commit-id               # SHA of @ (jj) / HEAD (git)
+  bump-semver vcs get commit-id               # SHA of latest fixed commit
   bump-semver vcs get commit-id --rev main    # SHA of main
   bump-semver vcs get latest-tag              # largest stable SemVer tag
   bump-semver vcs get latest-release          # largest stable GH Release

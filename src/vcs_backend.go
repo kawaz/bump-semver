@@ -447,8 +447,9 @@ type bookmarkSetOpts struct {
 	Name string
 
 	// Rev is the revision the bookmark should point at. Empty → backend
-	// default (git: HEAD, jj: @-). The same `@` ↔ HEAD translation that
-	// runs for `vcs get commit-id` applies here.
+	// default (git: HEAD, jj: @-). The same DR-0031 translateRev
+	// (`origin/main` ↔ `main@origin`) that runs for `vcs get commit-id`
+	// applies here.
 	Rev string
 
 	// AllowBackwards permits non-fast-forward moves (= the new Rev is not

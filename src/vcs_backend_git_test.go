@@ -1335,3 +1335,31 @@ func TestGitBackend_Push_AutoAdvance_SilentNoOp(t *testing.T) {
 		t.Errorf("bare should have main after silent no-op push")
 	}
 }
+
+// --- DR-0040: CommitID default rev (git-agnostic "latest fixed commit") --
+
+// TestGitBackend_CommitID_Default_MatchesHEAD: the git backend's default
+// rev is unchanged by DR-0040 (git HEAD already means "latest fixed
+// commit") — pinned here so the agnostic contract with the jj backend's
+// new default stays anchored on this side too.
+func TestGitBackend_CommitID_Default_MatchesHEAD(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		head, err := b.CommitID("HEAD")
+		if err != nil {
+			t.Fatalf("CommitID(HEAD): %v", err)
+		}
+		got, err := b.CommitID("")
+		if err != nil {
+			t.Fatalf("CommitID(\"\"): %v", err)
+		}
+		if got != head {
+			t.Errorf("default = %q, want HEAD = %q", got, head)
+		}
+	})
+}

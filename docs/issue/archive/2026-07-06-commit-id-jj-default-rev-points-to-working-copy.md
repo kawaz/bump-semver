@@ -1,6 +1,6 @@
 ---
 title: vcs get commit-id の jj デフォルト rev が @ (mutable working copy) を指し、git HEAD と概念不一致
-status: open
+status: resolved
 category: bug
 created: 2026-07-06T11:19:41+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-06T18:38:26+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0040","implemented"]
 blocked_by:
 origin: kawaz/claude-gh-monitor
 ---

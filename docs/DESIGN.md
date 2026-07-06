@@ -56,7 +56,7 @@ The bump/read surface (`major` / `minor` / `patch` / `pre` / `get`) is flat; com
 
 Multiple INPUTs to a bump/read action are operated on as a single unit (DR-0004). Their detected versions must agree; their detected names are also cross-checked when available.
 
-The `vcs` namespace exposes git/jj facts and mutations through one stable surface; the backend is auto-detected (jj wins when both `.jj` and `.git` exist) or forced with `--vcs jj|git|auto`. `vcs tag` has no `list` verb (use `git tag --list` / `jj tag list`); `vcs get commit-id` returns the 40-char SHA at `--rev` (default `@`/`HEAD`).
+The `vcs` namespace exposes git/jj facts and mutations through one stable surface; the backend is auto-detected (jj wins when both `.jj` and `.git` exist) or forced with `--vcs jj|git|auto`. `vcs tag` has no `list` verb (use `git tag --list` / `jj tag list`); `vcs get commit-id` returns the 40-char SHA at `--rev` (default: the latest fixed commit — git `HEAD`, jj `heads((::@-) & (~empty() | merges()))`; DR-0040).
 
 ### Input modes (FILE | VER | `-` | `vcs:` | `cmd:`)
 

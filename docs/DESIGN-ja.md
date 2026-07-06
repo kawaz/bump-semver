@@ -56,7 +56,7 @@ bump/read 系 (`major` / `minor` / `patch` / `pre` / `get`) は flat。比較・
 
 bump/read アクションへの複数 INPUT は単一の単位として扱う (DR-0004)。検出された全 version は事前に一致している必要があり、name (取れた範囲) も整合性検証される。
 
-`vcs` 名前空間は git/jj の事実取得と変更操作を 1 つの安定した surface で提供する。backend は自動判定 (`.jj` と `.git` 並存時は jj 優先) か `--vcs jj|git|auto` で強制。`vcs tag` に `list` verb はない (`git tag --list` / `jj tag list` を使う)。`vcs get commit-id` は `--rev` (default `@`/`HEAD`) 時点の 40-char SHA を返す。
+`vcs` 名前空間は git/jj の事実取得と変更操作を 1 つの安定した surface で提供する。backend は自動判定 (`.jj` と `.git` 並存時は jj 優先) か `--vcs jj|git|auto` で強制。`vcs tag` に `list` verb はない (`git tag --list` / `jj tag list` を使う)。`vcs get commit-id` は `--rev` (default: 最新の固定コミット — git は `HEAD`、jj は `heads((::@-) & (~empty() | merges()))`; DR-0040) 時点の 40-char SHA を返す。
 
 ### 入力モード (FILE | VER | `-` | `vcs:` | `cmd:`)
 

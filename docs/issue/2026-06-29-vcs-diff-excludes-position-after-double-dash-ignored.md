@@ -3,7 +3,7 @@ title: vcs diff の --excludes を -- の後ろに置くと positional path 扱�
 status: open
 category: bug
 created: 2026-06-29T12:29:29+09:00
-last_read:
+last_read: 2026-07-11T16:03:49+09:00
 open_entered: 2026-06-29T12:29:29+09:00
 wip_entered:
 blocked_entered:

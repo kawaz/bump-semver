@@ -1,6 +1,6 @@
 ---
 title: vcs diff の --excludes を -- の後ろに置くと positional path 扱いされ exclude が無効化される
-status: open
+status: resolved
 category: bug
 created: 2026-06-29T12:29:29+09:00
 last_read: 2026-07-11T16:03:49+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-11T16:16:05+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0042", "implemented"]
 blocked_by:
 origin: kuu.mbt (dogfooding 起点)
 ---

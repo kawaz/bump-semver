@@ -27,6 +27,10 @@ Commands:
   compare                   Compare SemVer values via <eq|lt|le|gt|ge|...>
   vcs                       VCS helpers (git/jj-agnostic; sub-tree: vcs --help)
 
+Global Options:
+  -C, --cwd PATH            change to PATH before running
+  -q / --vcs / --no-hint    see any '<command> --help' or --help-full
+
 See 'bump-semver <command> --help' for arguments / options / examples,
 or 'bump-semver --help-full' for the complete reference.
 

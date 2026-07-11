@@ -46,6 +46,8 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 
 - [DR-0041](./DR-0041-vcs-get-repository.md) — `vcs get repository` (owner/repo slug) / `repository-url` (https 正規形) を新設。remote URL 由来なので worktree/workspace 間で一貫、slug は「host を除いたパス全体」(GitLab subgroup 対応)。remote 選択は origin デフォルト + `--remote NAME`、origin 不在で単一 remote なら採用・それ以外は exit 4。ssh alias の実 host 解決はスコープ外
 
+- [DR-0042](./DR-0042-vcs-diff-flag-after-dashdash-hint.md) — `vcs diff` で `--` 以後に置かれた flag 風 positional (例: `-- ... --excludes`) への stderr 警告。`--` の POSIX 契約 (以後 positional 固定) は維持し、flag 解釈 (案 1) も hard error (案 3) も不採用。警告は stdout / exit code 不変で `-qq` でも抑制しない (誤答の予告であってエラー出力とは責務が別)。無音で exclude が include に反転する footgun の可視化
+
 ## Archived
 
 - [DR-0002](./DR-0002-cargo-workspace-not-supported.md) — Cargo workspace の `[workspace.package].version` を MVP では扱わない (Superseded by DR-0021)

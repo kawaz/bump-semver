@@ -248,6 +248,126 @@ func TestRun_VcsDiff_ExcludesRequirePositional(t *testing.T) {
 	})
 }
 
+// DR-0042: `--excludes` placed after `--` reaches the positional PATH
+// list instead of being parsed as a flag (POSIX `--` semantics: no flag
+// parsing beyond it), so it silently becomes an include pattern instead
+// of an exclude — the exact reversal the DR's repro demonstrates. This
+// pins the observable half of the fix: stdout/exit code are untouched
+// (the parse-level reversal is out of DR-0042's scope, see "不採用" —
+// only the stderr warning is new), and the warning names the offending
+// token.
+func TestRun_VcsDiff_DashDash_FlagLikePositional_Warns(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "b_test.txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		runIn(t, dir, "git", "add", "a.txt", "b_test.txt")
+		runIn(t, dir, "git", "commit", "-qm", "add a.txt and b_test.txt")
+
+		var stdout, stderr bytes.Buffer
+		err := run([]string{"vcs", "diff", "-s", "HEAD~1", "--",
+			"glob:*.txt", "--excludes", "glob:*_test.txt"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("vcs diff: %v", err)
+		}
+		// Reversal still happens (DR-0042 doesn't change parsing): b_test.txt
+		// is present because "--excludes" and its pattern became includes.
+		if !strings.Contains(stdout.String(), "b_test.txt") {
+			t.Errorf("expected the known parse reversal to still occur, got: %q", stdout.String())
+		}
+		if !strings.Contains(stderr.String(), `"--excludes"`) {
+			t.Errorf("expected stderr warning naming --excludes, got: %q", stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "'--'") {
+			t.Errorf("expected stderr warning to mention '--', got: %q", stderr.String())
+		}
+	})
+}
+
+// A normal (non-`-`-leading) PATH never triggers the DR-0042 warning.
+func TestRun_VcsDiff_NormalPositional_NoWarning(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout, stderr bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD~1", "VERSION"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("vcs diff: %v", err)
+		}
+		if got := stderr.String(); got != "" {
+			t.Errorf("stderr should be empty for a normal PATH, got: %q", got)
+		}
+	})
+}
+
+// DR-0042 Consequences: the warning is a "you're about to get the wrong
+// answer" signal, not an error — so `-qq` (which suppresses both stdout
+// and stderr error output) must NOT suppress it.
+func TestRun_VcsDiff_DashDash_FlagLikePositional_WarnsUnderQuietAll(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout, stderr bytes.Buffer
+		// -q's exit code reflects diff presence (design rationale in
+		// runVcsCmdDiff); VERSION always differs in this fixture, so exit
+		// is predicate-false (exitCodeFalse), not a real failure — only
+		// stdout/stderr content matter for this test.
+		_ = run([]string{"vcs", "diff", "-qq", "HEAD~1", "--",
+			"VERSION", "--excludes", "glob:**/*_test.go"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if got := stdout.String(); got != "" {
+			t.Errorf("-qq should suppress stdout, got: %q", got)
+		}
+		if !strings.Contains(stderr.String(), `"--excludes"`) {
+			t.Errorf("expected -qq to still surface the DR-0042 warning, got: %q", stderr.String())
+		}
+	})
+}
+
+// Multiple flag-like positionals each get their own warning line.
+func TestRun_VcsDiff_DashDash_MultipleFlagLikePositionals_OneLineEach(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	withCwd(t, dir, func() {
+		var stdout, stderr bytes.Buffer
+		err := run([]string{"vcs", "diff", "HEAD~1", "--",
+			"VERSION", "--excludes", "glob:**/*_test.go", "-x"},
+			bytes.NewReader(nil), &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("vcs diff: %v", err)
+		}
+		lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("expected exactly 2 warning lines (one per flag-like token), got %d: %q", len(lines), stderr.String())
+		}
+		if !strings.Contains(lines[0], `"--excludes"`) {
+			t.Errorf("expected first line to name --excludes, got: %q", lines[0])
+		}
+		if !strings.Contains(lines[1], `"-x"`) {
+			t.Errorf("expected second line to name -x, got: %q", lines[1])
+		}
+	})
+}
+
 // helper.
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {

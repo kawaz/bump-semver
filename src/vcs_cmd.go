@@ -364,6 +364,14 @@ func runVcsCmdDiff(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsUsage(stderr, args, err)
 	}
 	rawPaths := args.vcsArgs[1:]
+	// DR-0042: a `-`-leading positional can only reach here via `--`
+	// (cobra rejects leading-`-` tokens as flags before `--`), so any hit
+	// is either a flag the user meant to place before `--` (the common
+	// mistake) or a deliberately `-`-leading PATH (rare, unaffected —
+	// this is a warning, not a rejection). Unconditional on verbosity:
+	// DR-0042 Consequences treats this as a distinct "about to compute
+	// the wrong answer" signal, not an error `-qq` is meant to silence.
+	warnFlagLikePositionals(stderr, rawPaths)
 
 	// DR-0024: expand `glob:` / `file:` selectors. Literal paths pass through
 	// to the backend so that:
@@ -1068,6 +1076,20 @@ func runVcsCmdSync(args cliArgs, stdout, stderr io.Writer) error {
 		return emitVcsErr(stderr, args, err)
 	}
 	return nil
+}
+
+// warnFlagLikePositionals emits a stderr warning for each `-`-leading
+// positional PATH (DR-0042). Such a token only reaches the positional list
+// after `--`, which is the standard escape hatch for flag-like paths — but
+// it's also the shape of the common mistake "flag placed after `--`", which
+// silently degrades `vcs diff`'s output instead of erroring. Does not alter
+// stdout or the exit code.
+func warnFlagLikePositionals(stderr io.Writer, paths []string) {
+	for _, p := range paths {
+		if strings.HasPrefix(p, "-") {
+			fmt.Fprintf(stderr, "bump-semver: warning: PATH %q looks like a flag; everything after '--' is treated as a PATH filter, not a flag — move flags before '--'\n", p)
+		}
+	}
 }
 
 func emitVcsUsage(stderr io.Writer, args cliArgs, err error) error {

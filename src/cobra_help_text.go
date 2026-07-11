@@ -350,7 +350,11 @@ Notes:
   - On 'vcs diff', -q is overloaded to mirror 'git diff --quiet': suppress
     stdout AND reflect diff presence in the exit code (0 = no diff, 1 =
     diff present). At least one positional PATH is required when --excludes
-    is used.`
+    is used.
+  - Put flags (including --excludes) before '--'. Everything after '--' is
+    treated as a PATH, even tokens that look like flags — a flag placed
+    after '--' silently becomes an include pattern instead. A '-'-leading
+    PATH triggers a stderr warning naming it (stdout/exit code unaffected).`
 
 const vcsDiffExitCodes = `  0   no diff (with -q) OR patch written successfully (default / -s)
   1   diff present (with -q / -qq only)

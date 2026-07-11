@@ -86,6 +86,7 @@ Options:
   --no-build-metadata    Remove build metadata identifiers
 
 Global Options:
+  -C, --cwd PATH         Change to PATH before running (may appear anywhere in argv)
   --vcs jj|git|auto      Force VCS detection for vcs: inputs (default: auto)
   --no-hint              Suppress hints (fallback / unsupported / "files not modified")
   -q, --quiet            Suppress stdout (and the hint)

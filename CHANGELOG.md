@@ -4,6 +4,10 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.48.0
+
+- Added global `-C, --cwd PATH` ([DR-0043](./docs/decisions/DR-0043-global-cwd-option.md)) — `os.Chdir(PATH)` before anything else runs, collapsing the `(cd PATH && bump-semver ...)` sub-shell pattern into a single invocation (git's `-C` semantics). `-C PATH` / `--cwd PATH` / `--cwd=PATH` are all accepted, may appear anywhere in argv (before or after the subcommand), and are extracted in a pre-cobra-parse pass so every downstream input/vcs/glob resolution observes the new directory. Once-only like every other value flag in the project; a second occurrence or a missing value is an exit-2 usage error.
+
 ## v0.47.0
 
 - Added `vcs get repository` / `vcs get repository-url` ([DR-0041](./docs/decisions/DR-0041-vcs-get-repository.md)) — remote 由来のリポジトリ識別子 getter。`root` はローカルパスを返すため linked worktree / named workspace ではディレクトリ名がリポジトリ名として誤用されていた (issue 2026-07-11); remote URL は worktree/workspace 間で共有されるので backend 分岐なしに一貫した値が取れる。`repository` は `owner/repo` slug (GitLab subgroup も全セグメント保持、2 セグメント決め打ちなし)、`repository-url` は https 正規形。新 `--remote NAME` フラグ (デフォルト `origin`、不在時は remote が丁度 1 個ならそれを採用、0 個/複数は exit 4) 付き。scp 風 / `ssh://` / `git://` / `http(s)://` を受理し user info 除去・port 保持・`.git`/末尾 `/` 除去で正規化、ローカルパス remote は exit 3 (`git remote get-url` への誘導メッセージ付き)。

@@ -43,6 +43,8 @@ bump-semver --help | --help-full
 
 `<INPUT>` は **FILE パス** / **生の VER 文字列** / **`-` (stdin から VER 1 行読込)** / **`vcs:REV[:FILE]` または `vcs:<関数>(...)`** (VCS 経由で取得、[vcs: 入力](#vcs-入力) 参照) / **`cmd:<shell-command>`** (shell コマンド経由で取得、[cmd: 入力](#cmd-入力) 参照) のいずれかで、複数指定時は混在可能。
 
+上記のどのコマンドも global な `-C PATH` / `--cwd PATH` (git の `-C` 相当) を受け付ける。argv のどこに置いてもよく、他の処理より先に `PATH` へ移動する — `(cd PATH && bump-semver ...)` の短縮形。
+
 ヘルプは 3 段構成:
 
 - `bump-semver --help` / `-h`: 1 画面に収まる短い概要 (アクション一覧 + 主要動線)
@@ -344,6 +346,7 @@ bump-semver vcs outdated --strict README.md 'README-{ja,en}.md'
 
 | フラグ | 説明 |
 |---|---|
+| `-C`, `--cwd PATH`     | 実行前に `PATH` へ移動する (global。サブコマンド/action の前後どこにでも置ける) |
 | `--pre PRE`            | pre-release 識別子を設定 (例 `--pre rc.0`) |
 | `--no-pre`             | pre-release を削除 |
 | `--build-metadata META`| build metadata を設定 (例 `--build-metadata sha.abc`) |

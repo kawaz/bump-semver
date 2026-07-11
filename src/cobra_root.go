@@ -37,6 +37,22 @@ func useCobra(argv []string) bool {
 // the carried code into a process exit status. Any bare cobra/pflag
 // error that reaches here is defensively wrapped into an exit-2 *exitErr.
 func runCobra(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	// -C/--cwd (DR-0043) is extracted and applied first, ahead of every
+	// other pre-processing step: it must land before anything else
+	// (including the --version short-circuit below and cobra's own flag
+	// parsing) reads the filesystem or resolves a relative path.
+	argv, cwdPath, hasCwd, err := extractCwdOption(argv)
+	if err != nil {
+		fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+		return &exitErr{code: exitCodeUsage, msg: err.Error()}
+	}
+	if hasCwd {
+		if err := applyCwdOption(cwdPath); err != nil {
+			fmt.Fprintln(stderr, "bump-semver: "+err.Error())
+			return &exitErr{code: exitCodeUsage, msg: err.Error()}
+		}
+	}
+
 	// --version / -V must take effect before cobra resolves any
 	// subcommand and only when it is the leading token (matching the
 	// legacy argv[0] semantics). Handle it up-front.
@@ -59,7 +75,7 @@ func runCobra(argv []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 
-	err := root.Execute()
+	err = root.Execute()
 	if err == nil {
 		return nil
 	}
@@ -127,6 +143,13 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	// reason as --help-full (it only fires as a leading token).
 	root.PersistentFlags().BoolP("version", "V", false, "print version and exit")
 	root.PersistentFlags().Lookup("version").Hidden = true
+	// -C / --cwd (DR-0043): registered visible (unlike --help-full /
+	// --version above) so every subcommand's Global Options lists it —
+	// unlike those two, -C is meant to be usable at any position with any
+	// subcommand. The actual chdir happens in runCobra before cobra
+	// parsing (see cobra_cwd.go); this registration never has its Set()
+	// called.
+	registerCwdFlag(root)
 
 	root.SetFlagErrorFunc(flagErrorFunc)
 

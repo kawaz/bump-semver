@@ -43,6 +43,8 @@ bump-semver --help | --help-full
 
 `<INPUT>` is either a **FILE path**, a **raw VER string**, **`-` (read VER from stdin, single line)**, **`vcs:REV[:FILE]` / `vcs:<func>(...)`** (read from the VCS, see [vcs: input](#vcs-input)), or **`cmd:<shell-command>`** (read from a shell command, see [cmd: input](#cmd-input)). Multiple inputs of mixed kinds may be given.
 
+Every command above also accepts a global `-C PATH` / `--cwd PATH` (like `git -C`), which may appear anywhere in argv and changes to `PATH` before anything else runs — a shorthand for `(cd PATH && bump-semver ...)`.
+
 Help comes in three tiers:
 
 - `bump-semver --help` / `-h`: short overview (actions + main navigation) fitting in one screen
@@ -344,6 +346,7 @@ Exit codes for `vcs outdated`: `0` every derived is fresh (or `--explain` mode r
 
 | Flag | Description |
 |---|---|
+| `-C`, `--cwd PATH`     | Change to `PATH` before running (global; may appear anywhere in argv — before or after the subcommand/action) |
 | `--pre PRE`            | Set pre-release identifiers (e.g. `--pre rc.0`) |
 | `--no-pre`             | Remove pre-release identifiers |
 | `--build-metadata META`| Set build metadata identifiers (e.g. `--build-metadata sha.abc`) |

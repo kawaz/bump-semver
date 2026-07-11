@@ -48,6 +48,8 @@ bump-semver の設計判断記録一覧。ファイル名は `DR-NNNN-title.md` 
 
 - [DR-0042](./DR-0042-vcs-diff-flag-after-dashdash-hint.md) — `vcs diff` で `--` 以後に置かれた flag 風 positional (例: `-- ... --excludes`) への stderr 警告。`--` の POSIX 契約 (以後 positional 固定) は維持し、flag 解釈 (案 1) も hard error (案 3) も不採用。警告は stdout / exit code 不変で `-qq` でも抑制しない (誤答の予告であってエラー出力とは責務が別)。無音で exclude が include に反転する footgun の可視化
 
+- [DR-0043](./DR-0043-global-cwd-option.md) — グローバル `-C/--cwd <path>` を新設 (git の `-C` 相当)。short は make/tar/git の UNIX 慣習、long は意味論最短の `--cwd` (bun/yarn 先例、`--directory`/`--cd` は不採用理由付き)。累積なし (once-only)、cobra 解析前の `os.Chdir` 一発で全経路が自動追従。chdir 失敗は exit 2
+
 ## Archived
 
 - [DR-0002](./DR-0002-cargo-workspace-not-supported.md) — Cargo workspace の `[workspace.package].version` を MVP では扱わない (Superseded by DR-0021)

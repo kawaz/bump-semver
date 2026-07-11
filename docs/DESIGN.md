@@ -37,7 +37,8 @@ bump-semver
 │   ├── diff                       [-s|--name-status] [-q] REV [PATH..] [--excludes ...]
 │   ├── fetch                      [REMOTE] | --remote NAME  (default origin)
 │   ├── get                        root | backend | current-branch | commit-id |
-│   │                              latest-tag | latest-release
+│   │                              latest-tag | latest-release | repository |
+│   │                              repository-url
 │   ├── is                         clean | dirty | git | jj   (answer = exit code)
 │   ├── outdated                   FROM TO[..] | -- separated pairs  [--explain --strict --glob-*]
 │   ├── push                       --branch/--bookmark NAME [--remote] [--jj-bookmark-auto-advance]
@@ -304,7 +305,7 @@ Origin labels: `<file>:<path>` (FILE) / `<argv>` or `<argv:N>` (positional VER) 
   | Validator | Target | Rejects |
   |---|---|---|
   | `validateUserRev` | rev arguments (`vcs diff` / `vcs tag push` / `vcs get commit-id` / `vcs:REV`) | leading `-` |
-  | `validateRemote` | remote name (`fetch` / `push` / `tag *`) | empty / leading `-` / whitespace |
+  | `validateRemote` | remote name (`fetch` / `push` / `tag *` / `get repository`) | empty / leading `-` / whitespace |
   | `validateGhRepo` | `gh -R` repo | not `owner/repo`, leading `-`, whitespace |
   | `validTagName` | tag NAME | leading `-` (plus existing rules) |
   | `expandRepoArg` | `vcs:latest-tag` repo arg | leading `-` |

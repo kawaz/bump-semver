@@ -202,13 +202,14 @@ func installHelp(root *cobra.Command, stdout io.Writer, rootHelp func()) {
 			rootHelp()
 			return
 		}
-		// `vcs get latest-tag --help` / `latest-release --help`: these are
-		// positional keys of `vcs get`, not real subcommands, but they have
-		// dedicated help. cobra leaves the key as a positional in args.
+		// `vcs get latest-tag --help` / `repository --help` / etc: these are
+		// positional keys of `vcs get`, not real subcommands, but the ones
+		// listed in vcsGetKeyHelpData have dedicated help. cobra leaves the
+		// key as a positional in args.
 		if cmd.CommandPath() == "bump-semver vcs get" {
 			for _, a := range args {
-				if a == "latest-tag" || a == "latest-release" {
-					fmt.Fprint(stdout, renderLatestHelp(cmd, a))
+				if _, ok := vcsGetKeyHelpData[a]; ok {
+					fmt.Fprint(stdout, renderVcsGetKeyHelp(cmd, a))
 					return
 				}
 			}
@@ -217,15 +218,16 @@ func installHelp(root *cobra.Command, stdout io.Writer, rootHelp func()) {
 	})
 }
 
-// renderLatestHelp renders the help for the `vcs get latest-tag` /
-// `latest-release` positional keys. They are not separate cobra commands
-// (they are keys dispatched inside runVcsCmdGet), so their Long / exit /
-// examples live in latestHelpData and their Options are the relevant
-// subset of `vcs get`'s flags, selected by name from the live FlagSet
-// (still single-source-of-truth: the flag definitions are the ones
-// registered on `vcs get`).
-func renderLatestHelp(vcsGet *cobra.Command, key string) string {
-	d := latestHelpData[key]
+// renderVcsGetKeyHelp renders the help for a `vcs get <key>` positional
+// key that has dedicated help (latest-tag / latest-release / repository /
+// repository-url). They are not separate cobra commands (they are keys
+// dispatched inside runVcsCmdGet), so their Long / exit / examples live in
+// vcsGetKeyHelpData and their Options are the relevant subset of `vcs
+// get`'s flags, selected by name from the live FlagSet (still
+// single-source-of-truth: the flag definitions are the ones registered on
+// `vcs get`).
+func renderVcsGetKeyHelp(vcsGet *cobra.Command, key string) string {
+	d := vcsGetKeyHelpData[key]
 	var b strings.Builder
 	b.WriteString(d.long)
 	b.WriteString("\n")
@@ -252,8 +254,9 @@ func renderLatestHelp(vcsGet *cobra.Command, key string) string {
 }
 
 // renderNamedFlags renders only the named flags from fs (used for the
-// latest-tag / latest-release pseudo-commands, which expose a subset of
-// `vcs get`'s flags). Names are the long form without dashes.
+// `vcs get` positional pseudo-commands — latest-tag / latest-release /
+// repository / repository-url — which each expose a subset of `vcs get`'s
+// flags). Names are the long form without dashes.
 func renderNamedFlags(fs *pflag.FlagSet, names []string) string {
 	sub := pflag.NewFlagSet("", pflag.ContinueOnError)
 	for _, n := range names {

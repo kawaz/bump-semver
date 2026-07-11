@@ -4,6 +4,10 @@ All notable changes to bump-semver are recorded here, newest first. Entries are 
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/); patch-only releases between the milestones listed below are omitted.
 
+## v0.47.0
+
+- Added `vcs get repository` / `vcs get repository-url` ([DR-0041](./docs/decisions/DR-0041-vcs-get-repository.md)) — remote 由来のリポジトリ識別子 getter。`root` はローカルパスを返すため linked worktree / named workspace ではディレクトリ名がリポジトリ名として誤用されていた (issue 2026-07-11); remote URL は worktree/workspace 間で共有されるので backend 分岐なしに一貫した値が取れる。`repository` は `owner/repo` slug (GitLab subgroup も全セグメント保持、2 セグメント決め打ちなし)、`repository-url` は https 正規形。新 `--remote NAME` フラグ (デフォルト `origin`、不在時は remote が丁度 1 個ならそれを採用、0 個/複数は exit 4) 付き。scp 風 / `ssh://` / `git://` / `http(s)://` を受理し user info 除去・port 保持・`.git`/末尾 `/` 除去で正規化、ローカルパス remote は exit 3 (`git remote get-url` への誘導メッセージ付き)。
+
 ## v0.46.0
 
 - **BREAKING**: `vcs get commit-id` のデフォルト rev (DR-0040) を backend-agnostic 化。jj backend は mutable working copy `@` の SHA を返していたが、git backend の `HEAD` (最後に固定されたコミット) と概念が食い違っていた (agnostic API を謳いながら backend ごとに別概念を返す設計バグ)。jj backend のデフォルトを `heads((::@-) & (~empty() | merges()))` (`@-` を起点に、空コミットを skip しつつ空マージは救済した最新の固定コミット) に変更、git backend は不変。旧挙動 (working copy `@` 自身の SHA) が必要な場合は `--rev @` を明示指定する。gh-monitor の push 後 CI watch (SHA pin) で `@` が空コミットのとき無関係な SHA を watch してしまう退行から発覚。

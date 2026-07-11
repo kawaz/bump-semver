@@ -37,7 +37,8 @@ bump-semver
 │   ├── diff                       [-s|--name-status] [-q] REV [PATH..] [--excludes ...]
 │   ├── fetch                      [REMOTE] | --remote NAME  (default origin)
 │   ├── get                        root | backend | current-branch | commit-id |
-│   │                              latest-tag | latest-release
+│   │                              latest-tag | latest-release | repository |
+│   │                              repository-url
 │   ├── is                         clean | dirty | git | jj   (答えは exit code)
 │   ├── outdated                   FROM TO[..] | -- 区切り複数ペア  [--explain --strict --glob-*]
 │   ├── push                       --branch/--bookmark NAME [--remote] [--jj-bookmark-auto-advance]
@@ -304,7 +305,7 @@ bump-semver: version mismatch:
   | バリデータ | 対象 | 拒否 |
   |---|---|---|
   | `validateUserRev` | rev 引数 (`vcs diff` / `vcs tag push` / `vcs get commit-id` / `vcs:REV`) | `-` 始まり |
-  | `validateRemote` | remote 名 (`fetch` / `push` / `tag *`) | 空 / `-` 始まり / 空白含み |
+  | `validateRemote` | remote 名 (`fetch` / `push` / `tag *` / `get repository`) | 空 / `-` 始まり / 空白含み |
   | `validateGhRepo` | `gh -R` 用 repo | `owner/repo` 形式でない、`-` 始まり、空白含み |
   | `validTagName` | tag NAME | `-` 始まり (既存規則 + 追加) |
   | `expandRepoArg` | `vcs:latest-tag` の repo arg | `-` 始まり |

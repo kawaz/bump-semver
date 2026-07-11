@@ -46,6 +46,36 @@ type vcsBackend interface {
 	// rev) returns *exitErr{exitCodeVCSExec}.
 	CommitID(rev string) (string, error)
 
+	// RemoteURL resolves `remote` to its raw configured URL (DR-0041,
+	// `vcs get repository` / `vcs get repository-url`).
+	//
+	// `remote == ""` triggers the default-remote selection rule shared by
+	// both backends (selectDefaultRemote):
+	//
+	//   - "origin" is among the configured remotes → origin wins
+	//   - "origin" is absent and exactly one remote is configured → that
+	//     one wins
+	//   - "origin" is absent and zero, or 2+, remotes are configured →
+	//     *exitErr{exitCodeAmbiguous (4)}
+	//
+	// A non-empty `remote` (the user's explicit --remote NAME) skips
+	// selection entirely and is looked up directly; an unresolvable
+	// explicit name surfaces the underlying subprocess failure as
+	// *exitErr{exitCodeVCSExec (3)} rather than the ambiguous code — the
+	// caller named it, so "it doesn't exist" is a VCS-layer fact, not an
+	// ambiguity.
+	//
+	// The returned URL is the VERBATIM configured value (still ssh:// /
+	// scp-style / https:// / whatever the remote was added as) — no
+	// normalization happens here. normalizeRemoteURL (vcs_repository.go)
+	// does the slug / https-URL derivation the two `vcs get` keys need.
+	//
+	//   - git: `git remote` (enumerate names) + `git remote get-url
+	//     <name>` (resolve).
+	//   - jj:  `jj git remote list`, whose output is one "<name> <url>"
+	//     line per remote.
+	RemoteURL(remote string) (string, error)
+
 	// FetchFile reads the contents of `file` at revision `rev` from
 	// the underlying VCS. Replaces the free function vcsFetchFile.
 	FetchFile(rev, file string) ([]byte, error)
@@ -848,6 +878,36 @@ func shortSHA(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+// --- shared RemoteURL helper (DR-0041) -------------------------------------
+
+// selectDefaultRemote implements the DR-0041 default-remote selection rule
+// shared by RemoteURL on both backends, given the list of configured remote
+// names (order as reported by the backend; only membership / count matter
+// here). See the RemoteURL interface doc for the full rule.
+func selectDefaultRemote(names []string) (string, error) {
+	for _, n := range names {
+		if n == "origin" {
+			return "origin", nil
+		}
+	}
+	switch len(names) {
+	case 0:
+		return "", &exitErr{
+			code: exitCodeAmbiguous,
+			msg:  "repository: no remotes configured (pass --remote NAME)",
+		}
+	case 1:
+		return names[0], nil
+	default:
+		return "", &exitErr{
+			code: exitCodeAmbiguous,
+			msg: fmt.Sprintf(
+				"repository: no 'origin' remote and %d remotes configured (%s); pass --remote NAME",
+				len(names), strings.Join(names, ", ")),
+		}
+	}
 }
 
 // --- shared promote/sync helpers ------------------------------------------

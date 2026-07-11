@@ -34,6 +34,7 @@ bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]
 bump-semver vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]
 bump-semver vcs get latest-release [--include-prerelease] [--repository REPO] [--json]
+bump-semver vcs get <repository|repository-url> [--remote NAME]
 bump-semver vcs outdated FROM TO[..]
 bump-semver completion <bash|zsh|fish|powershell>
 bump-semver --version [--json]
@@ -104,6 +105,7 @@ bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]      # idempotent (rm -f semantic)
 bump-semver vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]
 bump-semver vcs get latest-release [--include-prerelease] [--repository REPO] [--json]
+bump-semver vcs get <repository|repository-url> [--remote NAME]   # default remote: origin
 bump-semver vcs outdated FROM TO[..]                   # derived-sync check (single pair)
 bump-semver vcs outdated -- FROM TO[..] -- FROM TO[..] [-- ...]   # multiple pairs
 bump-semver vcs outdated [--explain] FROM TO[..]       # diagnostic table (always exits 0)
@@ -276,6 +278,24 @@ bump-semver get 'vcs:latest-release(kawaz/pkf-tasks)' # latest release of an ext
 Exit codes: `0` success; `2` usage (extra positional args); `3` VCS / gh subprocess error OR `gh` missing for `latest-release`.
 
 `--vcs jj|git|auto` still applies, so `bump-semver vcs get backend --vcs git` (or `vcs is git --vcs git`) forces the git branch on a colocated repo.
+
+**`vcs get repository [--remote NAME]`** and **`vcs get repository-url [--remote NAME]`** ([DR-0041](./docs/decisions/DR-0041-vcs-get-repository.md)) — a remote-derived identity for the repository, so callers stop hand-rolling `basename $(git remote get-url origin) .git` (and its jj / linked-worktree / named-workspace edge cases). `repository` is the `owner/repo` slug (GitHub's canonical form; GitLab subgroups keep every segment — `group/sub/repo`); `repository-url` is the same remote normalized to `https://host/owner/repo`, useful for opening in a browser or embedding in release notes. `vcs get repository`'s output is exactly the shape `vcs get latest-tag --repository <R>` accepts, so the two compose without reformatting.
+
+| Aspect | Behaviour |
+|---|---|
+| Remote selection | `--remote NAME` picks explicitly. Without it: `origin` wins if configured; with no `origin`, exactly one remote wins; zero or 2+ non-origin remotes is ambiguous (exit 4) |
+| URL normalization | scp-style (`git@host:path`), `ssh://`, `git://`, `http(s)://` all accepted. User info is stripped, the scheme becomes `https`, the host's port is preserved (self-hosted forges on non-standard ports keep working), trailing `.git` / `/` are removed |
+| Local remotes | A remote pointing at a local filesystem path (`/path/to/repo`, `file://...`) has no forge host to derive a slug from — exit 3 with a message pointing at `git remote get-url <name>` for the raw value |
+
+```bash
+bump-semver vcs get repository                        # kawaz/bump-semver
+bump-semver vcs get repository-url                     # https://github.com/kawaz/bump-semver
+bump-semver vcs get repository --remote upstream        # slug of a non-default remote
+bump-semver vcs get latest-tag --repository "$(bump-semver vcs get repository --remote upstream)"
+                                                        # compose with latest-tag's external-repo lookup
+```
+
+Exit codes: `0` success; `2` usage (`--remote` combined with any other key, empty `--remote` value); `3` VCS subprocess error, unresolvable explicit `--remote`, or a local-filesystem remote URL; `4` ambiguous remote selection (no `origin`, 0 or 2+ candidates).
 
 **`vcs outdated FROM TO[..]`** ([DR-0027](./docs/decisions/DR-0027-derived-sync-mini-dsl-and-regex-reject.md) / [DR-0028](./docs/decisions/DR-0028-glob-backref-spec-v0.1.0-adoption.md), spec [glob-backref v0.1.0](./docs/specs/glob-backref-v0.1.0.md)) — predicate: every derived `TO` file must be at least as fresh as the `FROM` file that produced it, using committer-timestamp comparison (same lag-check the legacy translation gate uses, but verb-shaped). Stale → exit 1. The mini-DSL builds on the `glob:` prefix from DR-0024: variable parts in FROM (`*` / `**` / `{a,b,c}` / `[abc]`) capture in appearance order; `$N` / `${N}` substitute those captures into TO. In TO, `{a,b,c}` is a **mandatory** full expansion (every option must exist or the pair fails); `*` / `**` / `[]` are **optional** filesystem discovery (silent skip on no match). `?` is out of MVP scope (spec §2.1, future-reserved for v0.3+) and rejected with a pattern syntax error. Use `--explain` to print every expanded `(source → derived)` row with a freshness status; the diagnostic mode always exits 0. Use `--strict` to promote a literal-FROM-not-found from warn (default, exits 0) to exit 1.
 

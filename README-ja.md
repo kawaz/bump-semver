@@ -34,6 +34,7 @@ bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]
 bump-semver vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]
 bump-semver vcs get latest-release [--include-prerelease] [--repository REPO] [--json]
+bump-semver vcs get <repository|repository-url> [--remote NAME]
 bump-semver vcs outdated FROM TO[..]
 bump-semver completion <bash|zsh|fish|powershell>
 bump-semver --version [--json]
@@ -104,6 +105,7 @@ bump-semver vcs tag push --rev REV NAME [--remote REMOTE] [--allow-move]
 bump-semver vcs tag delete NAME [--remote REMOTE]      # 冪等 (rm -f セマンティクス)
 bump-semver vcs get latest-tag [--include-prerelease] [--repository REPO] [--json]
 bump-semver vcs get latest-release [--include-prerelease] [--repository REPO] [--json]
+bump-semver vcs get <repository|repository-url> [--remote NAME]   # default remote: origin
 bump-semver vcs outdated FROM TO[..]                   # 派生ファイル sync check (単一ペア)
 bump-semver vcs outdated -- FROM TO[..] -- FROM TO[..] [-- ...]   # 複数ペア
 bump-semver vcs outdated [--explain] FROM TO[..]       # 診断表示 (常に exit 0)
@@ -276,6 +278,24 @@ bump-semver get 'vcs:latest-release(kawaz/pkf-tasks)' # 外部 repo の最新 Re
 終了コード: `0` 成功; `2` usage (余分な positional); `3` VCS / gh subprocess エラー OR `latest-release` で `gh` 未インストール。
 
 `--vcs jj|git|auto` は引き続き有効。colocated 構成で git 側を見たい場合は `bump-semver vcs get backend --vcs git` (または `vcs is git --vcs git`) で強制できる。
+
+**`vcs get repository [--remote NAME]`** および **`vcs get repository-url [--remote NAME]`** ([DR-0041](./docs/decisions/DR-0041-vcs-get-repository.md)) — remote 由来のリポジトリ識別子。`basename $(git remote get-url origin) .git` の手組み (と jj / linked worktree / named workspace 各々の分岐) を書かずに済む。`repository` は `owner/repo` slug (GitHub の正準形; GitLab subgroup は全セグメントを保持 — `group/sub/repo`)、`repository-url` は同じ remote を `https://host/owner/repo` に正規化した形で、ブラウザで開く・リリースノートへの埋め込みに使える。`vcs get repository` の出力は `vcs get latest-tag --repository <R>` がそのまま受け取れる形式なので、整形なしで合成できる。
+
+| 観点 | 挙動 |
+|---|---|
+| remote 選択 | `--remote NAME` で明示指定。無指定時: `origin` が設定されていれば採用; `origin` 不在で remote が丁度 1 個ならそれを採用; `origin` 不在で 0 個 or 2 個以上は ambiguous (exit 4) |
+| URL 正規化 | scp 風 (`git@host:path`)、`ssh://`、`git://`、`http(s)://` を受理。user info を除去、scheme を `https` に置換、host の port は保持 (self-hosted forge の非標準 port も壊れない)、末尾の `.git` / `/` を除去 |
+| ローカル remote | ローカルファイルシステムパス (`/path/to/repo`, `file://...`) を指す remote には slug を導出できる forge host が無い — exit 3 で、raw 値が欲しい場合は `git remote get-url <name>` を使う旨のメッセージを出す |
+
+```bash
+bump-semver vcs get repository                        # kawaz/bump-semver
+bump-semver vcs get repository-url                     # https://github.com/kawaz/bump-semver
+bump-semver vcs get repository --remote upstream        # 非デフォルト remote の slug
+bump-semver vcs get latest-tag --repository "$(bump-semver vcs get repository --remote upstream)"
+                                                        # latest-tag の外部 repo 検索と合成
+```
+
+終了コード: `0` 成功; `2` usage (`--remote` を他の key と併用、`--remote` の値が空); `3` VCS subprocess エラー、明示 `--remote` の解決失敗、またはローカルファイルシステム remote URL; `4` remote 選択が ambiguous (`origin` 不在で 0 個 or 2 個以上)。
 
 **`vcs outdated FROM TO[..]`** ([DR-0027](./docs/decisions/DR-0027-derived-sync-mini-dsl-and-regex-reject.md) / [DR-0028](./docs/decisions/DR-0028-glob-backref-spec-v0.1.0-adoption.md)、仕様 [glob-backref v0.1.0](./docs/specs/glob-backref-v0.1.0.md)) — predicate: 派生ファイル `TO` が正本 `FROM` 以上に新しいかを committer-timestamp で比較する (= 既存の翻訳 lag チェックを verb 化した形)。stale → exit 1。DR-0024 の `glob:` を拡張した mini-DSL: FROM 側の可変パーツ (`*` / `**` / `{a,b,c}` / `[abc]`) が **登場順** にキャプチャされ、TO 側で `$N` / `${N}` で参照できる。TO の `{a,b,c}` は **必須展開** (全展開先が存在しないと fail); TO の `*` / `**` / `[]` は **任意の filesystem 検出** (マッチ無しは silent skip)。`?` は MVP scope 外 (仕様 §2.1、v0.3+ で検討予定) で、pattern syntax error として reject される。`--explain` で `(source → derived)` の完全展開 + 鮮度ステータスを表示できる (= 診断モード、stale でも exit 0)。`--strict` で リテラル FROM が 0 件マッチ時に exit 1 (= デフォルトは警告のみで exit 0)。
 

@@ -209,10 +209,17 @@ type vcsBookmarkOpts struct {
 //   - Rev — `vcs get commit-id` target rev (nil = backend default: latest
 //     fixed commit — `HEAD` for git, nearest non-working-copy ancestor of
 //     `@` for jj). translateRev (DR-0031) normalizes cross-backend forms.
+//   - Remote — `vcs get repository` / `vcs get repository-url` source
+//     remote (nil = DR-0041 default-remote selection; see
+//     vcsBackend.RemoteURL). Deliberately its own field rather than
+//     reusing vcsPushOpts.Remote — that slot belongs to the push/fetch/tag
+//     verbs, a different verb family with a different (always-defaulted)
+//     semantic.
 type vcsGetOpts struct {
 	LatestRepository *string
 	LatestIncludePre bool
 	Rev              *string
+	Remote           *string
 }
 
 // cliArgs is the parsed command-line.

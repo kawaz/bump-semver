@@ -135,6 +135,7 @@ func newVcsGetCmd(args *cliArgs, stdout, stderr io.Writer) *cobra.Command {
 	f.Var(newOnceString("--repository", &args.vcsGet.LatestRepository), "repository", "external `REPO` (owner/repo or URL) for latest-tag / latest-release")
 	f.BoolVar(&args.vcsGet.LatestIncludePre, "include-prerelease", false, "include prereleases (latest-tag / latest-release)")
 	f.Var(newOnceString("--rev", &args.vcsGet.Rev), "rev", "target `REV` for commit-id (default: latest fixed commit)")
+	f.Var(newOnceString("--remote", &args.vcsGet.Remote), "remote", "source `NAME` for repository / repository-url (default: origin, or the sole configured remote)")
 	f.BoolVar(&args.output.JSON, "json", false, "structured JSON output (latest-tag / latest-release)")
 	applyVcsVerbHelp(cmd)
 	return cmd

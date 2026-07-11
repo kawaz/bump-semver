@@ -254,12 +254,20 @@ Keys:
                    Absolute path of the worktree (git) / workspace (jj)
                    that currently has the default branch checked out.
                    Tie-break: workspace named after the default branch
-                   wins; otherwise exit 5. No matching worktree → exit 4.`
+                   wins; otherwise exit 5. No matching worktree → exit 4.
+  repository       owner/repo slug derived from the --remote URL (default
+                   remote: origin, or the sole configured remote). GitLab
+                   subgroups keep every path segment (group/sub/repo).
+  repository-url   https:// form of the same remote (scp-style / ssh:// /
+                   git:// are normalized; user info stripped, port kept).
+                   See 'vcs get repository --help' for --remote details.`
 
 const vcsGetExitCodes = `  0   success (value printed on stdout, single line)
   2   usage error (key missing / unknown / multiple keys given)
-  3   VCS subprocess error (not a repo, command failed)
-  4   ambiguous answer (incl. default-branch-path: no worktree has it)
+  3   VCS subprocess error (not a repo, command failed, remote URL is a
+      local filesystem path with no forge host to normalize)
+  4   ambiguous answer (incl. default-branch-path: no worktree has it;
+      repository/repository-url: no origin remote and 0 or 2+ candidates)
   5   default-branch-path: multiple worktrees have it and no unique tie-break`
 
 const vcsGetExamples = `  bump-semver vcs get root                    # /path/to/repo
@@ -272,6 +280,10 @@ const vcsGetExamples = `  bump-semver vcs get root                    # /path/to
   bump-semver vcs get worktree-name           # 'feature-x' (linked wt); "" on main
   bump-semver vcs get default-branch          # main / master / trunk
   bump-semver vcs get default-branch-path     # /abs/path/to/main-worktree
+  bump-semver vcs get repository              # kawaz/bump-semver
+  bump-semver vcs get repository-url          # https://github.com/kawaz/bump-semver
+  bump-semver vcs get repository --remote upstream
+                                               # slug of a non-default remote
   ROOT=$(bump-semver vcs get root) || exit    # capture for further use`
 
 const vcsIsLong = `bump-semver vcs is — test a VCS predicate
@@ -697,19 +709,20 @@ func applyVcsVerbHelp(cmd *cobra.Command) {
 	}
 }
 
-// --- vcs get latest-tag / latest-release (positional pseudo-commands) -------
+// --- vcs get <key> positional pseudo-commands --------------------------
 
-// latestHelp holds the prose + the subset of `vcs get` flags shown for the
-// latest-tag / latest-release positional keys (they are not separate cobra
-// commands; see renderLatestHelp).
-type latestHelp struct {
+// vcsGetKeyHelp holds the prose + the subset of `vcs get` flags shown for
+// a `vcs get` positional key that warrants dedicated help (they are not
+// separate cobra commands; see renderVcsGetKeyHelp). Keys without an entry
+// here fall through to the generic `vcs get --help` key-list page.
+type vcsGetKeyHelp struct {
 	long        string
 	exitCodes   string
 	examples    string
 	optionFlags []string // long names of `vcs get` flags to show as Options
 }
 
-var latestHelpData = map[string]latestHelp{
+var vcsGetKeyHelpData = map[string]vcsGetKeyHelp{
 	"latest-tag": {
 		long: `bump-semver vcs get latest-tag — print the SemVer-largest tag
 
@@ -755,5 +768,65 @@ External tool dependency:
   bump-semver vcs get latest-release --repository kawaz/bump-semver
   bump-semver get 'vcs:latest-release(kawaz/pkf-tasks)'  # input record (1-liner)`,
 		optionFlags: []string{"include-prerelease", "repository", "json"},
+	},
+	"repository": {
+		long: `bump-semver vcs get repository — print the owner/repo slug
+
+Usage:
+  bump-semver vcs get repository [--remote NAME]
+
+Behaviour:
+  Resolves --remote's configured URL (default: origin, or the sole
+  configured remote — see the Remote selection notes below) and
+  normalizes it to the forge path with the leading '/' removed and any
+  trailing '/' / '.git' stripped. GitHub always yields 2 segments
+  ("owner/repo"); GitLab subgroups keep every segment ("group/sub/repo").
+  Accepts scp-style ([user@]host:path), ssh://, git://, and http(s)://
+  remote URLs; user info is stripped and the host's port (if any) is
+  preserved. A remote pointing at a local filesystem path (/path/to/repo,
+  file://...) has no forge host to derive a slug from → exit 3.
+
+  This is the DR-0041 counterpart to 'root' (which returns a local path
+  that differs across linked worktrees / named workspaces): the remote
+  URL is shared across every worktree/workspace, so 'repository' gives a
+  single stable answer without a backend-specific dirname() heuristic.
+
+Remote selection (when --remote is omitted):
+  "origin" wins if configured; with no "origin", exactly one configured
+  remote wins; zero or 2+ remotes with no "origin" is exit 4 (ambiguous).
+  An explicit --remote NAME skips selection and is looked up directly —
+  an unresolvable name surfaces the underlying subprocess failure (exit 3).`,
+		exitCodes: `  0   success (slug printed on stdout)
+  2   usage error (--remote value empty)
+  3   VCS subprocess error, unresolvable explicit --remote, or the remote
+      URL is a local filesystem path (no forge host to normalize)
+  4   ambiguous remote selection (no 'origin', 0 or 2+ candidate remotes)`,
+		examples: `  bump-semver vcs get repository                     # kawaz/bump-semver
+  bump-semver vcs get repository --remote upstream   # slug of a non-default remote
+  bump-semver vcs get latest-tag --repository "$(bump-semver vcs get repository)"
+                                                      # compose with latest-tag's REPO arg`,
+		optionFlags: []string{"remote"},
+	},
+	"repository-url": {
+		long: `bump-semver vcs get repository-url — print the https:// repository URL
+
+Usage:
+  bump-semver vcs get repository-url [--remote NAME]
+
+Behaviour:
+  Same remote resolution and URL normalization as 'vcs get repository'
+  (see 'vcs get repository --help' for the full remote-selection and
+  URL-normalization rules), but emits the full https:// reference URL
+  (scheme replaced with https, user info removed, host + port + slug)
+  instead of the bare slug — useful for opening in a browser or
+  embedding in release notes / changelogs.`,
+		exitCodes: `  0   success (URL printed on stdout)
+  2   usage error (--remote value empty)
+  3   VCS subprocess error, unresolvable explicit --remote, or the remote
+      URL is a local filesystem path (no forge host to normalize)
+  4   ambiguous remote selection (no 'origin', 0 or 2+ candidate remotes)`,
+		examples: `  bump-semver vcs get repository-url                 # https://github.com/kawaz/bump-semver
+  bump-semver vcs get repository-url --remote upstream`,
+		optionFlags: []string{"remote"},
 	},
 }

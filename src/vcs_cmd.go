@@ -45,7 +45,7 @@ func runVcsCmd(args cliArgs, stdin io.Reader, stdout, stderr io.Writer) error {
 //
 // DR-0032: latest-tag / latest-release replace the v0.29.0 `vcs tag latest
 // --source <tag|release>` (= source 軸を verb 名に畳む)。
-var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release", "worktree-name", "default-branch", "default-branch-path"}
+var vcsGetKeys = []string{"root", "backend", "current-branch", "commit-id", "latest-tag", "latest-release", "worktree-name", "default-branch", "default-branch-path", "repository", "repository-url"}
 
 // runVcsCmdGet implements `vcs get <key>`.
 //
@@ -108,6 +108,11 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 	if key != "commit-id" && args.vcsGet.Rev != nil {
 		return emitVcsUsage(stderr, args,
 			fmt.Errorf("--rev is only valid with vcs get commit-id"))
+	}
+	isRepository := key == "repository" || key == "repository-url"
+	if !isRepository && args.vcsGet.Remote != nil {
+		return emitVcsUsage(stderr, args,
+			fmt.Errorf("--remote is only valid with vcs get repository / repository-url"))
 	}
 
 	// latest-tag / latest-release dispatch — they have their own backend
@@ -185,6 +190,34 @@ func runVcsCmdGet(args cliArgs, stdout, stderr io.Writer) error {
 			return emitVcsErr(stderr, args, err)
 		}
 		emit(path)
+		return nil
+	case "repository", "repository-url":
+		remote := ""
+		if args.vcsGet.Remote != nil {
+			remote = *args.vcsGet.Remote
+			if remote == "" {
+				return emitVcsUsage(stderr, args,
+					fmt.Errorf("vcs get: --remote value must not be empty"))
+			}
+			// 引数インジェクション対策 (C-1): leading-`-` remote would reach
+			// `git remote get-url <remote>` as a flag.
+			if err := validateRemote(remote); err != nil {
+				return emitVcsUsage(stderr, args, err)
+			}
+		}
+		raw, err := b.RemoteURL(remote)
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		info, err := normalizeRemoteURL(raw)
+		if err != nil {
+			return emitVcsErr(stderr, args, err)
+		}
+		if key == "repository" {
+			emit(info.Slug)
+		} else {
+			emit(info.HTTPSURL)
+		}
 		return nil
 	}
 	// Unreachable: key was validated against vcsGetKeys above.

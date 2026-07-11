@@ -54,6 +54,38 @@ func (g *gitBackend) CurrentBranch() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// RemoteURL resolves `remote` to its raw configured URL (DR-0041). See the
+// vcsBackend.RemoteURL interface doc for the full selection contract.
+//
+// Selection (remote == ""): enumerate via `git remote`, apply
+// selectDefaultRemote. Explicit remote: skip straight to `git remote
+// get-url <remote>` so an unknown name surfaces git's own "No such
+// remote" as exit 3 (not the ambiguous code — the caller named it).
+func (g *gitBackend) RemoteURL(remote string) (string, error) {
+	if remote == "" {
+		out, err := runBackendCmd("git", "remote")
+		if err != nil {
+			return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+		}
+		selected, err := selectDefaultRemote(splitAndDedup(string(out)))
+		if err != nil {
+			return "", err
+		}
+		remote = selected
+	}
+	// "--" guards against a remote name that looks like a flag (e.g. one
+	// created via `git remote add -- --push URL`). This matters even on
+	// the default-selection path above: selectDefaultRemote can hand back
+	// such a name without it ever passing through validateRemote (that
+	// gate only runs for an explicit --remote), so get-url must defend
+	// itself here regardless of how `remote` was chosen.
+	out, err := runBackendCmd("git", "remote", "get-url", "--", remote)
+	if err != nil {
+		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // --- jj backend -----------------------------------------------------------
 
 // FetchFile returns `file` at `rev` via `git show <rev>:<file>`.

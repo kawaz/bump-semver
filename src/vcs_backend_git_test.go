@@ -942,6 +942,38 @@ func TestGitBackend_Fetch_NonexistentRemote(t *testing.T) {
 	})
 }
 
+// TestGitBackend_RemoteURL_DefaultSelection_FlagLikeName: a sole remote
+// whose *name* itself looks like a flag (created via `git remote add --
+// --push URL`, which git accepts) must still resolve via
+// selectDefaultRemote → `git remote get-url` — the explicit-remote path's
+// C-1 validateRemote gate in vcs_cmd.go never runs on this path (there is
+// no user-supplied --remote to validate), so RemoteURL itself must defend
+// the `git remote get-url` call with `--` or a flag-shaped sole remote
+// name makes `git remote get-url` dump its usage text instead of the URL.
+func TestGitBackend_RemoteURL_DefaultSelection_FlagLikeName(t *testing.T) {
+	t.Parallel()
+	if !gitAvailable() {
+		t.Skip("git not installed")
+	}
+	dir := setupGitRepo(t, nil, "1.0.0")
+	// example.com (rather than github.com) so the assertion below isn't
+	// at the mercy of a developer machine's `url.<...>.insteadOf` config
+	// rewriting the URL on read (`git remote get-url` applies insteadOf,
+	// `git remote add` does not — a real footgun hit while writing this
+	// test against a github.com/kawaz/... fixture URL).
+	runIn(t, dir, "git", "remote", "add", "--", "--push", "https://example.com/kawaz/bump-semver.git")
+	withCwd(t, dir, func() {
+		b := &gitBackend{}
+		got, err := b.RemoteURL("")
+		if err != nil {
+			t.Fatalf("RemoteURL(\"\") with a flag-like sole remote name: %v", err)
+		}
+		if got != "https://example.com/kawaz/bump-semver.git" {
+			t.Errorf("RemoteURL(\"\") = %q, want the configured URL", got)
+		}
+	})
+}
+
 // TestGitBackend_Push_NewBranch: pushing a fresh branch to an empty bare
 // is a "new branch" creation; git exits 0. We then verify the bare's
 // ref points at the same commit as the local main.

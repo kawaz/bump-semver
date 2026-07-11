@@ -85,6 +85,72 @@ func (j *jjBackend) CurrentBranch() (string, error) {
 	}
 }
 
+// jjRemoteEntry is one parsed line of `jj git remote list` output
+// ("<name> <url>", space-separated — the url is the remainder of the
+// line, so a single split on the first space is sufficient).
+type jjRemoteEntry struct {
+	name string
+	url  string
+}
+
+// parseJjRemoteList parses `jj git remote list` output into ordered
+// (name, url) pairs. Blank lines are skipped; a line with no space (should
+// not happen for a well-formed remote entry) is dropped defensively rather
+// than panicking on a malformed jj-version output shift.
+func parseJjRemoteList(out string) []jjRemoteEntry {
+	var remotes []jjRemoteEntry
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		remotes = append(remotes, jjRemoteEntry{name: parts[0], url: parts[1]})
+	}
+	return remotes
+}
+
+// RemoteURL resolves `remote` to its raw configured URL (DR-0041) via
+// `jj git remote list`. See the vcsBackend.RemoteURL interface doc for the
+// full selection contract.
+//
+// Selection (remote == ""): selectDefaultRemote over the parsed name list.
+// Explicit remote: looked up directly in the parsed list; an unresolvable
+// name is *exitErr{exitCodeVCSExec} (jj's `git remote list` doesn't error
+// on an absent name the way `git remote get-url` does, so we synthesize
+// the same "no such remote" failure here to keep the two backends' exit
+// codes uniform).
+func (j *jjBackend) RemoteURL(remote string) (string, error) {
+	out, err := runBackendCmd("jj", "git", "remote", "list")
+	if err != nil {
+		return "", &exitErr{code: exitCodeVCSExec, msg: err.Error()}
+	}
+	remotes := parseJjRemoteList(string(out))
+	if remote == "" {
+		names := make([]string, 0, len(remotes))
+		for _, r := range remotes {
+			names = append(names, r.name)
+		}
+		selected, err := selectDefaultRemote(names)
+		if err != nil {
+			return "", err
+		}
+		remote = selected
+	}
+	for _, r := range remotes {
+		if r.name == remote {
+			return r.url, nil
+		}
+	}
+	return "", &exitErr{
+		code: exitCodeVCSExec,
+		msg:  fmt.Sprintf("jj git remote list: no such remote %q", remote),
+	}
+}
+
 // FetchFile returns `file` at `rev` via `jj file show`. `rev` is
 // translated up-front so git-style remote refs (`origin/main`) reach
 // jj as `main@origin` — see translateRev / DR-0031.

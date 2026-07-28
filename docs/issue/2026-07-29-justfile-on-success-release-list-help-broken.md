@@ -14,7 +14,7 @@ discard_reason:
 pending_reason:
 close_reason:
 blocked_by:
-origin: 自リポ TODO
+origin: llm-gateway
 ---
 
 # justfile の on-success-release の --list 説明が崩れている
@@ -42,6 +42,24 @@ on-success-release:
 `just --list` は recipe 直前の**最後の 1 行のコメントのみ**を doc として
 表示する仕様のため、複数行コメントの 2 行目以降で括弧を開いて改行した
 文章が、閉じ括弧だけ残った状態で 1 行として表示されてしまっている。
+
+## 部外者からのフラグ (llm-gateway より、実測 2026-07-29)
+
+llm-gateway 側で bump-semver の justfile canonical 実装を移植した際、同じ
+recipe で同じ崩れを実測し、`[doc("...")]` アノテーションで解決した実例が
+llm-gateway の justfile にある (他の複数行コメント recipe `ci` / `test` /
+`sign` / `bump-version` も同様に `[doc(...)]` で対処済み)。
+
+対処方針・採否の裁定は本リポ側に委ねる。参照情報として提示するのみで、
+実装の指示ではない。bump-semver 側で同じ構造 (複数行コメント + 最終行が
+継続文) の recipe が他にもあるかは未確認。
+
+### ついでの気づき (別対処でも可、任意)
+
+同 justfile の `push` recipe 内の通知コマンドが `cmux-msg notify --self ...`
+(justfile:117) になっている。`cmux-msg` は現在も PATH に存在し動作するため
+実害はないが、現行コマンド名は `ccmsg`。rename への追従要否は本リポの判断
+に委ねる。
 
 ## 受け入れ条件
 

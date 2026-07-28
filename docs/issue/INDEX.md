@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは archive/ にあり、ここには�
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-07-28 | bug | open | [check-on-default-branch-gate-false-no-hint](./2026-07-28-check-on-default-branch-gate-false-no-hint.md) | check-on-default-branch の gate false 時に hint が出ない (DR-0038 未追従疑い) |
 | 2026-07-15 | request | open | [vcs-latest-noresult-vs-error-exitcode](./2026-07-15-vcs-latest-noresult-vs-error-exitcode.md) | vcs get latest-release / latest-tag で「該当なし」と subprocess エラーが exit code で区別できない |
 | 2026-06-22 | request | open | [vcs-get-current-branch-ambiguous-fallback](./2026-06-22-vcs-get-current-branch-ambiguous-fallback.md) | vcs get current-branch ambiguous の subshell 罠を library 側で吸収できないか |
 | 2026-06-22 | task | open | [vcs-sync-matrix-verification](./2026-06-22-vcs-sync-matrix-verification.md) | vcs sync の動作マトリクス検証 (= 既に sync 済 / divergent / conflict 各ケース) |

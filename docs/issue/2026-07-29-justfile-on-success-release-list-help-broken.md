@@ -61,6 +61,14 @@ llm-gateway の justfile にある (他の複数行コメント recipe `ci` / `t
 実害はないが、現行コマンド名は `ccmsg`。rename への追従要否は本リポの判断
 に委ねる。
 
+### 追記: watch recipe も exit 127 で落ちる (llm-gateway で実測)
+
+llm-gateway 側で同じ justfile 構成を移植した際、`watch` recipe が呼ぶ
+`watch-workflow.sh` が PATH 上に無く exit 127 で落ちる事象を実測した。
+llm-gateway では plugin cache 配下から `sort -V | tail -1` で最新版を
+解決する形に修正して解消した実例がある。対処方針・採否の裁定は本リポ側に
+委ねる。bump-semver 側で同じ参照方法になっているか要確認。
+
 ## 受け入れ条件
 
 - [ ] `just --list` の `on-success-release` 行が、それ単体で意味の通る

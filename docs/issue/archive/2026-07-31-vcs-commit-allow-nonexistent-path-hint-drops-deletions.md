@@ -1,6 +1,6 @@
 ---
 title: vcs commit の --allow-nonexistent-path ヒントに従うと削除 path が黙って捨てられる
-status: open
+status: resolved
 category: bug
 created: 2026-07-31T23:16:26+09:00
 last_read: 2026-08-01T16:10:12+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-01T21:15:04+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["ANP-Q1 a 裁定: --allow-nonexistent-path のヒント文言 (jj backend) と help/flag description に「tracked-but-deleted path も drop 対象に含まれる」旨を明示。実装挙動は据え置き。デフォルト (フラグ無し) は削除を正しく commit するため利用側の 3 path 指定は変更不要。関連 commit は本 close と同一チェンジ (src/vcs_backend_jj.go, src/cobra_help_text.go, src/cobra_vcs.go)。"]
 blocked_by:
 origin: 依頼元プロジェクト (claude-local-issue からの越境起票)
 ---

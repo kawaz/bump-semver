@@ -368,7 +368,7 @@ func (j *jjBackend) validateNonexistentPaths(paths []string) error {
 	}
 	if len(missing) > 0 {
 		return &exitErr{code: exitCodeVCSExec,
-			msg: fmt.Sprintf("jj: pathspec(s) did not match any tracked or filesystem files: %s (use --allow-nonexistent-path to silently drop)",
+			msg: fmt.Sprintf("jj: pathspec(s) did not match any tracked or filesystem files: %s (use --allow-nonexistent-path to silently drop them; note: the flag also drops tracked-but-deleted paths, so omit it when you want a mv-origin's deletion committed)",
 				strings.Join(missing, ", "))}
 	}
 	return nil

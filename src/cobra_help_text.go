@@ -381,7 +381,10 @@ Modes:
                 files are committed as deletions, and truly unknown paths
                 cause a VCS error. No actual change → exit 0, no commit
                 (idempotent). Pass --allow-nonexistent-path to restore the
-                legacy behaviour of silently dropping missing paths.
+                legacy behaviour of silently dropping missing paths — this
+                drops BOTH truly unknown paths AND tracked-but-deleted paths,
+                so omit the flag when you want a mv-origin's deletion (or any
+                deleted tracked file) committed as a removal.
   --staged      Commit all staged/dirty changes at once.
                   git: commits the index (anything previously 'git add'-ed).
                   jj:  commits the entire @ snapshot (jj auto-stages).

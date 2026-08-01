@@ -20,15 +20,7 @@
 
 ## 裁定待ち
 
-### 👺ANP-Q1: `--allow-nonexistent-path` ヒント誘導問題の対処方針
-
-参照: [docs/issue/2026-07-31-vcs-commit-allow-nonexistent-path-hint-drops-deletions.md](issue/2026-07-31-vcs-commit-allow-nonexistent-path-hint-drops-deletions.md)
-
-- [ ] a (推奨): ヒント文言のみ改善 — "silently drop" の drop 対象に **tracked-but-deleted も含む** ことをヒント/help text に明示し、削除意図の path があるケースへの安易な適用を抑制。実装挙動は据え置き。
-- [ ] b: フラグ semantics 見直し — `--allow-nonexistent-path` を「truly unknown path (@- でも tracked でない) のみ drop、tracked-but-deleted は保持」に変更。破壊変更 + legacy `bump` 互換の意図から乖離。
-- [ ] c: 何もしない (close as won't-fix) — フラグ名通りの動作、利用側 (claude-local-issue) は既に「フラグを使わない」invariant で対策済み、実害の直接証拠なし。
-
-推奨理由: (b) はフラグ名 (nonexistent = filesystem 上に無い) と意味論的に乖離しないし legacy 互換破壊。(c) は誤誘導リスクが残る。(a) は最小侵襲でフラグ名の意味論を保ちつつ drop 対象を明示できる。なお現状のデフォルト挙動 (フラグ無し) は削除 path を正しく commit するので、そもそも利用側の 3 path 指定パターンでフラグを付ける必要はない (= 実装バグではなく文言誘導の問題)。
+(なし)
 
 ## 確認待ち
 

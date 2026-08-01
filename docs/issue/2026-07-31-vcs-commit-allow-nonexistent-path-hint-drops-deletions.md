@@ -3,7 +3,7 @@ title: vcs commit の --allow-nonexistent-path ヒントに従うと削除 path 
 status: open
 category: bug
 created: 2026-07-31T23:16:26+09:00
-last_read:
+last_read: 2026-08-01T16:10:12+09:00
 open_entered: 2026-07-31T23:16:26+09:00
 wip_entered:
 blocked_entered:

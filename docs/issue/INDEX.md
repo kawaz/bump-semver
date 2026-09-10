@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは archive/ にあり、ここには�
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-09-10 | bug | open | [check-version-bumped-fails-when-origin-lacks-version-file](./2026-09-10-check-version-bumped-fails-when-origin-lacks-version-file.md) | check-version-bumped が origin に version file が無い初回 push で常に失敗する |
 | 2026-07-29 | bug | open | [justfile-on-success-release-list-help-broken](./2026-07-29-justfile-on-success-release-list-help-broken.md) | justfile の on-success-release の --list 説明が崩れている (llm-gateway からのフラグ、[doc()] 対処例あり) |
 | 2026-07-28 | bug | open | [check-on-default-branch-gate-false-no-hint](./2026-07-28-check-on-default-branch-gate-false-no-hint.md) | check-on-default-branch の gate false 時に hint が出ない (DR-0038 未追従疑い) |
 | 2026-07-15 | request | open | [vcs-latest-noresult-vs-error-exitcode](./2026-07-15-vcs-latest-noresult-vs-error-exitcode.md) | vcs get latest-release / latest-tag で「該当なし」と subprocess エラーが exit code で区別できない |

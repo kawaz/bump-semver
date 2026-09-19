@@ -63,7 +63,7 @@ origin: 自リポ TODO
 
 ## 利用箇所 grep 結果 (2026-06-21)
 
-ローカル全リポ grep (`~/.local/share/repos/github.com/kawaz/` + `kawaz123/`) で `bump-semver vcs commit` の呼び出しを列挙。`--staged` 型は今回の変更で影響なし、path 指定型のみ移行対象。
+ローカル全リポ grep で `bump-semver vcs commit` の呼び出しを列挙。`--staged` 型は今回の変更で影響なし、path 指定型のみ移行対象。
 
 ### path 指定型 (= 要確認、ただし全 path 常時存在なら移行不要)
 
